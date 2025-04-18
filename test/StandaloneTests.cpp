@@ -15,6 +15,48 @@ namespace RcclUnitTesting
   /**
    * \brief Verify that each device is assigned to the right rank using ncclCommSplit API.
    * ******************************************************************************************/
+  TEST(Standalone, CommCuDevice_Check)    
+{    
+    int numDevices;    
+    HIPCALL(hipGetDeviceCount(&numDevices));    
+    if (numDevices < 1) {    
+        GTEST_SKIP() << "No devices available.";    
+    }    
+    
+    // Test single comm initialization    
+    ncclComm_t comm;    
+    ncclUniqueId id;    
+    NCCLCHECK(ncclGetUniqueId(&id));    
+    HIPCALL(hipSetDevice(0));    
+    NCCLCHECK(ncclCommInitRank(&comm, 1, id, 0));    
+    
+    // Verify device assignment    
+    int device;    
+    NCCLCHECK(ncclCommCuDevice(comm, &device));    
+    ASSERT_EQ(device, 0);    
+    NCCLCHECK(ncclCommDestroy(comm));    
+    
+    // Test multi-device scenario if available    
+    if (numDevices > 1) {    
+        std::vector<ncclComm_t> comms(numDevices);  
+          
+        // Initialize all communicators at once  
+        NCCLCHECK(ncclCommInitAll(comms.data(), numDevices, nullptr));  
+  
+        // Verify device assignments    
+        for (int i = 0; i < numDevices; i++) {    
+            int assignedDevice;    
+            NCCLCHECK(ncclCommCuDevice(comms[i], &assignedDevice));    
+            ASSERT_EQ(assignedDevice, i);    
+        }    
+    
+        // Clean up    
+        for (int i = 0; i < numDevices; i++) {    
+            NCCLCHECK(ncclCommDestroy(comms[i]));    
+        }  
+    }    
+}  
+
   TEST(Standalone, SplitComms_RankCheck)
   {
     // Check for multi-gpu
