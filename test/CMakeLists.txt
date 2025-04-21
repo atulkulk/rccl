@@ -56,7 +56,6 @@ if(BUILD_TESTS)
     common/TestBed.cpp
     common/TestBedChild.cpp
     common/StandaloneUtils.cpp
-    ../src/misc/recorder.cc
     )
 
   add_executable(rccl-UnitTests ${TEST_SOURCE_FILES})
