@@ -25,6 +25,7 @@ option(BUILD_LOCAL_GPU_TARGET_ONLY             "Build only for GPUs detected on 
 option(BUILD_SHARED_LIBS                       "Build as shared library"                       ON)
 option(BUILD_TESTS                             "Build unit test programs"                      OFF)
 option(COLLTRACE                               "Collective Trace Option"                       ON)
+option(ENABLE_CODE_COVERAGE                    "Enable code coverage"                          OFF)
 option(ENABLE_MSCCL_KERNEL                     "Enable MSCCL while compiling"                  ON)
 option(ENABLE_MSCCLPP                          "Enable MSCCL++"                                ON)
 option(ENABLE_MSCCLPP_CLIP                     "Enable MSCCL++"                                OFF)
@@ -820,8 +821,40 @@ target_compile_options(rccl PRIVATE -Werror=uninitialized)
 target_compile_options(rccl PRIVATE -Werror=sometimes-uninitialized)
 target_compile_options(rccl PRIVATE -Wall)
 target_compile_options(rccl PRIVATE -Wno-format-nonliteral)
-target_compile_options(rccl PRIVATE -fgpu-rdc)               # Generate relocatable device code (required for extern __shared__)
-target_compile_options(rccl PRIVATE -fvisibility=hidden)     # Set symbol visibility to hidden by default
+target_compile_options(rccl PRIVATE -fgpu-rdc)
+
+## Set RCCL compile and linker options for code coverage build
+if(ENABLE_CODE_COVERAGE)
+  if(NOT CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
+    message(FATAL_ERROR "Code coverage is enabled, but the build type is '${CMAKE_BUILD_TYPE}'. "
+                        "Code coverage requires 'Debug' or 'RelWithDebInfo' build types to expose internal symbols. "
+                        "Please set CMAKE_BUILD_TYPE to 'Debug' or 'RelWithDebInfo' and reconfigure.")
+  endif()
+
+  message(STATUS "Code coverage is enabled with build type '${CMAKE_BUILD_TYPE}'.")
+
+  target_compile_options(rccl PRIVATE
+    -fvisibility=default -Xarch_host -fprofile-instr-generate
+    -Xarch_host -fcoverage-mapping -O3 -g -DNDEBUG)
+
+  set(COVERAGE_SHARED_LINKER_FLAGS
+    -fprofile-generate
+    -Wl,--enable-new-dtags,--build-id=sha1,--rpath,$ORIGIN
+  )
+
+  set(COVERAGE_EXE_LINKER_FLAGS
+    -fprofile-generate
+    -Wl,--enable-new-dtags,--build-id=sha1,--rpath,$ORIGIN/../lib
+  )
+
+  target_link_options(rccl PRIVATE ${COVERAGE_SHARED_LINKER_FLAGS})
+  target_link_options(rccl PRIVATE ${COVERAGE_EXE_LINKER_FLAGS})
+elseif(BUILD_TESTS) # Enable default visibility for tests
+  target_compile_options(rccl PRIVATE -fvisibility=default)
+else()  # Enable hidden visibility for library without tests/code coverage enabled
+  target_compile_options(rccl PRIVATE -fvisibility=hidden)
+endif()
+
 if (HAVE_KERNARG_PRELOAD)
   target_compile_options(rccl PRIVATE -mllvm --amdgpu-kernarg-preload-count=16)
 endif()
