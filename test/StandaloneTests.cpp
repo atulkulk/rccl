@@ -15,6 +15,30 @@ namespace RcclUnitTesting
   /**
    * \brief Verify that each device is assigned to the right rank using ncclCommSplit API.
    * ******************************************************************************************/
+  TEST(Standalone, SplitComms_RankCheck_Basic_Failure) {
+    // Check for multi-gpu
+    int numDevices;
+    HIPCALL(hipGetDeviceCount(&numDevices));
+    if (numDevices < 2) {
+        GTEST_SKIP() << "This test requires at least 2 devices.";
+    }
+
+    // Initialize the original comms
+    std::vector<ncclComm_t> comms(numDevices);
+    NCCLCHECK(ncclCommInitAll(comms.data(), numDevices, nullptr));
+
+    // Create an invalid comm handle that will cause a failure
+    ncclComm_t invalidComm = nullptr;
+
+    // This NCCL_CHECK will fail because we're trying to query rank from a null communicator
+    int rank;
+    NCCLCHECK(ncclCommUserRank(invalidComm, &rank));
+
+    // Clean up comms
+    for (auto& comm : comms)
+      NCCLCHECK(ncclCommDestroy(comm));
+  }
+
   TEST(Standalone, CommCuDevice_Check)    
 {    
     int numDevices;    
