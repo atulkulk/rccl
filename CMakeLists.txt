@@ -683,6 +683,11 @@ foreach(SRC_FILE ${SRC_FILES})
   endif()
 endforeach()
 
+# Adding custom target to hipify all the source files
+# This is required to make sure that all the hipified source files are
+# available before compiling the unit tests executable(s)
+add_custom_target(hipify_all DEPENDS ${HIP_SOURCES})
+
 # Generate device/host tables and all the collective functions that are going to be in librccl.so
 #==================================================================================================
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
