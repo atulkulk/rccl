@@ -24,43 +24,396 @@
 #include "alt_rsmi.h"
 #include "debug.h"
 
-static int ARSMI_readDeviceProperties(uint32_t node_id, std::map<std::string, uint64_t> &retVec);
-static int ARSMI_readLinkProperties(uint32_t node_id, uint32_t target_id, std::map<std::string, uint64_t> &retVec);
-static int read_node_properties(uint32_t node, std::string property_name, uint64_t *val,
-                                std::map<std::string, uint64_t> &properties);
-static int read_link_properties(uint32_t node, uint32_t target, std::string property_name, uint64_t *val,
-                                std::map<std::string, uint64_t> &properties);
-static int getNodeIndex(uint32_t node_id);
-static int getGpuId(uint32_t node, uint64_t *gpu_id);
-static int countIoLinks(uint32_t dev_id);
+namespace ARSMI {
+namespace internal {
 
-struct ARSMI_systemNode {
-    uint32_t s_node_id = 0;
-    uint64_t s_gpu_id = 0;
-    uint64_t s_unique_id = 0;
-    uint64_t s_location_id = 0;
-    uint64_t s_bdf = 0;
-    uint64_t s_domain = 0;
-    uint8_t  s_bus = 0;
-    uint8_t  s_device = 0;
-    uint8_t  s_function = 0;
-    uint8_t  s_partition_id = 0;
-    std::string s_card;
-};
+    struct ARSMI_systemNode {
+        uint32_t s_node_id = 0;
+        uint64_t s_gpu_id = 0;
+        uint64_t s_unique_id = 0;
+        uint64_t s_location_id = 0;
+        uint64_t s_bdf = 0;
+        uint64_t s_domain = 0;
+        uint8_t  s_bus = 0;
+        uint8_t  s_device = 0;
+        uint8_t  s_function = 0;
+        uint8_t  s_partition_id = 0;
+        std::string s_card;
+    };
 
-static const char *kPathDRMRoot = "/sys/class/drm";
-static const char *kKFDNodesPathRoot = "/sys/class/kfd/kfd/topology/nodes";
-static const uint32_t kAmdGpuId = 0x1002;
+    const char *kPathDRMRoot = "/sys/class/drm";
+    const char *kKFDNodesPathRoot = "/sys/class/kfd/kfd/topology/nodes";
+    uint32_t kAmdGpuId = 0x1002;
 
-// Vector containing data about each node, ordered by bdf ID
-static thread_local std::vector<ARSMI_systemNode> ARSMI_orderedNodes;
+    // Vector containing data about each node, ordered by bdf ID
+    thread_local std::vector<ARSMI_systemNode> ARSMI_orderedNodes;
 
-// 2-D matrix with link information between each pair of nodes.
-static thread_local std::vector<std::vector<ARSMI_linkInfo>> ARSMI_orderedLinks;
+    // 2-D matrix with link information between each pair of nodes.
+    thread_local std::vector<std::vector<ARSMI_linkInfo>> ARSMI_orderedLinks;
 
-// Number of devices recognized
-static thread_local int ARSMI_num_devices=-1;
+    // Number of devices recognized
+    thread_local int ARSMI_num_devices=-1;
 
+    int getNodeIndex(uint32_t node_id)
+    {
+        int res = -1;
+        assert (ARSMI_num_devices > 0);
+    
+        for (int i = 0; i < ARSMI_num_devices; i++) {
+            if (ARSMI_orderedNodes[i].s_node_id == node_id) {
+                res = i;
+                break;
+            }
+        }
+    
+        return res;
+    }
+
+    std::string DevicePath(uint32_t dev_id)
+    {
+        std::string node_path = kKFDNodesPathRoot;
+        node_path += '/';
+        node_path += std::to_string(dev_id);
+    
+        return node_path;
+    }
+
+    int isRegularFile(std::string fname, bool *is_reg)
+    {
+        struct stat file_stat;
+        int ret;
+
+        ret = stat(fname.c_str(), &file_stat);
+        if (ret) {
+            return errno;
+        }
+
+        if (is_reg != nullptr) {
+            *is_reg = S_ISREG(file_stat.st_mode);
+        }
+
+        return 0;
+    }
+
+    bool isNumber(const std::string &s)
+    {
+        return !s.empty() && std::all_of(s.begin(), s.end(), ::isdigit);
+    }
+
+    int openNodeFile(uint32_t dev_id, std::string node_file,
+        std::ifstream *fs)
+    {
+        std::string line;
+        std::string f_path;
+        bool reg_file;
+
+        assert(fs != nullptr);
+
+        f_path = DevicePath(dev_id);
+        f_path += "/";
+        f_path += node_file;
+
+        int ret = isRegularFile(f_path, &reg_file);
+        if (ret != 0) {
+            return ret;
+        }
+        if (!reg_file) {
+            return ENOENT;
+        }
+
+        fs->open(f_path);
+        if (!fs->is_open()) {
+            return errno;
+        }
+
+        return 0;
+    }
+
+    int countIoLinks(uint32_t dev_id)
+    {
+        std::string f_path;
+        int file_count = 0;
+
+        f_path = DevicePath(dev_id);
+        f_path += "/io_links/";
+
+        auto node_dir = opendir(f_path.c_str());
+        if (node_dir == nullptr) {
+            // Failed to open the directory, return 0 links or an error code
+            WARN("Failed to open directory: %s", f_path.c_str());
+            return 0; // Return 0 links if the directory does not exist
+        }
+        auto dentry = readdir(node_dir);
+        while (dentry != NULL) {
+            if (dentry->d_type == DT_DIR && strcmp(dentry->d_name, ".") != 0
+                && strcmp(dentry->d_name, "..") != 0) {
+                file_count++;
+            }
+            dentry = readdir(node_dir);
+        }
+        closedir(node_dir);
+        return file_count;
+    }
+
+    int openLinkFile(uint32_t dev_id, uint32_t target_id,
+                            std::string node_file, std::ifstream *fs)
+    {
+        std::string line;
+        std::string f_path;
+        bool reg_file;
+
+        assert(fs != nullptr);
+
+        f_path = DevicePath(dev_id);
+        f_path += "/io_links/";
+        f_path +=std::to_string(target_id);
+        f_path += "/";
+        f_path += node_file;
+
+        int ret = isRegularFile(f_path, &reg_file);
+        if (ret != 0) {
+            return ret;
+        }
+        if (!reg_file) {
+            return ENOENT;
+        }
+
+        fs->open(f_path);
+        if (!fs->is_open()) {
+            return errno;
+        }
+
+        return 0;
+    }
+
+    int readGpuId(uint32_t node_id, uint64_t *gpu_id)
+    {
+        std::string line;
+        std::ifstream fs;
+
+        assert(gpu_id != nullptr);
+        int ret = openNodeFile(node_id, "gpu_id", &fs);
+        if (ret) {
+            fs.close();
+            return ret;
+        }
+
+        std::stringstream ss;
+        ss << fs.rdbuf();
+        fs.close();
+
+        std::string gpu_id_str = ss.str();
+        gpu_id_str.erase(std::remove(gpu_id_str.begin(), gpu_id_str.end(), '\n'),
+                        gpu_id_str.end());
+        if (!isNumber(gpu_id_str)) {
+            return ENXIO;
+        }
+
+        *gpu_id = static_cast<uint64_t>(std::stoi(gpu_id_str));
+        return 0;
+    }
+
+    bool isNodeSupported(uint32_t node_indx)
+    {
+        std::ifstream fs;
+        bool ret = true;
+
+        int err = openNodeFile(node_indx, "properties", &fs);
+        if (err == ENOENT) {
+            return false;
+        }
+        if (fs.peek() == std::ifstream::traits_type::eof()) {
+            ret = false;
+        }
+
+        fs.close();
+        return ret;
+    }
+
+    int getPropertyValue(std::string property, uint64_t *value, std::map<std::string, uint64_t> &properties)
+    {
+        if (value == nullptr) {
+            return EINVAL;
+        }
+        if (properties.empty()) {
+            return EINVAL;
+        }
+    
+        if (properties.find(property) == properties.end()) {
+            return EINVAL;
+        }
+    
+        *value = properties[property];
+        return 0;
+    }
+
+    bool fileExists(char const *filename)
+    {
+        struct stat buf;
+        return (stat(filename, &buf) == 0);
+    }
+    
+    int ARSMI_readDeviceProperties(uint32_t node_id, std::map<std::string, uint64_t> &properties)
+    {
+        std::string line;
+        std::ifstream fs;
+        std::vector<std::string> tVec;
+    
+        int ret = openNodeFile(node_id, "properties", &fs);
+        if (ret) {
+            return ret;
+        }
+    
+        while (std::getline(fs, line)) {
+            tVec.push_back(line);
+        }
+    
+        if (tVec.empty()) {
+            fs.close();
+            return ENOENT;
+        }
+    
+        // Remove any *trailing* empty (whitespace) lines
+        while (tVec.back().find_first_not_of(" \t\n\v\f\r") == std::string::npos) {
+            tVec.pop_back();
+        }
+    
+        fs.close();
+    
+        std::string key_str;
+        std::string val_str;
+        uint64_t val_int;  // Assume all properties are unsigned integers for now
+        std::istringstream fs2;
+    
+        for (const auto & i : tVec) {
+            fs2.str(i);
+            fs2 >> key_str;
+            fs2 >> val_str;
+    
+            val_int = std::stoull(val_str);
+            properties[key_str] = val_int;
+    
+            fs2.str("");
+            fs2.clear();
+        }
+    
+        return 0;
+    }
+    
+    int ARSMI_readLinkProperties(uint32_t node_id, uint32_t target_node_id,
+                                        std::map<std::string, uint64_t> &properties)
+    {
+        std::string line;
+        std::ifstream fs;
+        std::vector<std::string> tVec;
+    
+        int ret = openLinkFile(node_id, target_node_id, "properties", &fs);
+        if (ret) {
+            return ret;
+        }
+    
+        while (std::getline(fs, line)) {
+            tVec.push_back(line);
+        }
+    
+        if (tVec.empty()) {
+            fs.close();
+            return ENOENT;
+        }
+    
+        // Remove any *trailing* empty (whitespace) lines
+        while (tVec.back().find_first_not_of(" \t\n\v\f\r") == std::string::npos) {
+            tVec.pop_back();
+        }
+    
+        fs.close();
+    
+        std::string key_str;
+        std::string val_str;
+        uint64_t val_int;  // Assume all properties are unsigned integers for now
+        std::istringstream fs2;
+    
+        for (const auto & i : tVec) {
+            fs2.str(i);
+            fs2 >> key_str;
+            fs2 >> val_str;
+    
+            val_int = std::stoull(val_str);
+            properties[key_str] = val_int;
+    
+            fs2.str("");
+            fs2.clear();
+        }
+    
+        return 0;
+    }
+
+    // /sys/class/kfd/kfd/topology/nodes/*/properties
+    int read_node_properties(uint32_t node, std::string property_name,
+                                    uint64_t *val, std::map<std::string, uint64_t> &properties)
+    {
+        int retVal = EINVAL;
+    
+        if (property_name.empty() || val == nullptr) {
+            WARN("Could not read node # %u property %s", node, property_name.c_str());
+            return retVal;
+        }
+    
+        if (isNodeSupported(node)) {
+            retVal = getPropertyValue(property_name, val, properties);
+        } else {
+            retVal = 1;
+            WARN("Could not read node # %u",node);
+        }
+    
+        return retVal;
+    }
+    
+    // /sys/class/kfd/kfd/topology/nodes/*/io_links/*/properties
+    int read_link_properties(uint32_t node, uint32_t target, std::string property_name,
+        uint64_t *val, std::map<std::string, uint64_t> &properties)
+    {
+        int retVal = EINVAL;
+
+        if (property_name.empty() || val == nullptr) {
+        WARN("Could not read node # %u", node);
+        return retVal;
+        }
+
+        if (isNodeSupported(node)) {
+        retVal = getPropertyValue(property_name, val, properties);
+        } else {
+        retVal = 1;
+        WARN("Could not read node # %u", node);
+        }
+
+        return retVal;
+    }
+
+    // /sys/class/kfd/kfd/topology/nodes/*/gpu_id
+    int getGpuId(uint32_t node, uint64_t *gpu_id)
+    {
+        int retVal = EINVAL;
+
+        if (gpu_id == nullptr) {
+            WARN("Could not determine GPU id of node # %u", node);
+            return retVal;
+        }
+
+        if (isNodeSupported(node)) {
+            retVal = readGpuId(node, gpu_id);
+        } else {
+            retVal = 1;
+            WARN("Could not read node # %u", node);
+        }
+
+    return retVal;
+    }
+
+}   // namespace internal
+}   // namespace ARSMI
+
+using namespace ARSMI::internal;
 
 // Public API functions
 int ARSMI_init(void)
@@ -201,10 +554,7 @@ int ARSMI_init(void)
                     ARSMI_orderedNodes.push_back(sort_vecs[j][k]);
                 }
                 break;
-                found = true;
             }
-            if (found)
-                continue;
         }
     }
 
@@ -341,10 +691,11 @@ int ARSMI_topo_get_link_info(uint32_t dv_ind_src, uint32_t dv_ind_dst,
         }
     }
 
-    if (dv_ind_src < 0 || dv_ind_src > ARSMI_num_devices) {
+    if (dv_ind_src > ARSMI_num_devices) {
         return EINVAL;
     }
-    if (dv_ind_dst < 0 || dv_ind_dst > ARSMI_num_devices) {
+
+    if (dv_ind_dst > ARSMI_num_devices) {
         return EINVAL;
     }
 
@@ -363,357 +714,4 @@ int ARSMI_topo_get_link_info(uint32_t dv_ind_src, uint32_t dv_ind_dst,
     *info = tinfo;
 
     return 0;
-}
-
-// Internal functions
-static int getNodeIndex(uint32_t node_id)
-{
-    int res = -1;
-    assert (ARSMI_num_devices > 0);
-
-    for (int i = 0; i < ARSMI_num_devices; i++) {
-        if (ARSMI_orderedNodes[i].s_node_id == node_id) {
-            res = i;
-            break;
-        }
-    }
-
-    return res;
-}
-
-static std::string DevicePath(uint32_t dev_id)
-{
-    std::string node_path = kKFDNodesPathRoot;
-    node_path += '/';
-    node_path += std::to_string(dev_id);
-
-    return node_path;
-}
-
-static int isRegularFile(std::string fname, bool *is_reg)
-{
-    struct stat file_stat;
-    int ret;
-
-    ret = stat(fname.c_str(), &file_stat);
-    if (ret) {
-        return errno;
-    }
-
-    if (is_reg != nullptr) {
-        *is_reg = S_ISREG(file_stat.st_mode);
-    }
-
-    return 0;
-}
-
-static bool isNumber(const std::string &s)
-{
-    return !s.empty() && std::all_of(s.begin(), s.end(), ::isdigit);
-}
-
-static int openNodeFile(uint32_t dev_id, std::string node_file,
-                        std::ifstream *fs)
-{
-    std::string line;
-    std::string f_path;
-    bool reg_file;
-
-    assert(fs != nullptr);
-
-    f_path = DevicePath(dev_id);
-    f_path += "/";
-    f_path += node_file;
-
-    int ret = isRegularFile(f_path, &reg_file);
-    if (ret != 0) {
-        return ret;
-    }
-    if (!reg_file) {
-        return ENOENT;
-    }
-
-    fs->open(f_path);
-    if (!fs->is_open()) {
-        return errno;
-    }
-
-    return 0;
-}
-
-static int countIoLinks(uint32_t dev_id)
-{
-    std::string f_path;
-    int file_count = 0;
-
-    f_path = DevicePath(dev_id);
-    f_path += "/io_links/";
-
-    auto node_dir = opendir(f_path.c_str());
-    auto dentry = readdir(node_dir);
-    while (dentry != NULL) {
-        if (dentry->d_type == DT_DIR && strcmp(dentry->d_name, ".") != 0
-            && strcmp(dentry->d_name, "..") != 0) {
-            file_count++;
-        }
-        dentry = readdir(node_dir);
-    }
-    closedir(node_dir);
-    return file_count;
-}
-
-static int openLinkFile(uint32_t dev_id, uint32_t target_id,
-                        std::string node_file, std::ifstream *fs)
-{
-    std::string line;
-    std::string f_path;
-    bool reg_file;
-
-    assert(fs != nullptr);
-
-    f_path = DevicePath(dev_id);
-    f_path += "/io_links/";
-    f_path +=std::to_string(target_id);
-    f_path += "/";
-    f_path += node_file;
-
-    int ret = isRegularFile(f_path, &reg_file);
-    if (ret != 0) {
-        return ret;
-    }
-    if (!reg_file) {
-        return ENOENT;
-    }
-
-    fs->open(f_path);
-    if (!fs->is_open()) {
-        return errno;
-    }
-
-    return 0;
-}
-
-
-static int readGpuId(uint32_t node_id, uint64_t *gpu_id)
-{
-    std::string line;
-    std::ifstream fs;
-
-    assert(gpu_id != nullptr);
-    int ret = openNodeFile(node_id, "gpu_id", &fs);
-    if (ret) {
-        fs.close();
-        return ret;
-    }
-
-    std::stringstream ss;
-    ss << fs.rdbuf();
-    fs.close();
-
-    std::string gpu_id_str = ss.str();
-    gpu_id_str.erase(std::remove(gpu_id_str.begin(), gpu_id_str.end(), '\n'),
-                     gpu_id_str.end());
-    if (!isNumber(gpu_id_str)) {
-        return ENXIO;
-    }
-
-    *gpu_id = static_cast<uint64_t>(std::stoi(gpu_id_str));
-    return 0;
-}
-
-static bool isNodeSupported(uint32_t node_indx)
-{
-    std::ifstream fs;
-    bool ret = true;
-
-    int err = openNodeFile(node_indx, "properties", &fs);
-    if (err == ENOENT) {
-        return false;
-    }
-    if (fs.peek() == std::ifstream::traits_type::eof()) {
-        ret = false;
-    }
-
-    fs.close();
-    return ret;
-}
-
-static int getPropertyValue(std::string property, uint64_t *value, std::map<std::string, uint64_t> &properties)
-{
-    if (value == nullptr) {
-        return EINVAL;
-    }
-    if (properties.empty()) {
-        return EINVAL;
-    }
-
-    if (properties.find(property) == properties.end()) {
-        return EINVAL;
-    }
-
-    *value = properties[property];
-    return 0;
-}
-
-static bool fileExists(char const *filename)
-{
-    struct stat buf;
-    return (stat(filename, &buf) == 0);
-}
-
-static int ARSMI_readDeviceProperties(uint32_t node_id, std::map<std::string, uint64_t> &properties)
-{
-    std::string line;
-    std::ifstream fs;
-    std::vector<std::string> tVec;
-
-    int ret = openNodeFile(node_id, "properties", &fs);
-    if (ret) {
-        return ret;
-    }
-
-    while (std::getline(fs, line)) {
-        tVec.push_back(line);
-    }
-
-    if (tVec.empty()) {
-        fs.close();
-        return ENOENT;
-    }
-
-    // Remove any *trailing* empty (whitespace) lines
-    while (tVec.back().find_first_not_of(" \t\n\v\f\r") == std::string::npos) {
-        tVec.pop_back();
-    }
-
-    fs.close();
-
-    std::string key_str;
-    std::string val_str;
-    uint64_t val_int;  // Assume all properties are unsigned integers for now
-    std::istringstream fs2;
-
-    for (const auto & i : tVec) {
-        fs2.str(i);
-        fs2 >> key_str;
-        fs2 >> val_str;
-
-        val_int = std::stoull(val_str);
-        properties[key_str] = val_int;
-
-        fs2.str("");
-        fs2.clear();
-    }
-
-    return 0;
-}
-
-static int ARSMI_readLinkProperties(uint32_t node_id, uint32_t target_node_id,
-                                    std::map<std::string, uint64_t> &properties)
-{
-    std::string line;
-    std::ifstream fs;
-    std::vector<std::string> tVec;
-
-    int ret = openLinkFile(node_id, target_node_id, "properties", &fs);
-    if (ret) {
-        return ret;
-    }
-
-    while (std::getline(fs, line)) {
-        tVec.push_back(line);
-    }
-
-    if (tVec.empty()) {
-        fs.close();
-        return ENOENT;
-    }
-
-    // Remove any *trailing* empty (whitespace) lines
-    while (tVec.back().find_first_not_of(" \t\n\v\f\r") == std::string::npos) {
-        tVec.pop_back();
-    }
-
-    fs.close();
-
-    std::string key_str;
-    std::string val_str;
-    uint64_t val_int;  // Assume all properties are unsigned integers for now
-    std::istringstream fs2;
-
-    for (const auto & i : tVec) {
-        fs2.str(i);
-        fs2 >> key_str;
-        fs2 >> val_str;
-
-        val_int = std::stoull(val_str);
-        properties[key_str] = val_int;
-
-        fs2.str("");
-        fs2.clear();
-    }
-
-    return 0;
-}
-
-// /sys/class/kfd/kfd/topology/nodes/*/properties
-static int read_node_properties(uint32_t node, std::string property_name,
-                                uint64_t *val, std::map<std::string, uint64_t> &properties)
-{
-    int retVal = EINVAL;
-
-    if (property_name.empty() || val == nullptr) {
-        WARN("Could not read node # %u property %s", node, property_name.c_str());
-        return retVal;
-    }
-
-    if (isNodeSupported(node)) {
-        retVal = getPropertyValue(property_name, val, properties);
-    } else {
-        retVal = 1;
-        WARN("Could not read node # %u",node);
-    }
-
-    return retVal;
-}
-
-// /sys/class/kfd/kfd/topology/nodes/*/io_links/*/properties
-static int read_link_properties(uint32_t node, uint32_t target, std::string property_name,
-                                uint64_t *val, std::map<std::string, uint64_t> &properties)
-{
-    int retVal = EINVAL;
-
-    if (property_name.empty() || val == nullptr) {
-        WARN("Could not read node # %u", node);
-        return retVal;
-    }
-
-    if (isNodeSupported(node)) {
-        retVal = getPropertyValue(property_name, val, properties);
-    } else {
-        retVal = 1;
-        WARN("Could not read node # %u", node);
-    }
-
-    return retVal;
-}
-
-// /sys/class/kfd/kfd/topology/nodes/*/gpu_id
-int getGpuId(uint32_t node, uint64_t *gpu_id)
-{
-    int retVal = EINVAL;
-
-    if (gpu_id == nullptr) {
-        WARN("Could not determine GPU id of node # %u", node);
-        return retVal;
-    }
-
-    if (isNodeSupported(node)) {
-        retVal = readGpuId(node, gpu_id);
-    } else {
-        retVal = 1;
-        WARN("Could not read node # %u", node);
-    }
-
-  return retVal;
 }
