@@ -38,6 +38,7 @@ if(BUILD_TESTS)
     AllToAllTests.cpp
     AllToAllVTests.cpp
     AltRsmiTests.cpp
+    ArgCheckTests.cpp
     BroadcastTests.cpp
     GatherTests.cpp
     GroupCallTests.cpp
