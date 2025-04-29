@@ -7,8 +7,8 @@
 #include <gtest/gtest.h>
 #include <rccl/rccl.h>
 
-#include "RcclMockFuncs.hpp"
-//#include "TestBed.hpp"
+#include "info.h"
+#include "comm.h"
 
 namespace RcclUnitTesting
 {
