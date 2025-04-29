@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 2.8.12)
 if(BUILD_TESTS)
 
   option(OPENMP_TESTS_ENABLED "Enable OpenMP for unit tests" OFF)
-  
+
   message("Building rccl unit tests (Installed in /test/rccl-UnitTests)")
 
   find_package(hsa-runtime64 PATHS /opt/rocm )
@@ -37,8 +37,6 @@ if(BUILD_TESTS)
     AllReduceTests.cpp
     AllToAllTests.cpp
     AllToAllVTests.cpp
-    AltRsmiTests.cpp
-    ArgCheckTests.cpp
     BroadcastTests.cpp
     GatherTests.cpp
     GroupCallTests.cpp
@@ -60,47 +58,65 @@ if(BUILD_TESTS)
     common/StandaloneUtils.cpp
     )
 
+  set(TEST_FIXTURE_SOURCE_FILES
+    AltRsmiTests.cpp
+    ArgCheckTests.cpp
+    common/main_fixtures.cpp
+    common/EnvVars.cpp
+  )
+
+  # Add rccl-UnitTests binary
   add_executable(rccl-UnitTests ${TEST_SOURCE_FILES})
 
-  ## Set rccl-UnitTests include directories
-  target_include_directories(rccl-UnitTests PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS})
-  target_include_directories(rccl-UnitTests PRIVATE ${PROJECT_BINARY_DIR}/include)            # for generated rccl.h header
-  target_include_directories(rccl-UnitTests PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include) # for rccl_bfloat16.h
+  # Add rccl-UnitTestsFixtures binary
+  add_executable(rccl-UnitTestsFixtures ${TEST_FIXTURE_SOURCE_FILES})
 
-  ## Set rccl-UnitTests compile definitions
-  if(LL128_ENABLED)
-    target_compile_definitions(rccl-UnitTests PRIVATE ENABLE_LL128)
-  endif()
-  if(OPENMP_TESTS_ENABLED)
-    target_compile_definitions(rccl-UnitTests PRIVATE ENABLE_OPENMP)
-  endif()
-  target_compile_definitions(rccl-UnitTests PRIVATE ROCM_PATH="${ROCM_PATH}")
+  ## Set include directories for both binaries
+  foreach(target rccl-UnitTests rccl-UnitTestsFixtures)
+    target_include_directories(${target} PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS})
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/include)            # for generated rccl.h header
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include) # for rccl_bfloat16.h
 
-  ## Set rccl-UnitTests compile definitions
-  if(OPENMP_TESTS_ENABLED)
-    target_compile_options(rccl-UnitTests PRIVATE "${OpenMP_CXX_FLAGS}")
-  endif()
+    ## Set compile definitions
+    if(LL128_ENABLED)
+      target_compile_definitions(${target} PRIVATE ENABLE_LL128)
+    endif()
+    if(OPENMP_TESTS_ENABLED)
+      target_compile_definitions(${target} PRIVATE ENABLE_OPENMP)
+    endif()
+    target_compile_definitions(${target} PRIVATE ROCM_PATH="${ROCM_PATH}")
 
-  ## Set rccl-UnitTests linked libraries
-  target_link_libraries(rccl-UnitTests PRIVATE ${GTEST_BOTH_LIBRARIES})
-  target_link_libraries(rccl-UnitTests PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
-  target_link_libraries(rccl-UnitTests PRIVATE Threads::Threads)
-  target_link_libraries(rccl-UnitTests PRIVATE dl)
-  if(OPENMP_TESTS_ENABLED)
-    target_link_libraries(rccl-UnitTests PRIVATE "${OpenMP_CXX_FLAGS}")
-  endif()
+    ## Set rccl-UnitTests linked libraries
+    target_link_libraries(rccl-UnitTests PRIVATE ${GTEST_BOTH_LIBRARIES})
+    target_link_libraries(rccl-UnitTests PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
+    target_link_libraries(rccl-UnitTests PRIVATE Threads::Threads)
+    target_link_libraries(rccl-UnitTests PRIVATE dl)
+    if(OPENMP_TESTS_ENABLED)
+      target_link_libraries(rccl-UnitTests PRIVATE "${OpenMP_CXX_FLAGS}")
+    endif()
 
-  # rccl-UnitTests using static library of rccl requires passing rccl
-  # through -l and -L instead of command line input.
-  if(BUILD_SHARED_LIBS)
-    target_link_libraries(rccl-UnitTests PRIVATE rccl)
-    set_property(TARGET rccl-UnitTests PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${ROCM_PATH}/lib;${CMAKE_BINARY_DIR}")
-  else()
-    add_dependencies(rccl-UnitTests rccl)
-    target_link_libraries(rccl-UnitTests PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
-  endif()
-  set_property(TARGET rccl-UnitTests PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
-  rocm_install(TARGETS rccl-UnitTests COMPONENT tests)
+    ## Set linked libraries
+    target_link_libraries(${target} PRIVATE ${GTEST_BOTH_LIBRARIES})
+    target_link_libraries(${target} PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
+    target_link_libraries(${target} PRIVATE Threads::Threads)
+    if(OPENMP_TESTS_ENABLED)
+      target_link_libraries(${target} PRIVATE "${OpenMP_CXX_FLAGS}")
+    endif()
+
+    # Link rccl library
+    if(BUILD_SHARED_LIBS)
+      target_link_libraries(${target} PRIVATE rccl)
+      set_property(TARGET ${target} PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${ROCM_PATH}/lib;${CMAKE_BINARY_DIR}")
+    else()
+      add_dependencies(${target} rccl)
+      target_link_libraries(${target} PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
+    endif()
+    set_property(TARGET ${target} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
+  endforeach()
+
+  # Install the binaries
+  rocm_install(TARGETS rccl-UnitTests rccl-UnitTestsFixtures COMPONENT tests)
 else()
   message("Not building rccl unit tests")
 endif()
+
