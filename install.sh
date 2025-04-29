@@ -453,14 +453,15 @@ fi
 
 # Optionally, run RCCL-UnitTests, if they're enabled.
 if [[ "${run_tests}" == true ]]; then
-    if [[ -x "./test/rccl-UnitTests" ]]; then
+    if [[ -x "./test/rccl-UnitTests" && -x "./test/rccl-UnitTestsFixtures" ]]; then
         if [[ "${run_tests_all}" == true ]]; then
             ./test/rccl-UnitTests
+            ./test/rccl-UnitTestsFixtures
         else
             ./test/rccl-UnitTests --gtest_filter="AllReduce.*"
         fi
     else
-        echo "RCCL-UnitTests have not been built yet; Please re-run script with \"-t\" to build RCCL-UnitTests."
+        echo "RCCL-UnitTests and RCCL-UnitTestsFixtures have not been built yet; Please re-run script with \"-t\" to build RCCL-UnitTests and RCCL-UnitTestsFixtures."
         exit 1
     fi
 fi
