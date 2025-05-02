@@ -59,6 +59,7 @@ if(BUILD_TESTS)
     )
 
   set(TEST_FIXTURE_SOURCE_FILES
+    AllocTests.cpp
     AltRsmiTests.cpp
     ArgCheckTests.cpp
     common/main_fixtures.cpp
