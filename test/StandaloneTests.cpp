@@ -15,7 +15,7 @@ namespace RcclUnitTesting
   /**
    * \brief Verify that each device is assigned to the right rank using ncclCommSplit API.
    * ******************************************************************************************/
-   TEST(Standalone, SplitComms_RankCheck)
+  TEST(Standalone, SplitComms_RankCheck)
   {
     // Check for multi-gpu
     int numDevices;
