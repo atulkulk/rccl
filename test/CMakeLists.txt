@@ -117,6 +117,7 @@ if(BUILD_TESTS)
 
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
+      AllocTests.cpp
       ArgCheckTests.cpp
       ShmTests.cpp
       P2pTests.cpp
