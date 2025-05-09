@@ -31,6 +31,40 @@ if(BUILD_TESTS)
 
   include_directories(${GTEST_INCLUDE_DIRS} ./common)
 
+    # Common include directories
+  set(RCCL_COMMON_INCLUDE_DIRS
+    ${GTEST_INCLUDE_DIRS}
+    ${PROJECT_BINARY_DIR}/include # for generated rccl.h header
+    ${PROJECT_BINARY_DIR}/hipify/src/include  # for rccl_bfloat16.h
+    ${PROJECT_BINARY_DIR}/hipify/gensrc # for rccl_bfloat16.h
+    ${PROJECT_BINARY_DIR}/hipify/src # for graph/topo.h
+    ${PROJECT_BINARY_DIR}/hipify/src/include/plugin # for recorder tests, nccl_tuner.h
+    ${ROCM_PATH}/include
+    ${ROCM_PATH}
+  )
+
+  # Common compile definitions
+  set(RCCL_COMMON_COMPILE_DEFS ROCM_PATH="${ROCM_PATH}")
+  if(LL128_ENABLED)
+    list(APPEND RCCL_COMMON_COMPILE_DEFS ENABLE_LL128)
+  endif()
+  if(OPENMP_TESTS_ENABLED)
+    list(APPEND RCCL_COMMON_COMPILE_DEFS ENABLE_OPENMP)
+  endif()
+  list(APPEND RCCL_COMMON_COMPILE_DEFS __HIP_PLATFORM_AMD__)
+
+  # Common link libraries
+  set(RCCL_COMMON_LINK_LIBS
+    ${GTEST_BOTH_LIBRARIES}
+    hip::host hip::device hsa-runtime64::hsa-runtime64
+    Threads::Threads
+    dl
+    fmt::fmt-header-only
+  )
+  if(OPENMP_TESTS_ENABLED)
+    list(APPEND RCCL_COMMON_LINK_LIBS "${OpenMP_CXX_FLAGS}")
+  endif()
+
   # Collect testing framework source files
   set(TEST_SOURCE_FILES
     AllGatherTests.cpp
@@ -59,8 +93,8 @@ if(BUILD_TESTS)
     proxy_trace/ProxyTraceUnitTests.cpp
     )
 
-  # Append file if build type is not Debug.
-  # Visibility is hidden by default, so we need to explicitly add the following file(s)
+  # Due to default hidden symbol visibility, append source file if build type is not Debug.
+  # It requires explicit addition of the following source file(s)
   # to the unit tests to ensure it is included for the existing rccl-UnitTests execution
   if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
     list(APPEND TEST_SOURCE_FILES
@@ -81,6 +115,7 @@ if(BUILD_TESTS)
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
       ArgCheckTests.cpp
+      ShmTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
     )
