@@ -27,7 +27,6 @@
 #include <cassert>
 #include <algorithm>
 #include <iomanip>
-#include <vector>
 
 /**
  ** This is an exact copy of the IO Link types from rocm_smi.h
