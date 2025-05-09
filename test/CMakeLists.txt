@@ -59,9 +59,12 @@ if(BUILD_TESTS)
     common/StandaloneUtils.cpp
     )
 
+  set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DRCCL_EXPOSE_STATIC")
+
   set(TEST_FIXTURE_SOURCE_FILES
     AltRsmiTests.cpp
     ArgCheckTests.cpp
+    ShmTests.cpp
     common/main_fixtures.cpp
     common/EnvVars.cpp
   )

@@ -835,7 +835,7 @@ if(ENABLE_CODE_COVERAGE)
 
   target_compile_options(rccl PRIVATE
     -fvisibility=default -Xarch_host -fprofile-instr-generate
-    -Xarch_host -fcoverage-mapping -O3 -g -DNDEBUG)
+    -Xarch_host -fcoverage-mapping -O3 -g -DNDEBUG -DRCCL_EXPOSE_STATIC)
 
   set(COVERAGE_SHARED_LINKER_FLAGS
     -fprofile-generate
