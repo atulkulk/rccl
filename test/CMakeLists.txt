@@ -80,6 +80,7 @@ if(BUILD_TESTS)
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
       ArgCheckTests.cpp
+      ShmTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
     )
@@ -91,6 +92,7 @@ if(BUILD_TESTS)
     # Create a list of files which needs to be modified to remove static
     set(TEST_NONSTATIC_SOURCE_FILES
       ${HIPIFY_SRC_DIR}/misc/alt_rsmi.cc
+      ${HIPIFY_SRC_DIR}/transport/shm.cc
     )
 
     # Create a custom command to backup the original files and remove static
