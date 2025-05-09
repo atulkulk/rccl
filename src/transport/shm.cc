@@ -64,11 +64,11 @@ struct shmRequest {
 NCCL_PARAM(ShmDisable, "SHM_DISABLE", 0);
 NCCL_PARAM(ShmUseCudaMemcpy, "SHM_USE_CUDA_MEMCPY", 0);
 NCCL_PARAM(ShmMemcpyMode, "SHM_MEMCPY_MODE", SHM_SEND_SIDE); // 1 is sender-side, 2 is receiver-side, 3 is both
-static int useMemcpySend = 0;
-static int useMemcpyRecv = 0;
+rccl_static int useMemcpySend = 0;
+rccl_static int useMemcpyRecv = 0;
 NCCL_PARAM(ShmLocality, "SHM_LOCALITY", SHM_RECV_SIDE); // 1 is sender-size, 2 is receiver-size
-static int shmLocality = 0;
-static void initCeOperation();
+rccl_static int shmLocality = 0;
+rccl_static void initCeOperation();
 
 /* Determine two peers can communicate with SHM */
 static ncclResult_t shmCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* info1, struct ncclPeerInfo* info2) {
@@ -97,7 +97,7 @@ static ncclResult_t shmCanConnect(int* ret, struct ncclComm* comm, struct ncclTo
 #define MAX_SHM_NAME_LEN 1024
 
 /* Create and return connect structures for this peer to connect to me */
-static ncclResult_t shmSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* send, int channelId, int connIndex) {
+rccl_static ncclResult_t shmSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* send, int channelId, int connIndex) {
   struct shmSendResources* resources;
   struct shmConnectInfo* info = (struct shmConnectInfo*)connectInfo;
   size_t shmSize = sizeof(struct ncclSendMem);
@@ -127,7 +127,7 @@ static ncclResult_t shmSendSetup(struct ncclComm* comm, struct ncclTopoGraph* gr
   return ncclSuccess;
 }
 
-static ncclResult_t shmRecvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* recv, int channelId, int connIndex) {
+rccl_static ncclResult_t shmRecvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* recv, int channelId, int connIndex) {
   struct shmRecvResources* resources;
   struct shmConnectInfo* info = (struct shmConnectInfo*)connectInfo;
   size_t shmSize = sizeof(struct ncclRecvMem);
@@ -157,7 +157,7 @@ static ncclResult_t shmRecvSetup(struct ncclComm* comm, struct ncclTopoGraph* gr
 }
 
 /* Connect to this peer */
-static ncclResult_t shmSendConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank, struct ncclConnector* send) {
+rccl_static ncclResult_t shmSendConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank, struct ncclConnector* send) {
   // Setup device pointers
   struct shmConnectInfo* info = (struct shmConnectInfo*)connectInfo;
   struct shmSendResources* resources = (struct shmSendResources*)send->transportResources;
@@ -191,7 +191,7 @@ static ncclResult_t shmSendConnect(struct ncclComm* comm, struct ncclConnect* co
   return ncclSuccess;
 }
 
-static ncclResult_t shmRecvConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank, struct ncclConnector* recv) {
+rccl_static ncclResult_t shmRecvConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank, struct ncclConnector* recv) {
   // Setup device pointers
   struct shmRecvResources* resources = (struct shmRecvResources*)recv->transportResources;
   struct shmConnectInfo* info = (struct shmConnectInfo*)connectInfo;
@@ -221,7 +221,7 @@ static ncclResult_t shmRecvConnect(struct ncclComm* comm, struct ncclConnect* co
   return ncclSuccess;
 }
 
-static ncclResult_t shmSendFree(struct ncclConnector* send) {
+rccl_static ncclResult_t shmSendFree(struct ncclConnector* send) {
   struct shmRecvResources* resources = (struct shmRecvResources*)send->transportResources;
   if (resources) {
     NCCLCHECK(ncclShmIpcClose(&resources->remDesc));
@@ -231,7 +231,7 @@ static ncclResult_t shmSendFree(struct ncclConnector* send) {
   return ncclSuccess;
 }
 
-static ncclResult_t shmRecvFree(struct ncclConnector* recv) {
+rccl_static ncclResult_t shmRecvFree(struct ncclConnector* recv) {
   struct shmRecvResources* resources = (struct shmRecvResources*)recv->transportResources;
   if (resources) {
     NCCLCHECK(ncclShmIpcClose(&resources->remDesc));
@@ -241,7 +241,7 @@ static ncclResult_t shmRecvFree(struct ncclConnector* recv) {
   return ncclSuccess;
 }
 
-static ncclResult_t shmSendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t shmSendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   ncclResult_t ret = ncclSuccess;
   if (reqSize != sizeof(struct shmProxyInfo) || respSize != sizeof(struct shmProxyInfo)) return ncclInternalError;
   struct shmProxyInfo* proxyInfo;
@@ -271,7 +271,7 @@ fail:
   goto exit;
 }
 
-static ncclResult_t shmRecvProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t shmRecvProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   ncclResult_t ret = ncclSuccess;
   if (reqSize != sizeof(struct shmProxyInfo) || respSize != sizeof(struct shmProxyInfo)) return ncclInternalError;
   struct shmProxyInfo* proxyInfo;
@@ -299,7 +299,7 @@ fail:
   goto exit;
 }
 
-static ncclResult_t shmSendProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
+rccl_static ncclResult_t shmSendProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
   struct shmProxyInfo* resources = (struct shmProxyInfo*)connection->transportResources;
 
   if (resources) {
@@ -318,7 +318,7 @@ static ncclResult_t shmSendProxyFree(struct ncclProxyConnection* connection, str
   return ncclSuccess;
 }
 
-static ncclResult_t shmRecvProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
+rccl_static ncclResult_t shmRecvProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
   struct shmProxyInfo* resources = (struct shmProxyInfo*)connection->transportResources;
 
   if (resources) {
@@ -337,7 +337,7 @@ static ncclResult_t shmRecvProxyFree(struct ncclProxyConnection* connection, str
   return ncclSuccess;
 }
 
-static ncclResult_t shmSendProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
+rccl_static ncclResult_t shmSendProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
   if (args->state == ncclProxyOpReady) {
     for (int s=0; s<args->nsubs; s++) {
       struct ncclProxySubArgs* sub = args->subs+s;
@@ -396,7 +396,7 @@ static ncclResult_t shmSendProxyProgress(struct ncclProxyState* proxyState, stru
   return ncclSuccess;
 }
 
-static ncclResult_t shmRecvProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
+rccl_static ncclResult_t shmRecvProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
   if (args->state == ncclProxyOpReady) {
     for (int s=0; s<args->nsubs; s++) {
       struct ncclProxySubArgs* sub = args->subs+s;
@@ -453,7 +453,7 @@ static ncclResult_t shmRecvProxyProgress(struct ncclProxyState* proxyState, stru
   return ncclSuccess;
 }
 
-static ncclResult_t shmSendProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t shmSendProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   ncclResult_t result = ncclSuccess;
   struct shmRequest* req = (struct shmRequest*)reqBuff;
   /* check message size */
@@ -474,7 +474,7 @@ fail:
   goto exit;
 }
 
-static ncclResult_t shmRecvProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t shmRecvProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   ncclResult_t result = ncclSuccess;
   struct shmRequest* req = (struct shmRequest*)reqBuff;
   /* check message size */
@@ -495,8 +495,8 @@ fail:
   goto exit;
 }
 
-static void initCeOperation() {
-  static int init = 0;
+rccl_static void initCeOperation() {
+  rccl_static int init = 0;
   if (!init) {
     useMemcpySend = ncclParamShmUseCudaMemcpy() && (ncclParamShmMemcpyMode() & 1);
     useMemcpyRecv = ncclParamShmUseCudaMemcpy() && (ncclParamShmMemcpyMode() & 2);
