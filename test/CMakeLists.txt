@@ -41,6 +41,7 @@ if(BUILD_TESTS)
     BroadcastTests.cpp
     GatherTests.cpp
     GroupCallTests.cpp
+    IpcsocketTests.cpp
     NonBlockingTests.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
