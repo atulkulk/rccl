@@ -81,6 +81,7 @@ if(BUILD_TESTS)
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
       ArgCheckTests.cpp
+      IpcsocketTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
     )
