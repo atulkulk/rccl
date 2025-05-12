@@ -121,6 +121,7 @@ if(BUILD_TESTS)
       ArgCheckTests.cpp
       ShmTests.cpp
       P2pTests.cpp
+      IpcsocketTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
       graph/XmlTests.cpp
