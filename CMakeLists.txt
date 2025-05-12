@@ -850,7 +850,7 @@ if(ENABLE_CODE_COVERAGE)
   target_link_options(rccl PRIVATE ${COVERAGE_SHARED_LINKER_FLAGS})
   target_link_options(rccl PRIVATE ${COVERAGE_EXE_LINKER_FLAGS})
 elseif(BUILD_TESTS) # Enable default visibility for tests
-  target_compile_options(rccl PRIVATE -fvisibility=default)
+  target_compile_options(rccl PRIVATE -fvisibility=default -DRCCL_EXPOSE_STATIC)
 else()  # Enable hidden visibility for library without tests/code coverage enabled
   target_compile_options(rccl PRIVATE -fvisibility=hidden)
 endif()
