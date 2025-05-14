@@ -26,7 +26,7 @@ THE SOFTWARE.
 #include "enqueue.h"
 void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, struct ncclTaskColl* info) {
   // Honor user input for protocol choice
-  static int userProtocolInput = -2;
+  rccl_static int userProtocolInput = -2;
   if (userProtocolInput == -2) {
     const char *protoStr = getenv("NCCL_PROTO");
     userProtocolInput = !protoStr ? 0 : 1;
@@ -39,7 +39,7 @@ void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, s
 
     auto ll128Min = comm->minMaxLLRange[tunableIndex][NCCL_PROTO_LL128][RCCL_PROTOCOL_MIN_IDX];
     auto ll128Max = comm->minMaxLLRange[tunableIndex][NCCL_PROTO_LL128][RCCL_PROTOCOL_MAX_IDX];
-
+    
     // Only override model choices if min/max cutoff points are set in the tuning models
     if ((ll128Max != RCCL_LL_LIMITS_UNDEFINED) || (llMax != RCCL_LL_LIMITS_UNDEFINED)) {
       // Keep it simple unless otherwise required
@@ -63,7 +63,7 @@ void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, s
       // Warn that model detection for MI300 (or future others) did not work as expected
       // Add supported archs to this condition as they come (e.g. gfx950)
       // Also make sure the tuning_model and model detection are updated for new archs
-      static bool failedWarn = false;
+      rccl_static bool failedWarn = false;
       if (!failedWarn) {
         WARN("LL cutoff points not detected for a supported arch %s", comm->topo->nodes[GPU].nodes[0].gpu.gcn);
         failedWarn = true;
