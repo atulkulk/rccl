@@ -77,6 +77,7 @@ if(BUILD_TESTS)
     NonBlockingTests.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
+    RcclWrapTests.cpp
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
