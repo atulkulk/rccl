@@ -36,6 +36,7 @@ option(PROFILE                                 "Enable profiling"               
 option(TIMETRACE                               "Enable time-trace during compilation"          OFF)
 option(TRACE                                   "Enable additional tracing"                     OFF)
 option(FAULT_INJECTION                         "Enable fault injection"                        ON)
+option(RCCL_EXPOSE_STATIC                      "Expose internal static functions for testing"  OFF)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -364,6 +365,9 @@ if(ROCTX)
   endif()
 endif()
 
+if(RCCL_EXPOSE_STATIC)
+  add_definitions(-DRCCL_EXPOSE_STATIC)
+endif()
 # Determine version from makefiles/version.mk and fill in templates
 #==================================================================================================
 ## parse version from Makefile NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH must exist
