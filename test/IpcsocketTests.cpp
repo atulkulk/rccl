@@ -57,45 +57,28 @@ namespace RcclUnitTesting
       // === Child: Receiver ===
       close(pipeFd[0]);
   
-      fprintf(stderr, "Create socket\n");
       char sockPath[108];
       snprintf(sockPath, sizeof(sockPath), "/tmp/ipc_sock_%lx", hash);
       unlink(sockPath);
       
-      fprintf(stderr, "Listening to FD error\n");
       int listenFd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
-      if(listenFd<0){printf("Listen FD error\n");}
       ASSERT_GT(listenFd, 0);
-      fprintf(stderr, "Done . Listening to FD error\n");
-      
       
       struct sockaddr_un addr = {};
       addr.sun_family = AF_UNIX;
       strncpy(addr.sun_path, sockPath, sizeof(addr.sun_path) - 1);
       
-      fprintf(stderr, "Bind\n");
-      //ASSERT_EQ(bind(listenFd, (struct sockaddr*)&addr, sizeof(addr)), 0);
-      if (bind(listenFd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        perror("bind"); exit(2);
-      }
-      std::cout<<"Bind done. What is listenFd : "<<listenFd<<"\n";
-      printf("Listen\n");
-      //ASSERT_EQ(listen(listenFd, 1), 0);
-      if (listen(listenFd, 1) != 0) {
-        perror("listen"); exit(3);
-      }
-      fprintf(stderr, "Listen done\n");
+      ASSERT_EQ(bind(listenFd, (struct sockaddr*)&addr, sizeof(addr)), 0);
+      
+      ASSERT_EQ(listen(listenFd, 1), 0);
       // Signal parent we're ready to accept
       ASSERT_EQ(write(pipeFd[1], "r", 1), 1);
-     
-
+    
       close(pipeFd[1]);
   
-
       int connFd = accept(listenFd, NULL, NULL);
       if (connFd < 0) { perror("accept"); exit(4); }
       ASSERT_GT(connFd, 0);
-      fprintf(stderr, "Child: Accepted connection\n");
 
       ncclIpcSocket handle = {
         .fd = connFd,
@@ -104,22 +87,13 @@ namespace RcclUnitTesting
       strncpy(handle.socketName, sockPath, sizeof(handle.socketName));
   
       int recvFd = -1;
-      //ASSERT_EQ(ncclIpcSocketRecvFd(&handle, &recvFd), ncclSuccess);
-      ncclResult_t res = ncclIpcSocketRecvFd(&handle, &recvFd);
-      fprintf(stderr, "Child: ncclIpcSocketRecvFd -> %d, FD = %d\n", res, recvFd);
-      if (res != ncclSuccess) {
-        fprintf(stderr, "Child: ncclIpcSocketRecvFd failed with code %d\n", res);
-        exit(5);
-      }
+      ASSERT_EQ(ncclIpcSocketRecvFd(&handle, &recvFd), ncclSuccess);
       ASSERT_GE(recvFd, 0);
   
       // Optionally verify FD
       struct stat st;
-      //ASSERT_EQ(fstat(recvFd, &st), 0);
-      if (fstat(recvFd, &st) != 0) {
-        perror("fstat"); exit(6);
-      }
-
+      ASSERT_EQ(fstat(recvFd, &st), 0);
+      
       close(recvFd);
       
       // Send a new FD back to parent
@@ -161,9 +135,7 @@ namespace RcclUnitTesting
   
       int fdToSend = open("/dev/null", O_RDONLY);
       ASSERT_GE(fdToSend, 0);
-      printf("sending to FD\n");
       ASSERT_EQ(ncclIpcSocketSendFd(&handle, fdToSend, rank, hash), ncclSuccess);
-      printf("Sent to FD\n");
       close(fdToSend);
       
       // Receive FD from child
