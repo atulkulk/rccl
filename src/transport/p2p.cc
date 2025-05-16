@@ -100,7 +100,7 @@ struct p2pCuMemProxyInfo {
 NCCL_PARAM(LegacyCudaRegister, "LEGACY_CUDA_REGISTER", 0);
 
 /* Convert a PCI busId string into a local cudaDev device index (cf. CUDA_VISIBLE_DEVICES) */
-static int busIdToCudaDev(int64_t busId) {
+rccl_static int busIdToCudaDev(int64_t busId) {
   int ndev;
   if (cudaGetDeviceCount(&ndev) != cudaSuccess)
     return -1;
@@ -118,7 +118,7 @@ static int busIdToCudaDev(int64_t busId) {
 
 // CE memcpy support
 NCCL_PARAM(P2pUseCudaMemcpy, "P2P_USE_CUDA_MEMCPY", 0);
-static int useMemcpy = 0;
+rccl_static int useMemcpy = 0;
 static void initCeOperation();
 
 
@@ -328,7 +328,7 @@ NCCL_PARAM(P2pDirectDisable, "P2P_DIRECT_DISABLE", 0);
 
 #define P2P_SAME_PID(MYINFO, PEERINFO) ((MYINFO->hostHash == PEERINFO->hostHash) && (MYINFO->pidHash == PEERINFO->pidHash))
 
-static ncclResult_t p2pGetInfo(struct ncclComm* comm, struct ncclPeerInfo* info1, struct ncclPeerInfo* info2, int* read, int* intermediateRank) {
+rccl_static ncclResult_t p2pGetInfo(struct ncclComm* comm, struct ncclPeerInfo* info1, struct ncclPeerInfo* info2, int* read, int* intermediateRank) {
   int p2p;
   // Queries the topology to see if the GPUs are Ampere and
   // connected via NVLink, if so we enable P2P Read by default
@@ -339,7 +339,7 @@ static ncclResult_t p2pGetInfo(struct ncclComm* comm, struct ncclPeerInfo* info1
   return ncclSuccess;
 }
 
-static ncclResult_t p2pMap(struct ncclComm *comm, struct ncclProxyConnector* proxyConn, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclP2pBuff* p2pBuff, void** devMem, void** ipcPtr) {
+rccl_static ncclResult_t p2pMap(struct ncclComm *comm, struct ncclProxyConnector* proxyConn, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclP2pBuff* p2pBuff, void** devMem, void** ipcPtr) {
   if (P2P_SAME_PID(myInfo, peerInfo)) {
     if (peerInfo->cudaDev != myInfo->cudaDev) {
       // Same PID different GPUs, enable P2P access
@@ -511,7 +511,7 @@ ncclResult_t p2pRecvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, st
 }
 
 /* Connect/Send to this peer */
-static ncclResult_t p2pSendConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank, struct ncclConnector* send) {
+rccl_static ncclResult_t p2pSendConnect(struct ncclComm* comm, struct ncclConnect* connectInfo, int nranks, int rank, struct ncclConnector* send) {
   struct p2pResources* resources = (struct p2pResources*)send->transportResources;
   struct ncclRecvMem* remDevMem = NULL;
   struct p2pConnectInfo* info = (struct p2pConnectInfo*)connectInfo;
@@ -652,7 +652,7 @@ ncclResult_t p2pRecvFree(struct ncclConnector* recv) {
   return ncclSuccess;
 }
 
-static ncclResult_t p2pSendProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t p2pSendProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   if (useMemcpy) {
     // CE memcpy support
     struct p2pShmProxyInfo* proxyInfo;
@@ -696,7 +696,7 @@ static ncclResult_t p2pSendProxySetup(struct ncclProxyConnection* connection, st
   return ncclSuccess;
 }
 
-static ncclResult_t p2pRecvProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t p2pRecvProxySetup(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   struct ncclP2pRequest* req = (struct ncclP2pRequest*)reqBuff;
   if (reqSize != sizeof(struct ncclP2pRequest)) return ncclInternalError;
   int size = req->size;
@@ -717,7 +717,7 @@ static ncclResult_t p2pRecvProxySetup(struct ncclProxyConnection* connection, st
   return ncclSuccess;
 }
 
-static ncclResult_t p2pSendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t p2pSendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   struct p2pShmProxyInfo* proxyInfo = (struct p2pShmProxyInfo*)connection->transportResources;
 
   if (reqSize != sizeof(void*)) return ncclInternalError;
@@ -731,7 +731,7 @@ static ncclResult_t p2pSendProxyConnect(struct ncclProxyConnection* connection, 
   return ncclSuccess;
 }
 
-static ncclResult_t p2pSendProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
+rccl_static ncclResult_t p2pSendProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
   // CE memcpy support
   if (useMemcpy) {
     struct p2pShmProxyInfo* proxyInfo = (struct p2pShmProxyInfo*)connection->transportResources;
@@ -763,7 +763,7 @@ static ncclResult_t p2pSendProxyFree(struct ncclProxyConnection* connection, str
   return ncclSuccess;
 }
 
-static ncclResult_t p2pRecvProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
+rccl_static ncclResult_t p2pRecvProxyFree(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState) {
   if (ncclCuMemEnable()) {
     struct p2pCuMemProxyInfo *proxyInfo = (struct p2pCuMemProxyInfo *) connection->transportResources;
     if (proxyInfo) {
@@ -780,7 +780,7 @@ static ncclResult_t p2pRecvProxyFree(struct ncclProxyConnection* connection, str
 }
 
 // CE memcpy support
-static ncclResult_t p2pSendProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
+rccl_static ncclResult_t p2pSendProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
   if (args->state == ncclProxyOpReady) {
     for (int s=0; s<args->nsubs; s++) {
       struct ncclProxySubArgs* sub = args->subs+s;
@@ -837,7 +837,7 @@ static ncclResult_t p2pSendProxyProgress(struct ncclProxyState* proxyState, stru
   return ncclSuccess;
 }
 
-static ncclResult_t ipcRegisterBuffer(ncclComm* comm, const void* userbuff, size_t buffSize, int* peerRanks, int nPeers, ncclIpcRegType type, struct ncclReg* regRecord, int* regBufFlag, uintptr_t* offsetOut, uintptr_t** peerRmtAddrsOut, bool* isLegacyIpc) {
+rccl_static ncclResult_t ipcRegisterBuffer(ncclComm* comm, const void* userbuff, size_t buffSize, int* peerRanks, int nPeers, ncclIpcRegType type, struct ncclReg* regRecord, int* regBufFlag, uintptr_t* offsetOut, uintptr_t** peerRmtAddrsOut, bool* isLegacyIpc) {
 ncclResult_t ret = ncclSuccess;
   struct ncclIpcRegInfo* newInfo = NULL;
   uintptr_t* peerRmtAddrs = NULL;
@@ -1011,7 +1011,7 @@ struct ncclIpcCleanupCallback {
   struct ncclReg *reg;
 };
 
-static ncclResult_t cleanupIpc(struct ncclComm* comm, struct ncclCommCallback* cb) {
+rccl_static ncclResult_t cleanupIpc(struct ncclComm* comm, struct ncclCommCallback* cb) {
   struct ncclIpcCleanupCallback* obj = (struct ncclIpcCleanupCallback*)cb;
   NCCLCHECK(ncclCommGraphDeregister(obj->comm, obj->reg));
   free(obj);
@@ -1066,7 +1066,7 @@ ncclResult_t ncclIpcDeregBuffer(struct ncclComm* comm, struct ncclIpcRegInfo* re
   return ncclSuccess;
 }
 
-static ncclResult_t p2pProxyRegister(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+rccl_static ncclResult_t p2pProxyRegister(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
   struct p2pIpcExpInfo* ipcExpInfo = (struct p2pIpcExpInfo*)reqBuff;
   void* regAddr = NULL;
   ncclResult_t ret = ncclSuccess;
@@ -1128,7 +1128,7 @@ fail:
   goto exit;
 }
 
-static ncclResult_t p2pProxyDeregister(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, int* done) {
+rccl_static ncclResult_t p2pProxyDeregister(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, int* done) {
   ncclResult_t ret = ncclSuccess;
   struct ncclIpcImpInfo* ipcInfo = (struct ncclIpcImpInfo*)reqBuff;
   assert(sizeof(struct ncclIpcImpInfo) == reqSize);
@@ -1158,7 +1158,7 @@ struct ncclTransport p2pTransport = {
 };
 
 static void initCeOperation() {
-  static int init = 0;
+  rccl_static int init = 0;
   if (!init) {
     useMemcpy = ncclParamP2pUseCudaMemcpy();
     if (useMemcpy) {
