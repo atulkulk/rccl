@@ -46,7 +46,6 @@ if(BUILD_TESTS)
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
-    _RecorderTests.cpp
     common/main.cpp
     common/CallCollectiveForked.cpp
     common/CollectiveArgs.cpp
@@ -56,7 +55,16 @@ if(BUILD_TESTS)
     common/TestBed.cpp
     common/TestBedChild.cpp
     common/StandaloneUtils.cpp
+
     )
+
+  if (ROCM_VERSION VERSION_GREATER_EQUAL "60400")
+    # Add recorder source file to release builds for recorder tests
+    list(APPEND TEST_SOURCE_FILES
+    _RecorderTests.cpp
+    ../src/misc/recorder.cc
+    )
+  endif()
 
   add_executable(rccl-UnitTests ${TEST_SOURCE_FILES})
 

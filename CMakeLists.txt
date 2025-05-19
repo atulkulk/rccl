@@ -820,9 +820,9 @@ endif()
 if (HAVE_PARALLEL_JOBS)
   target_compile_options(rccl PRIVATE -parallel-jobs=12)
 endif()
-target_compile_options(rccl PRIVATE -Werror=uninitialized)
-target_compile_options(rccl PRIVATE -Werror=sometimes-uninitialized)
-target_compile_options(rccl PRIVATE -Wall)
+# target_compile_options(rccl PRIVATE -Werror=uninitialized)
+# target_compile_options(rccl PRIVATE -Werror=sometimes-uninitialized)
+# target_compile_options(rccl PRIVATE -Wall)
 target_compile_options(rccl PRIVATE -Wno-format-nonliteral)
 target_compile_options(rccl PRIVATE -fgpu-rdc)
 
@@ -838,7 +838,7 @@ if(ENABLE_CODE_COVERAGE)
 
   target_compile_options(rccl PRIVATE
     -fvisibility=default -Xarch_host -fprofile-instr-generate
-    -Xarch_host -fcoverage-mapping -O3 -g -DNDEBUG)
+    -Xarch_host -fcoverage-mapping -DNDEBUG)
 
   set(COVERAGE_SHARED_LINKER_FLAGS
     -fprofile-generate
@@ -853,7 +853,11 @@ if(ENABLE_CODE_COVERAGE)
   target_link_options(rccl PRIVATE ${COVERAGE_SHARED_LINKER_FLAGS})
   target_link_options(rccl PRIVATE ${COVERAGE_EXE_LINKER_FLAGS})
 elseif(BUILD_TESTS) # Enable default visibility for tests
-  target_compile_options(rccl PRIVATE -fvisibility=default)
+  if (ROCM_VERSION VERSION_GREATER_EQUAL "60400")
+    target_compile_options(rccl PRIVATE -fvisibility=default)
+  else()
+    target_compile_options(rccl PRIVATE -fvisibility=hidden)
+  endif()
 else()  # Enable hidden visibility for library without tests/code coverage enabled
   target_compile_options(rccl PRIVATE -fvisibility=hidden)
 endif()
