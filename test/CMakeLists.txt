@@ -119,6 +119,7 @@ if(BUILD_TESTS)
       AltRsmiTests.cpp
       AllocTests.cpp
       ArgCheckTests.cpp
+      CollRegTests.cpp
       ShmTests.cpp
       P2pTests.cpp
       IpcsocketTests.cpp
