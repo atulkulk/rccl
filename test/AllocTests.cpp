@@ -59,7 +59,8 @@ namespace RcclUnitTesting
         void* ptr = reinterpret_cast<void*>(0x1234);     // dummy non-null input
         void* handle = reinterpret_cast<void*>(0x5678);  // dummy non-null input
         size_t size = 1024;
-        ncclResult_t result = ncclCuMemAlloc(&ptr, &handle, size);
+        hipMemAllocationHandleType type = hipMemHandleTypeNone;
+        ncclResult_t result = ncclCuMemAlloc(&ptr, &handle, type, size);
         EXPECT_EQ(result, ncclInternalError);       
     }
 
