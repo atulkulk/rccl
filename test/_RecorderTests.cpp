@@ -45,15 +45,26 @@ namespace RcclUnitTesting
     //parse the outfile
     std::string filename = "test" + std::to_string(pid) + ".json";
     std::ifstream fp("/tmp/test" + std::to_string(pid) + ".json");
-    fp.getline(entry, 4096);
-    fp.getline(entry, 4096);
-    fp.getline(entry, 4096);
-    parseJsonEntry(entry, calls);
-    int result = memcmp((char*)&calls[0]+4, (char*)&call+4, sizeof(rccl::rcclApiCall)-4);
+    // Find and parse only the rrAllToAllv line
+    // Limiting the search to the rrAllToAllv line is to avoid
+    // parsing the entire file as other tests in the suite may
+    // have written to the file
+    int result;
+    int entryCount = 0;
+    while (fp.getline(entry, 4096)) {
+      std::string line(entry);
+      if (line.find("AllToAllv") != std::string::npos) {
+        parseJsonEntry(entry, calls);
+        int result = memcmp((char*)&calls[entryCount]+4, (char*)&call+4, sizeof(rccl::rcclApiCall)-4);
+        entryCount++;
+        assert(!result);
+        break;
+      }
+    }
+
     fp.close(); // care that recorder is not designed to anticipate fp closing before destructor
     remove(filename.c_str());
     unsetenv("RCCL_REPLAY_FILE");
-    assert(!result);
   }
 
   /**
