@@ -76,26 +76,41 @@ if(BUILD_TESTS)
     ShmTests.cpp
     common/main_fixtures.cpp
     common/EnvVars.cpp
+    device/DeviceCommonTests.cpp
   )
+
+  enable_language(HIP)
 
   # Add rccl-UnitTests binary
   add_executable(rccl-UnitTests ${TEST_SOURCE_FILES})
 
   # Add rccl-UnitTestsFixtures binary
   add_executable(rccl-UnitTestsFixtures ${TEST_FIXTURE_SOURCE_FILES})
-  ## Set rccl-UnitTests include directories
-  target_include_directories(rccl-UnitTests PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS})
-  target_include_directories(rccl-UnitTests PRIVATE ${PROJECT_BINARY_DIR}/include)            # for generated rccl.h header
-  target_include_directories(rccl-UnitTests PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include) # for rccl_bfloat16.h
-  target_include_directories(rccl-UnitTests PRIVATE ${PROJECT_BINARY_DIR}/hipify/src) 
+
+  # Adjust the path to where your .co files are generated
+  file(GLOB RCCL_CO_FILES "${PROJECT_BINARY_DIR}/*.co")
+
+  message (STATUS "RCCL_CO_FILES = ${RCCL_CO_FILES}")
 
   ## Set include directories for both binaries
   foreach(target rccl-UnitTests rccl-UnitTestsFixtures)
+
+    set_target_properties(${target} PROPERTIES LINKER_LANGUAGE HIP)
+
+    target_compile_options(${target} PRIVATE -fgpu-rdc)
+
+    target_link_options(${target} PRIVATE --hip-link -fgpu-rdc)
+
     target_include_directories(${target} PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS})
     target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/include)            # for generated rccl.h header
     target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include) # for rccl_bfloat16.h
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/gensrc) # for rccl_bfloat16.h
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src)
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/device)
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/device/network)
 
     ## Set compile definitions
+    target_compile_definitions(${target} PRIVATE ENABLE_FAULT_INJECTION)
     if(LL128_ENABLED)
       target_compile_definitions(${target} PRIVATE ENABLE_LL128)
     endif()
@@ -104,19 +119,12 @@ if(BUILD_TESTS)
     endif()
     target_compile_definitions(${target} PRIVATE ROCM_PATH="${ROCM_PATH}")
 
-    ## Set rccl-UnitTests linked libraries
-    target_link_libraries(rccl-UnitTests PRIVATE ${GTEST_BOTH_LIBRARIES})
-    target_link_libraries(rccl-UnitTests PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
-    target_link_libraries(rccl-UnitTests PRIVATE Threads::Threads)
-    target_link_libraries(rccl-UnitTests PRIVATE dl)
-    if(OPENMP_TESTS_ENABLED)
-      target_link_libraries(rccl-UnitTests PRIVATE "${OpenMP_CXX_FLAGS}")
-    endif()
-
     ## Set linked libraries
+    target_link_libraries(${target} PRIVATE --hip-link -fgpu-rdc)             # Required when linking relocatable device code
     target_link_libraries(${target} PRIVATE ${GTEST_BOTH_LIBRARIES})
     target_link_libraries(${target} PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
     target_link_libraries(${target} PRIVATE Threads::Threads)
+    target_link_libraries(${target} PRIVATE dl)
     if(OPENMP_TESTS_ENABLED)
       target_link_libraries(${target} PRIVATE "${OpenMP_CXX_FLAGS}")
     endif()
@@ -130,10 +138,12 @@ if(BUILD_TESTS)
       target_link_libraries(${target} PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
     endif()
     set_property(TARGET ${target} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
+
+     # Install the binaries
+    rocm_install(TARGETS ${target} COMPONENT tests)
   endforeach()
 
-  # Install the binaries
-  rocm_install(TARGETS rccl-UnitTests rccl-UnitTestsFixtures COMPONENT tests)
+
 else()
   message("Not building rccl unit tests")
 endif()
