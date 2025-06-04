@@ -123,6 +123,7 @@ if(BUILD_TESTS)
       ShmTests.cpp
       P2pTests.cpp
       IpcsocketTests.cpp
+      TransportTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
       graph/XmlTests.cpp
