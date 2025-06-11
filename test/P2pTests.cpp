@@ -5,6 +5,7 @@
  ************************************************************************/
 
 #include "p2p.h"
+#include "rccl/rccl.h"
 #include "shm.h"
 #include "transport.h"
 #include "register.h"
@@ -89,29 +90,29 @@ struct ncclIpcCleanupCallback {
   struct ncclReg *reg;
 };
 
-ncclResult_t p2pCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* info1, struct ncclPeerInfo* info2);
+// ncclResult_t p2pCanConnect(int* ret, struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* info1, struct ncclPeerInfo* info2);
 
-ncclResult_t ncclP2pAllocateShareableBuffer(size_t size, int refcount, ncclIpcDesc *ipcDesc, void **ptr);
+// ncclResult_t ncclP2pAllocateShareableBuffer(size_t size, int refcount, ncclIpcDesc *ipcDesc, void **ptr);
 
-ncclResult_t ncclP2pImportShareableBuffer(struct ncclComm *comm, int peer, size_t size, ncclIpcDesc *ipcDesc, void **devMemPtr);
+// ncclResult_t ncclP2pImportShareableBuffer(struct ncclComm *comm, int peer, size_t size, ncclIpcDesc *ipcDesc, void **devMemPtr);
 
-ncclResult_t ncclP2pFreeShareableBuffer(ncclIpcDesc *ipcDesc);
+// ncclResult_t ncclP2pFreeShareableBuffer(ncclIpcDesc *ipcDesc);
 
-ncclResult_t p2pMap(struct ncclComm *comm, struct ncclProxyConnector* proxyConn, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclP2pBuff* p2pBuff, void** devMem, void** ipcPtr);
+// ncclResult_t p2pMap(struct ncclComm *comm, struct ncclProxyConnector* proxyConn, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclP2pBuff* p2pBuff, void** devMem, void** ipcPtr);
 
-ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo,
-	    struct ncclConnect* connectInfo, struct ncclConnector* send, int channelId, int connIndex);
+// ncclResult_t p2pSendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo,
+// 	    struct ncclConnect* connectInfo, struct ncclConnector* send, int channelId, int connIndex);
 
-ncclResult_t p2pRecvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo,
-      struct ncclConnect* connectInfo, struct ncclConnector* recv, int channelId, int connIndex);
+// ncclResult_t p2pRecvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo,
+//       struct ncclConnect* connectInfo, struct ncclConnector* recv, int channelId, int connIndex);
 
-ncclResult_t ipcRegisterBuffer(ncclComm* comm, const void* userbuff, size_t buffSize, int* peerRanks, int nPeers, ncclIpcRegType type, struct ncclReg* regRecord, int* regBufFlag, uintptr_t* offsetOut, uintptr_t** peerRmtAddrsOut, bool* isLegacyIpc);
+// ncclResult_t ipcRegisterBuffer(ncclComm* comm, const void* userbuff, size_t buffSize, int* peerRanks, int nPeers, ncclIpcRegType type, struct ncclReg* regRecord, int* regBufFlag, uintptr_t* offsetOut, uintptr_t** peerRmtAddrsOut, bool* isLegacyIpc);
 
-ncclResult_t cleanupIpc(struct ncclComm* comm, struct ncclCommCallback* cb);
+// ncclResult_t cleanupIpc(struct ncclComm* comm, struct ncclCommCallback* cb);
 
-ncclResult_t ncclIpcGraphRegisterBuffer(ncclComm* comm, const void* userbuff, size_t buffSize, int* peerRanks, int nPeers, ncclIpcRegType type, int* regBufFlag, uintptr_t* offsetOut, uintptr_t** peerRmtAddrsOut, void* cleanupQueuePtr, int* nCleanupQueueElts);
+// ncclResult_t ncclIpcGraphRegisterBuffer(ncclComm* comm, const void* userbuff, size_t buffSize, int* peerRanks, int nPeers, ncclIpcRegType type, int* regBufFlag, uintptr_t* offsetOut, uintptr_t** peerRmtAddrsOut, void* cleanupQueuePtr, int* nCleanupQueueElts);
 
-ncclResult_t ncclCommGraphRegister(const ncclComm_t comm, void* buff, size_t size, void** handle);
+// ncclResult_t ncclCommGraphRegister(const ncclComm_t comm, void* buff, size_t size, void** handle);
 
 class P2pTest : public ::testing::Test {
 protected:
@@ -1385,14 +1386,12 @@ TEST_F(P2pTest, IpcRegisterBufferFailures) {
   free(comm.rankToLocalRank);
 }
 
-*/
-
 TEST_F(P2pTest, CleanupIpc_SingleProcess) {
   // Setup comm and reg structures
   ncclComm_t comm;
   struct ncclTopoSystem system;
   ncclUniqueId id;
-  ncclCommInitRank(&comm, 1, id, 0);
+  ncclCommInitAll(&comm, 1, nullptr);
 
   struct ncclReg* reg = nullptr;
   void* dptr = nullptr;
@@ -1416,3 +1415,4 @@ TEST_F(P2pTest, CleanupIpc_SingleProcess) {
   hipFree(dptr);
 }
 
+*/

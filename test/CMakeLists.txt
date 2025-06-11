@@ -3,6 +3,68 @@
 
 cmake_minimum_required(VERSION 2.8.12)
 
+function(create_test_binary bin_name srcs)
+  set(options)
+  set(oneValueArgs)
+  set(multiValueArgs INCLUDES LIBS)
+  cmake_parse_arguments(CTB "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  add_executable(${bin_name} ${srcs})
+
+  target_include_directories(${bin_name} PRIVATE
+    ${GTEST_INCLUDE_DIRS}
+    ${GMOCK_INCLUDE_DIRS}
+    ${PROJECT_BINARY_DIR}/include
+    ${PROJECT_BINARY_DIR}/hipify/src/include
+    ${PROJECT_SOURCE_DIR}/src
+    ${ROCM_PATH}/include)
+
+  # Add optional includes if provided
+  if(CTB_INCLUDES)
+    target_include_directories(${bin_name} PRIVATE ${CTB_INCLUDES})
+  endif()
+
+  target_compile_definitions(${bin_name} PRIVATE ROCM_PATH="${ROCM_PATH}")
+  # target_compile_definitions(${bin_name} PRIVATE warpSize=64)
+
+  # Example compile definitions, adjust as needed
+  if(LL128_ENABLED)
+    target_compile_definitions(${bin_name} PRIVATE ENABLE_LL128)
+  endif()
+  if(OPENMP_TESTS_ENABLED)
+    target_compile_definitions(${bin_name} PRIVATE ENABLE_OPENMP)
+  endif()
+  target_compile_definitions(${bin_name} PRIVATE ROCM_PATH="${ROCM_PATH}")
+
+  target_link_libraries(${bin_name} PRIVATE
+    GTest::gtest
+    GTest::gmock
+    Threads::Threads
+    dl
+    hip::host hip::device hsa-runtime64::hsa-runtime64)
+    # hip::host hip::device)
+
+  # Add optional libs if provided
+  if(CTB_LIBS)
+    target_link_libraries(${bin_name} PRIVATE ${CTB_LIBS})
+  endif()
+
+  set_property(TARGET ${bin_name} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
+
+  # Link rccl library
+  if(BUILD_SHARED_LIBS)
+    target_link_libraries(${bin_name} PRIVATE rccl)
+    set_property(TARGET ${bin_name} PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${ROCM_PATH}/lib;${CMAKE_BINARY_DIR}")
+  else()
+    add_dependencies(${bin_name} rccl)
+    target_link_libraries(${bin_name} PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
+  endif()
+  set_property(TARGET ${bin_name} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
+
+  # Install the binary into the tests component
+  rocm_install(TARGETS ${bin_name} COMPONENT tests)
+endfunction()
+
 if(BUILD_TESTS)
 
   option(OPENMP_TESTS_ENABLED "Enable OpenMP for unit tests" OFF)
@@ -67,6 +129,7 @@ if(BUILD_TESTS)
     P2pTests.cpp
     common/main_fixtures.cpp
     common/EnvVars.cpp
+    device/CommonTests.cpp
   )
 
   # Add rccl-UnitTests binary
@@ -77,9 +140,10 @@ if(BUILD_TESTS)
 
   ## Set include directories for both binaries
   foreach(target rccl-UnitTests rccl-UnitTestsFixtures)
-    target_include_directories(${target} PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS})
+    target_include_directories(${target} PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS} ${GMOCK_INCLUDE_DIRS})
     target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/include)            # for generated rccl.h header
     target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include) # for rccl_bfloat16.h
+    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/gensrc) # for rccl_bfloat16.h
     target_include_directories(${target} PRIVATE ${PROJECT_SOURCE_DIR}/src)                # for graph/topo.h
 
     ## Set compile definitions
@@ -91,19 +155,11 @@ if(BUILD_TESTS)
     endif()
     target_compile_definitions(${target} PRIVATE ROCM_PATH="${ROCM_PATH}")
 
-    ## Set rccl-UnitTests linked libraries
-    target_link_libraries(rccl-UnitTests PRIVATE ${GTEST_BOTH_LIBRARIES})
-    target_link_libraries(rccl-UnitTests PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
-    target_link_libraries(rccl-UnitTests PRIVATE Threads::Threads)
-    target_link_libraries(rccl-UnitTests PRIVATE dl)
-    if(OPENMP_TESTS_ENABLED)
-      target_link_libraries(rccl-UnitTests PRIVATE "${OpenMP_CXX_FLAGS}")
-    endif()
-
     ## Set linked libraries
-    target_link_libraries(${target} PRIVATE ${GTEST_BOTH_LIBRARIES})
-    target_link_libraries(${target} PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
+    target_link_libraries(${target} PRIVATE ${GTEST_BOTH_LIBRARIES} ${GMOCK_BOTH_LIBRARIES})
     target_link_libraries(${target} PRIVATE Threads::Threads)
+    target_link_libraries(${target} PRIVATE dl)
+    target_link_libraries(${target} PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
     if(OPENMP_TESTS_ENABLED)
       target_link_libraries(${target} PRIVATE "${OpenMP_CXX_FLAGS}")
     endif()
@@ -117,10 +173,16 @@ if(BUILD_TESTS)
       target_link_libraries(${target} PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
     endif()
     set_property(TARGET ${target} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
+
+    # Install the binaries
+    rocm_install(TARGETS ${target} COMPONENT tests)
+
   endforeach()
 
-  # Install the binaries
-  rocm_install(TARGETS rccl-UnitTests rccl-UnitTestsFixtures COMPONENT tests)
+  create_test_binary(
+    P2pMockTest
+    "P2pMockTests.cpp;HipMockWrappers.cpp")
+
 else()
   message("Not building rccl unit tests")
 endif()
