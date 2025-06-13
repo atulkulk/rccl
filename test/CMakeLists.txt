@@ -87,32 +87,6 @@ if(BUILD_TESTS)
       common/EnvVars.cpp
     )
 
-    set(HIPIFY_SRC_DIR "${PROJECT_BINARY_DIR}/hipify/src")
-    set(REPLACE_SCRIPT "${CMAKE_SOURCE_DIR}/tools/scripts/replace_static.sh")
-    message ("Replacing static functions in ${HIPIFY_SRC_DIR} with ${REPLACE_SCRIPT}")
-
-    # Create a list of files which needs to be modified to remove static
-    set(TEST_NONSTATIC_SOURCE_FILES
-      ${HIPIFY_SRC_DIR}/misc/alt_rsmi.cc
-      ${HIPIFY_SRC_DIR}/transport/shm.cc
-    )
-
-    # Create a custom command to backup the original files and remove static
-    foreach(srcfile ${TEST_NONSTATIC_SOURCE_FILES})
-      add_custom_command(
-        OUTPUT "${srcfile}.staticbak"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${srcfile}" "${srcfile}.staticbak"
-        COMMAND ${CMAKE_COMMAND} -E echo "Replacing static in ${srcfile}"
-        COMMAND bash -c "\"${REPLACE_SCRIPT}\" \"${srcfile}\" --replace-vars 2>&1"
-        DEPENDS "${srcfile}" "${REPLACE_SCRIPT}"
-        COMMENT "Removing static from ${srcfile} (backup at ${srcfile}.staticbak)"
-        VERBATIM
-      )
-      list(APPEND STATIC_BAK_FILES "${srcfile}.staticbak")
-    endforeach()
-    add_custom_target(replace_static_in_hipify ALL DEPENDS ${STATIC_BAK_FILES})
-    add_dependencies(replace_static_in_hipify hipify_all)
-
     # Add rccl-UnitTestsFixtures binary
     add_executable(rccl-UnitTestsFixtures ${TEST_FIXTURE_SOURCE_FILES})
 
@@ -160,18 +134,5 @@ if(BUILD_TESTS)
     rocm_install(TARGETS ${target} COMPONENT tests)
   endforeach()
 
-else()
-  message("Not building rccl unit tests")
-  # If not building tests, restore originals in the build directory if backup exists
-  foreach(srcfile ${HIPIFY_SRC_FILES})
-    if(EXISTS "${srcfile}.staticbak")
-      execute_process(
-        COMMAND ${CMAKE_COMMAND} -E copy "${srcfile}.staticbak" "${srcfile}"
-      )
-      execute_process(
-        COMMAND ${CMAKE_COMMAND} -E remove "${srcfile}.staticbak"
-      )
-    endif()
-  endforeach()
 endif()
 
