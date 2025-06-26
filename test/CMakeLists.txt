@@ -43,7 +43,6 @@ if(BUILD_TESTS)
     NonBlockingTests.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
-    RcclWrapTests.cpp
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
@@ -83,6 +82,7 @@ if(BUILD_TESTS)
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
       ArgCheckTests.cpp
+      RcclWrapTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
     )

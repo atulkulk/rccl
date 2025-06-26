@@ -26,7 +26,7 @@ THE SOFTWARE.
 #include "enqueue.h"
 void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, struct ncclTaskColl* info) {
   // Honor user input for protocol choice
-  rccl_static int userProtocolInput = -2;
+  static int userProtocolInput = -2;
   if (userProtocolInput == -2) {
     const char *protoStr = getenv("NCCL_PROTO");
     userProtocolInput = !protoStr ? 0 : 1;
@@ -64,7 +64,7 @@ void rcclUpdateCollectiveProtocol(struct ncclComm* comm, size_t const& nBytes, s
       // Warn that model detection for the above listed architectures did not work as expected
       // Add supported archs to this condition as they come
       // Also make sure the tuning_model and model detection are updated for new archs
-      rccl_static bool failedWarn = false;
+      static bool failedWarn = false;
       if (!failedWarn) {
         WARN("LL cutoff points not detected for a supported arch %s", comm->topo->nodes[GPU].nodes[0].gpu.gcn);
         failedWarn = true;

@@ -38,7 +38,6 @@ option(PROFILE                                 "Enable profiling"               
 option(TIMETRACE                               "Enable time-trace during compilation"          OFF)
 option(TRACE                                   "Enable additional tracing"                     OFF)
 option(FAULT_INJECTION                         "Enable fault injection"                        ON)
-option(RCCL_EXPOSE_STATIC                      "Expose internal static functions for testing"  OFF)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -370,9 +369,6 @@ if(ROCTX)
   endif()
 endif()
 
-if(RCCL_EXPOSE_STATIC)
-  add_definitions(-DRCCL_EXPOSE_STATIC)
-endif()
 # Determine version from makefiles/version.mk and fill in templates
 #==================================================================================================
 ## parse version from Makefile NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH must exist
@@ -731,6 +727,7 @@ if (BUILD_TESTS)
   # Create a list of files which needs to be modified to remove static
   set(TEST_NONSTATIC_SOURCE_FILES
     ${HIPIFY_SRC_DIR}/misc/alt_rsmi.cc
+    ${HIPIFY_SRC_DIR}/rccl_wrap.cc
   )
   # Create a custom command to backup the original files and remove static
   foreach(srcfile ${TEST_NONSTATIC_SOURCE_FILES})

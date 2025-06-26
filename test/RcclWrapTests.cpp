@@ -15,9 +15,6 @@
 namespace RcclUnitTesting
 {
   TEST(Rcclwrap, RcclGetAlgoInfoTest) {
-    #ifndef RCCL_EXPOSE_STATIC
-    #error "RCCL_EXPOSE_STATIC is not defined at compile time"
-    #endif
     ncclComm_t comm;
     int nRanks = 1, rank = 0;
   
@@ -32,9 +29,6 @@ namespace RcclUnitTesting
   }
    
   TEST(Rcclwrap, RcclFuncMaxSendRecvCount) {
-    #ifndef RCCL_EXPOSE_STATIC
-    #error "RCCL_EXPOSE_STATIC is not defined at compile time"
-    #endif
     size_t maxCount = 0;
     ncclResult_t result = rcclFuncMaxSendRecvCount(ncclFuncAllReduce, 4, 1024, maxCount);
   
