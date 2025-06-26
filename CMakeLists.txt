@@ -38,7 +38,6 @@ option(PROFILE                                 "Enable profiling"               
 option(TIMETRACE                               "Enable time-trace during compilation"          OFF)
 option(TRACE                                   "Enable additional tracing"                     OFF)
 option(FAULT_INJECTION                         "Enable fault injection"                        ON)
-option(RCCL_EXPOSE_STATIC                      "Expose internal static functions for testing"  OFF)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -370,9 +369,6 @@ if(ROCTX)
   endif()
 endif()
 
-if(RCCL_EXPOSE_STATIC)
-  add_definitions(-DRCCL_EXPOSE_STATIC)
-endif()
 # Determine version from makefiles/version.mk and fill in templates
 #==================================================================================================
 ## parse version from Makefile NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH must exist
@@ -734,6 +730,7 @@ if (BUILD_TESTS)
     ${HIPIFY_SRC_DIR}/register/coll_reg.cc
     ${HIPIFY_SRC_DIR}/transport/shm.cc
     ${HIPIFY_SRC_DIR}/transport/p2p.cc
+    ${HIPIFY_SRC_DIR}/rccl_wrap.cc
   )
 
   set(EXCLUDE_STATIC_FILE "${CMAKE_SOURCE_DIR}/tools/scripts/exclude_static_list.txt")
@@ -1103,6 +1100,7 @@ if(ENABLE_CODE_COVERAGE)
 
   message(STATUS "Code coverage is enabled with build type '${CMAKE_BUILD_TYPE}'.")
 
+  add_definitions(-DRCCL_EXPOSE_STATIC)
   target_compile_options(rccl PRIVATE
     -fvisibility=default -Xarch_host -fprofile-instr-generate
     -Xarch_host -fcoverage-mapping)
