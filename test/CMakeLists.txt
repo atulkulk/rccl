@@ -96,10 +96,10 @@ if(BUILD_TESTS)
     NonBlockingTests.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
-    RcclWrapTests.cpp
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
+    RcclWrapTests.cpp
     _RecorderTests.cpp
     common/main.cpp
     common/CallCollectiveForked.cpp

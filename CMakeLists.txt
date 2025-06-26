@@ -40,7 +40,6 @@ option(TRACE                                   "Enable additional tracing"      
 option(FAULT_INJECTION                         "Enable fault injection"                        ON)
 option(FORCE_REDUCE_PIPELINING                 "Force reduce pipelining"                       OFF)
 option(DISABLE_CHEAP_THREADFENCE               "Compile-time killswitch for simpler fence"     OFF)
-option(RCCL_EXPOSE_STATIC                      "Expose internal static functions for testing"  OFF)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -372,9 +371,6 @@ if(ROCTX)
   endif()
 endif()
 
-if(RCCL_EXPOSE_STATIC)
-  add_definitions(-DRCCL_EXPOSE_STATIC)
-endif()
 # Determine version from makefiles/version.mk and fill in templates
 #==================================================================================================
 ## parse version from Makefile NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH must exist
@@ -1124,6 +1120,7 @@ if(ENABLE_CODE_COVERAGE)
 
   message(STATUS "Code coverage is enabled with build type '${CMAKE_BUILD_TYPE}'.")
 
+  add_definitions(-DRCCL_STATIC_EXPOSE)
   target_compile_options(rccl PRIVATE
     -fvisibility=default -Xarch_host -fprofile-instr-generate
     -Xarch_host -fcoverage-mapping)
