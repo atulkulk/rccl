@@ -65,6 +65,20 @@ if(BUILD_TESTS)
     list(APPEND RCCL_COMMON_LINK_LIBS "${OpenMP_CXX_FLAGS}")
   endif()
 
+  # Get the compile definitions from the main rccl target
+  # These helps to keep the test compile definitions in sync with the main rccl target
+  # Also, all the structure layout remains the same across all the targets
+  get_target_property(RCCL_COMPILE_DEFINITIONS rccl COMPILE_DEFINITIONS)
+  if(RCCL_COMPILE_DEFINITIONS)
+    list(APPEND RCCL_COMMON_COMPILE_DEFS ${RCCL_COMPILE_DEFINITIONS})
+  endif()
+
+  # Also get interface compile definitions
+  get_target_property(RCCL_INTERFACE_COMPILE_DEFINITIONS rccl INTERFACE_COMPILE_DEFINITIONS)
+  if(RCCL_INTERFACE_COMPILE_DEFINITIONS)
+    list(APPEND RCCL_COMMON_COMPILE_DEFS ${RCCL_INTERFACE_COMPILE_DEFINITIONS})
+  endif()
+
   # Collect testing framework source files
   set(TEST_SOURCE_FILES
     AllGatherTests.cpp
@@ -103,83 +117,45 @@ if(BUILD_TESTS)
     )
   endif()
 
-  # Add rccl-UnitTests binary
-  add_executable(rccl-UnitTests ${TEST_SOURCE_FILES})
-
   set(RCCL_TEST_EXECUTABLES rccl-UnitTests)
+
+  # Create rccl-UnitTests binary
+  add_executable(rccl-UnitTests ${TEST_SOURCE_FILES})
+  add_dependencies(rccl-UnitTests replace_static_in_hipify)
 
   # Create rccl-UnitTestsFixtures binary if ROCm version is 4.6.0 or greater
   # and build type is Debug
   if (ROCM_VERSION VERSION_GREATER_EQUAL "60400" AND CMAKE_BUILD_TYPE MATCHES "Debug")
+    # Add rccl-UnitTestsFixtures binary
+    list(APPEND RCCL_TEST_EXECUTABLES rccl-UnitTestsFixtures)
 
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
       ArgCheckTests.cpp
       ShmTests.cpp
+      P2pTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
     )
 
-    # Add rccl-UnitTestsFixtures binary
     add_executable(rccl-UnitTestsFixtures ${TEST_FIXTURE_SOURCE_FILES})
-
-    list(APPEND RCCL_TEST_EXECUTABLES rccl-UnitTestsFixtures)
-
     add_dependencies(rccl-UnitTestsFixtures replace_static_in_hipify)
   endif()
 
-  ## Set include directories for the target(s)
-  foreach(target ${RCCL_TEST_EXECUTABLES})
-    target_include_directories(${target} PRIVATE ${ROCM_PATH} ${GTEST_INCLUDE_DIRS})
-    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/include)            # for generated rccl.h header
-    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include) # for rccl_bfloat16.h
-    target_include_directories(${target} PRIVATE ${PROJECT_BINARY_DIR}/hipify/src/include/plugin) # for recorder tests
-
-    # Get the compile definitions from the main rccl target
-    # These helps to keep the test compile definitions in sync with the main rccl target
-    # Also, all the structure layout remains the same across all the targets
-    get_target_property(RCCL_COMPILE_DEFINITIONS rccl COMPILE_DEFINITIONS)
-    if(RCCL_COMPILE_DEFINITIONS)
-      target_compile_definitions(${target} PRIVATE ${RCCL_COMPILE_DEFINITIONS})
-    endif()
-
-    # Also get interface compile definitions
-    get_target_property(RCCL_INTERFACE_COMPILE_DEFINITIONS rccl INTERFACE_COMPILE_DEFINITIONS)
-    if(RCCL_INTERFACE_COMPILE_DEFINITIONS)
-      target_compile_definitions(${target} PRIVATE ${RCCL_INTERFACE_COMPILE_DEFINITIONS})
-    endif()
-
-    ## Set compile definitions
-    if(LL128_ENABLED)
-      target_compile_definitions(${target} PRIVATE ENABLE_LL128)
-    endif()
-    if(OPENMP_TESTS_ENABLED)
-      target_compile_definitions(${target} PRIVATE ENABLE_OPENMP)
-    endif()
-    target_compile_definitions(${target} PRIVATE ROCM_PATH="${ROCM_PATH}")
-
-    ## Set rccl unittests linked libraries
-    target_link_libraries(${target} PRIVATE ${GTEST_BOTH_LIBRARIES})
-    target_link_libraries(${target} PRIVATE hip::host hip::device hsa-runtime64::hsa-runtime64)
-    target_link_libraries(${target} PRIVATE Threads::Threads)
-    target_link_libraries(${target} PRIVATE dl)
-    target_link_libraries(${target} PRIVATE fmt::fmt-header-only)
-    if(OPENMP_TESTS_ENABLED)
-      target_link_libraries(${target} PRIVATE "${OpenMP_CXX_FLAGS}")
-    endif()
-
-    # Link rccl library
+  foreach(test_executable IN LISTS RCCL_TEST_EXECUTABLES)
+    target_include_directories(${test_executable} PRIVATE ${RCCL_COMMON_INCLUDE_DIRS})
+    target_compile_definitions(${test_executable} PRIVATE ${RCCL_COMMON_COMPILE_DEFS})
+    target_link_libraries(${test_executable} PRIVATE ${RCCL_COMMON_LINK_LIBS})
     if(BUILD_SHARED_LIBS)
-      target_link_libraries(${target} PRIVATE rccl)
-      set_property(TARGET ${target} PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${ROCM_PATH}/lib;${CMAKE_BINARY_DIR}")
+      target_link_libraries(${test_executable} PRIVATE rccl)
+      set_property(TARGET ${test_executable} PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib;${ROCM_PATH}/lib;${CMAKE_BINARY_DIR}")
     else()
-      add_dependencies(${target} rccl)
-      target_link_libraries(${target} PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
+      add_dependencies(${test_executable} rccl)
+      target_link_libraries(${test_executable} PRIVATE dl rt numa -lrccl -L${CMAKE_BINARY_DIR} -lrocm_smi64 -L${ROCM_PATH}/lib -L${ROCM_PATH}/rocm_smi/lib)
     endif()
-    set_property(TARGET ${target} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
 
-    # Install the binary
-    rocm_install(TARGETS ${target} COMPONENT tests)
+    set_property(TARGET ${test_executable} PROPERTY BUILD_RPATH "${CMAKE_BINARY_DIR};${ROCM_PATH}/lib")
+    rocm_install(TARGETS ${test_executable} COMPONENT tests)
   endforeach()
 
 endif()
