@@ -1061,6 +1061,7 @@ if(ENABLE_CODE_COVERAGE)
 
   message(STATUS "Code coverage is enabled with build type '${CMAKE_BUILD_TYPE}'.")
 
+  add_definitions(-DRCCL_EXPOSE_STATIC)
   target_compile_options(rccl PRIVATE
     -fvisibility=default -Xarch_host -fprofile-instr-generate
     -Xarch_host -fcoverage-mapping)

@@ -15,23 +15,25 @@
 namespace RcclUnitTesting
 {
   TEST(Rcclwrap, RcclGetAlgoInfoTest) {
+    RCCL_STATIC_EXPOSE_CHECK();
     ncclComm_t comm;
     int nRanks = 1, rank = 0;
-  
+
     ncclCommInitAll(&comm, nRanks, &rank);  // Valid single-rank init
-  
+
     int algo = -1, proto = -1, maxCh = 0;
     ncclResult_t result = rcclGetAlgoInfo(comm, ncclFuncAllReduce, 1024, ncclFloat32,
                                           1, 1, 0, &algo, &proto, &maxCh);
-  
+
     EXPECT_EQ(result, ncclSuccess);
     ncclCommDestroy(comm);
   }
-   
+ 
   TEST(Rcclwrap, RcclFuncMaxSendRecvCount) {
+    RCCL_STATIC_EXPOSE_CHECK();
     size_t maxCount = 0;
     ncclResult_t result = rcclFuncMaxSendRecvCount(ncclFuncAllReduce, 4, 1024, maxCount);
-  
+
     EXPECT_EQ(result, ncclSuccess);
   }
 

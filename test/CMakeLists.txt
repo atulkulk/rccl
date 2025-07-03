@@ -46,6 +46,7 @@ if(BUILD_TESTS)
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
+    RcclWrapTests.cpp
     _RecorderTests.cpp
     common/main.cpp
     common/CallCollectiveForked.cpp
@@ -82,7 +83,6 @@ if(BUILD_TESTS)
     set(TEST_FIXTURE_SOURCE_FILES
       AltRsmiTests.cpp
       ArgCheckTests.cpp
-      RcclWrapTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
     )
