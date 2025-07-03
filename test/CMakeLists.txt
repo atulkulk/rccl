@@ -122,6 +122,7 @@ if(BUILD_TESTS)
       P2pTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
+      graph/XmlTests.cpp
     )
 
     add_executable(rccl-UnitTestsFixtures ${TEST_FIXTURE_SOURCE_FILES})
