@@ -93,6 +93,7 @@ if(BUILD_TESTS)
     BroadcastTests.cpp
     GatherTests.cpp
     GroupCallTests.cpp
+    IbTest.cpp
     NonBlockingTests.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
@@ -153,6 +154,9 @@ if(BUILD_TESTS)
       common/main_fixtures.cpp
       common/EnvVars.cpp
       graph/XmlTests.cpp
+      CommTest.cpp
+      ProxyTest.cpp
+      NetSocketTest.cpp
     )
 
     add_executable(rccl-UnitTestsFixtures ${TEST_FIXTURE_SOURCE_FILES})

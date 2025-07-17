@@ -29,8 +29,6 @@ option(ENABLE_MSCCL_KERNEL                     "Enable MSCCL while compiling"   
 option(ENABLE_MSCCLPP                          "Enable MSCCL++"                                ON)
 option(ENABLE_MSCCLPP_CLIP                     "Enable MSCCL++ CLIP"                           OFF)
 option(ENABLE_MSCCLPP_EXECUTOR                 "Enable MSCCL++ Executor"                       OFF)
-option(ENABLE_MSCCLPP_FORMAT_CHECKS            "Enable formatting checks in MSCCL++"           OFF)
-option(ENABLE_NPKIT                            "Enable NPKit"                                  OFF)
 option(ENABLE_IFC                              "Enable indirect function call"                 OFF)
 option(INSTALL_DEPENDENCIES                    "Force install dependencies"                    OFF)
 option(ROCTX                                   "Enable ROCTX"                                  ON)
@@ -210,9 +208,6 @@ set(CMAKE_REQUIRED_LIBRARIES hip::device)
 
 ### Check for hipDeviceMallocUncached support
 check_symbol_exists("hipDeviceMallocUncached" "hip/hip_runtime_api.h" HIP_UNCACHED_MEMORY)
-
-### Check for hipHostMallocUncached support
-check_symbol_exists("hipHostMallocUncached" "hip/hip_runtime_api.h" HIP_HOST_UNCACHED_MEMORY)
 
 ### Check for hipDeviceMallocContiguous support
 check_symbol_exists("hipDeviceMallocContiguous" "hip/hip_runtime_api.h" HIP_CONTIGUOUS_MEMORY)
@@ -872,7 +867,6 @@ add_custom_target(git_version_check
   VERBATIM
 )
 
-
 # Set up RCCL library
 #==================================================================================================
 ## Set RCCL source files
@@ -1035,7 +1029,6 @@ if(ENABLE_NPKIT)
   target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_RECV_REDUCE_COPY_EXIT)
   target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
 endif()
-
 if(PROFILE)
   target_compile_definitions(rccl PRIVATE ENABLE_PROFILING)
 endif()
@@ -1066,12 +1059,6 @@ else()
   else()
     message(STATUS "--hipcc-func-supp disabled")
   endif()
-endif()
-if (HIP_HOST_UNCACHED_MEMORY)
-  target_compile_definitions(rccl PRIVATE HIP_HOST_UNCACHED_MEMORY)
-  message(STATUS "HIP_HOST_UNCACHED_MEMORY enabled")
-else()
-  message(STATUS "HIP_HOST_UNCACHED_MEMORY disabled")
 endif()
 if (BUILD_BFD)
   if (HAVE_BFD)
@@ -1209,7 +1196,7 @@ target_link_libraries(rccl INTERFACE hip::host)
 target_link_libraries(rccl PRIVATE   hip::device)
 target_link_libraries(rccl PRIVATE   dl)
 target_link_libraries(rccl PRIVATE   ${ROCM_SMI_LIBRARIES})
-target_link_libraries(rccl PRIVATE fmt::fmt-header-only)
+target_link_libraries(rccl PRIVATE fmt::fmt)
 if(ENABLE_MSCCLPP)
   target_link_libraries(rccl PRIVATE mscclpp_nccl)
 endif()
@@ -1325,9 +1312,7 @@ else()
   set(DEPENDS_HIP_RUNTIME "hip-runtime-amd" )
 endif()
 rocm_package_add_dependencies(DEPENDS "${DEPENDS_HIP_RUNTIME} >= 4.5.0" "rocm-smi-lib >= 4.0.0")
-set(CPACK_DEB_COMPONENT_INSTALL ON)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_RPM_COMPONENT_INSTALL ON)
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/opt" "${ROCM_PATH}")
 
 find_file (DEBIAN debian_version debconf.conf PATHS /etc)
@@ -1361,9 +1346,6 @@ License: See LICENSE.txt for license information\n")
   Optimized primitives for collective multi-GPU communication")
 endif()
 
-## Building RCCL RAS
-include(cmake/rcclRAS.cmake)
-
 if(BUILD_TESTS)
   rocm_package_setup_component(clients)
   rocm_package_setup_client_component(tests PACKAGE_NAME unittests)
@@ -1383,3 +1365,5 @@ rocm_create_package(
   DESCRIPTION "ROCm Communication Collectives Library"
   MAINTAINER  "RCCL Maintainer <rccl-maintainer@amd.com>"
   LDCONFIG)
+
+
