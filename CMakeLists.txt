@@ -29,8 +29,6 @@ option(ENABLE_MSCCL_KERNEL                     "Enable MSCCL while compiling"   
 option(ENABLE_MSCCLPP                          "Enable MSCCL++"                                ON)
 option(ENABLE_MSCCLPP_CLIP                     "Enable MSCCL++ CLIP"                           OFF)
 option(ENABLE_MSCCLPP_EXECUTOR                 "Enable MSCCL++ Executor"                       OFF)
-option(ENABLE_MSCCLPP_FORMAT_CHECKS            "Enable formatting checks in MSCCL++"           OFF)
-option(ENABLE_NPKIT                            "Enable NPKit"                                  OFF)
 option(ENABLE_IFC                              "Enable indirect function call"                 OFF)
 option(INSTALL_DEPENDENCIES                    "Force install dependencies"                    OFF)
 option(ROCTX                                   "Enable ROCTX"                                  ON)
@@ -209,9 +207,6 @@ set(CMAKE_REQUIRED_LIBRARIES hip::device)
 
 ### Check for hipDeviceMallocUncached support
 check_symbol_exists("hipDeviceMallocUncached" "hip/hip_runtime_api.h" HIP_UNCACHED_MEMORY)
-
-### Check for hipHostMallocUncached support
-check_symbol_exists("hipHostMallocUncached" "hip/hip_runtime_api.h" HIP_HOST_UNCACHED_MEMORY)
 
 ### Check for hipDeviceMallocContiguous support
 check_symbol_exists("hipDeviceMallocContiguous" "hip/hip_runtime_api.h" HIP_CONTIGUOUS_MEMORY)
@@ -715,6 +710,51 @@ foreach(SRC_FILE ${SRC_FILES})
   endif()
 endforeach()
 
+# Adding custom target to hipify all the source files
+# This is required to make sure that all the hipified source files are
+# available before compiling the unit tests executable(s)
+add_custom_target(hipify_all DEPENDS ${HIP_SOURCES})
+
+if (BUILD_TESTS)
+  set(HIPIFY_SRC_DIR "${PROJECT_BINARY_DIR}/hipify/src")
+  set(REPLACE_SCRIPT "${CMAKE_SOURCE_DIR}/tools/scripts/replace_static.sh")
+  message ("Replacing static functions in ${HIPIFY_SRC_DIR} with ${REPLACE_SCRIPT} for unit tests")
+  # Create a list of files which needs to be modified to remove static
+  set(TEST_NONSTATIC_SOURCE_FILES
+    ${HIPIFY_SRC_DIR}/include/comm.h
+    ${HIPIFY_SRC_DIR}/transport/net_ib.cc
+  )
+  # Create a custom command to backup the original files and remove static
+  foreach(srcfile ${TEST_NONSTATIC_SOURCE_FILES})
+    add_custom_command(
+      OUTPUT "${srcfile}.staticbak"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${srcfile}" "${srcfile}.staticbak"
+      COMMAND ${CMAKE_COMMAND} -E echo "Replacing static in ${srcfile}"
+      COMMAND bash -c "\"${REPLACE_SCRIPT}\" \"${srcfile}\" --verbose 2>&1"
+      DEPENDS "${srcfile}" "${REPLACE_SCRIPT}"
+      COMMENT "Removing static from ${srcfile} (backup at ${srcfile}.staticbak)"
+      VERBATIM
+    )
+    list(APPEND STATIC_BAK_FILES "${srcfile}.staticbak")
+  endforeach()
+  add_custom_target(replace_static_in_hipify ALL DEPENDS ${STATIC_BAK_FILES})
+  add_dependencies(replace_static_in_hipify hipify_all)
+
+else()
+  message("Not building rccl unit tests")
+  # Restore originals in the build directory if backup exists
+  foreach(srcfile ${HIPIFY_SRC_FILES})
+    if(EXISTS "${srcfile}.staticbak")
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -E copy "${srcfile}.staticbak" "${srcfile}"
+      )
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -E remove "${srcfile}.staticbak"
+      )
+    endif()
+  endforeach()
+endif()
+
 # Generate device/host tables and all the collective functions that are going to be in librccl.so
 #==================================================================================================
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -760,7 +800,6 @@ add_custom_target(git_version_check
   VERBATIM
 )
 
-
 # Set up RCCL library
 #==================================================================================================
 ## Set RCCL source files
@@ -768,6 +807,11 @@ add_library(rccl ${HIP_SOURCES})
 
 ## Set RCCL dependencies
 add_dependencies(rccl git_version_check)                                      # Execute git_version_check during build
+
+if (BUILD_TESTS)
+  ## Set static replacement dependency for unit tests
+  add_dependencies(rccl replace_static_in_hipify)
+endif()
 
 ## Set RCCL include directories
 target_include_directories(rccl PRIVATE ${PROJECT_BINARY_DIR}/include)        # for generated rccl.h header
@@ -799,126 +843,9 @@ endif()
 if(HAVE_ROCM_SMI_THREAD_ONLY_MUTEX)
   target_compile_definitions(rccl PRIVATE USE_ROCM_SMI_THREAD_ONLY_MUTEX)
 endif()
-
-# NPKit flags
-## May be better to move these to a separate file
-if(ENABLE_NPKIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_UPDOWN_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_UPDOWN_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_RECV_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_RECV_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_RECV_REDUCE_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_RECV_REDUCE_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_SEND_FROM_OUTPUT_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_DIRECT_SEND_FROM_OUTPUT_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_REDUCE_COPY_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_REDUCE_COPY_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_REDUCE_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_REDUCE_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_REDUCE_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_RECV_REDUCE_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_FROM_OUTPUT_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_FROM_OUTPUT_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_SIMPLE_WAIT_PEER_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_SIMPLE_WAIT_PEER_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL_WAIT_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL_WAIT_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL128_WAIT_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL128_WAIT_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL128_DATA_PROCESS_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_PRIM_LL128_DATA_PROCESS_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_NET_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_NET_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_NET_TEST_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_NET_TEST_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_NET_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_NET_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_RECV_REDUCE_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_RECV_REDUCE_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_DIRECT_RECV_REDUCE_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_DIRECT_RECV_REDUCE_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_DIRECT_RECV_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_DIRECT_RECV_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_DIRECT_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_RING_DIRECT_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_UPDOWN_REDUCE_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_UPDOWN_REDUCE_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_UPDOWN_BROADCAST_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_UPDOWN_BROADCAST_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_REDUCE_BROADCAST_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_REDUCE_BROADCAST_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_REDUCE_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_REDUCE_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_BROADCAST_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_REDUCE_TREE_SPLIT_BROADCAST_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_RECV_LOCAL_COPY_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_RECV_LOCAL_COPY_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_RECV_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_RECV_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_RECV_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_SEND_RECV_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_RECV_COPY_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_RECV_COPY_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_DIRECT_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_ALL_GATHER_RING_DIRECT_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_GENERIC_OP_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_GENERIC_OP_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_REDUCE_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_REDUCE_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_RECV_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_RECV_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_RUN_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_RUN_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_RECV_REDUCE_COPY_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_RECV_REDUCE_COPY_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_INIT_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_MSCCL_INIT_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_BROADCAST_RING_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_BROADCAST_RING_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_RECV_REDUCE_SEND_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_RECV_REDUCE_SEND_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_RECV_REDUCE_COPY_ENTRY)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_EVENT_REDUCE_SCATTER_RING_RECV_REDUCE_COPY_EXIT)
-  target_compile_definitions(rccl PRIVATE ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+if(NPKIT_FLAGS)
+  target_compile_definitions(rccl PRIVATE ${NPKIT_FLAGS})
 endif()
-
 if(PROFILE)
   target_compile_definitions(rccl PRIVATE ENABLE_PROFILING)
 endif()
@@ -949,12 +876,6 @@ else()
   else()
     message(STATUS "--hipcc-func-supp disabled")
   endif()
-endif()
-if (HIP_HOST_UNCACHED_MEMORY)
-  target_compile_definitions(rccl PRIVATE HIP_HOST_UNCACHED_MEMORY)
-  message(STATUS "HIP_HOST_UNCACHED_MEMORY enabled")
-else()
-  message(STATUS "HIP_HOST_UNCACHED_MEMORY disabled")
 endif()
 if (BUILD_BFD)
   if (HAVE_BFD)
@@ -1091,7 +1012,7 @@ target_link_libraries(rccl INTERFACE hip::host)
 target_link_libraries(rccl PRIVATE   hip::device)
 target_link_libraries(rccl PRIVATE   dl)
 target_link_libraries(rccl PRIVATE   ${ROCM_SMI_LIBRARIES})
-target_link_libraries(rccl PRIVATE fmt::fmt-header-only)
+target_link_libraries(rccl PRIVATE fmt::fmt)
 if(ENABLE_MSCCLPP)
   target_link_libraries(rccl PRIVATE mscclpp_nccl)
 endif()
@@ -1207,9 +1128,7 @@ else()
   set(DEPENDS_HIP_RUNTIME "hip-runtime-amd" )
 endif()
 rocm_package_add_dependencies(DEPENDS "${DEPENDS_HIP_RUNTIME} >= 4.5.0" "rocm-smi-lib >= 4.0.0")
-set(CPACK_DEB_COMPONENT_INSTALL ON)
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_RPM_COMPONENT_INSTALL ON)
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/opt" "${ROCM_PATH}")
 
 find_file (DEBIAN debian_version debconf.conf PATHS /etc)
@@ -1243,9 +1162,6 @@ License: See LICENSE.txt for license information\n")
   Optimized primitives for collective multi-GPU communication")
 endif()
 
-## Building RCCL RAS
-include(cmake/rcclRAS.cmake)
-
 if(BUILD_TESTS)
   rocm_package_setup_component(clients)
   rocm_package_setup_client_component(tests PACKAGE_NAME unittests)
@@ -1265,3 +1181,5 @@ rocm_create_package(
   DESCRIPTION "ROCm Communication Collectives Library"
   MAINTAINER  "RCCL Maintainer <rccl-maintainer@amd.com>"
   LDCONFIG)
+
+
