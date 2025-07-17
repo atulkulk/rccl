@@ -94,6 +94,7 @@ if(BUILD_TESTS)
     GatherTests.cpp
     GroupCallTests.cpp
     NonBlockingTests.cpp
+    ProxyTest.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
     ScatterTests.cpp
