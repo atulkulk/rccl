@@ -38,6 +38,7 @@ option(PROFILE                                 "Enable profiling"               
 option(TIMETRACE                               "Enable time-trace during compilation"          OFF)
 option(TRACE                                   "Enable additional tracing"                     OFF)
 option(FAULT_INJECTION                         "Enable fault injection"                        ON)
+option(FORCE_REDUCE_PIPELINING                 "Force reduce pipelining"                       OFF)
 option(DISABLE_CHEAP_THREADFENCE               "Compile-time killswitch for simpler fence"     OFF)
 
 # Default GPU architectures to build
@@ -731,6 +732,7 @@ if (BUILD_TESTS)
     # Create a list of files which needs to be modified to remove static
     set(TEST_NONSTATIC_SOURCE_FILES
       ${HIPIFY_SRC_DIR}/misc/alt_rsmi.cc
+      ${HIPIFY_SRC_DIR}/transport/shm.cc
     )
     # Create a custom command to backup the original files and remove static
     # Always run replace script on hipified files, but preserve original backups
@@ -796,6 +798,18 @@ file(GLOB GENERATED_FILES "${GEN_DIR}/*")
 # Append all found generated files to the list
 foreach(file ${GENERATED_FILES})
   list(APPEND HIP_SOURCES ${file})
+endforeach()
+
+# Enable SW pipelining where needed
+foreach(SOURCE_FILE ${HIP_SOURCES})
+    # TODO: enable bf16 pipelining by default upon having the pipelined/scalar switching feature
+    # if (FORCE_REDUCE_PIPELINING AND (SOURCE_FILE MATCHES "gensrc/reduce_.*" OR SOURCE_FILE MATCHES "gensrc/reduce_scatter_.*" OR SOURCE_FILE MATCHES "gensrc/all_reduce_.*"))
+    #   message(STATUS "RCCL_ENABLE_SW_PIPELINE enabled for ${SOURCE_FILE}")
+    #   set_source_files_properties(${SOURCE_FILE} PROPERTIES COMPILE_FLAGS "-DRCCL_ENABLE_SW_PIPELINE")
+    if(FORCE_REDUCE_PIPELINING AND SOURCE_FILE MATCHES "gensrc/(reduce|reduce_scatter|all_reduce).*_bf16\\.cpp$")
+      message(STATUS "BF16 pipelining support enabled for ${SOURCE_FILE}")
+      set_source_files_properties(${SOURCE_FILE} PROPERTIES COMPILE_FLAGS "-DRCCL_ENABLE_SW_PIPELINE")
+    endif()
 endforeach()
 
 # Create an initial git_version.cpp file (that will be updated with latest git version)
