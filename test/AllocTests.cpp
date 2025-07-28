@@ -118,5 +118,32 @@ namespace RcclUnitTesting
         hipFree(d_dst);
     
     }
-    
+
+    TEST(Alloc, ZeroElementMemcpy) {
+        float *d_src = nullptr, *d_dst = nullptr;
+        ASSERT_EQ(hipMalloc(&d_src, sizeof(float)), hipSuccess);
+        ASSERT_EQ(hipMalloc(&d_dst, sizeof(float)), hipSuccess);
+
+        ncclResult_t result = ncclCudaMemcpy<float>(d_dst, d_src, 0);
+        EXPECT_EQ(result, ncclSuccess) << "Zero-element copy should succeed (no-op)";
+
+        hipFree(d_src);
+        hipFree(d_dst);
+    }
+
+    TEST(Alloc, MemcpyNullSrcOrDstPointer) {
+        constexpr size_t N = 16;
+        float* d_valid = nullptr;
+        ASSERT_EQ(hipMalloc(&d_valid, N * sizeof(float)), hipSuccess);
+
+        // Case 1: src is nullptr
+        ncclResult_t result = ncclCudaMemcpy<float>(d_valid, nullptr, N);
+        EXPECT_EQ(result, ncclUnhandledCudaError) << "Expected ncclUnhandledCudaError when src is nullptr";
+
+        // Case 2: dst is nullptr
+        result = ncclCudaMemcpy<float>(nullptr, d_valid, N);
+        EXPECT_EQ(result, ncclUnhandledCudaError) << "Expected ncclUnhandledCudaError when dst is nullptr";
+
+        hipFree(d_valid);
+    }
 } //namespace rccl
