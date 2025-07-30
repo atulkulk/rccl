@@ -45,7 +45,7 @@ function display_help()
     echo "RCCL build & installation helper script"
     echo " Options:"
     echo "       --address-sanitizer     Build with address sanitizer enabled"
-    echo "    -c|--enable-code-coverage  Enable Code Coverage"
+    echo "    -c|--enable-code-coverage  Enable code coverage"
     echo "    -d|--dependencies          Install RCCL dependencies"
     echo "       --debug                 Build debug library"
     echo "       --enable_backtrace      Build with custom backtrace support"
