@@ -262,19 +262,58 @@ namespace RcclUnitTesting
      INFO("[IbTest] test begin\n");
      sa_family_t res = 0;
      
-     union ibv_gid dummy_gid;
-     for(int i=0;i<16;i++)
-     {
-        dummy_gid.raw[i] = 1;
-     }
+    union ibv_gid gid4;
+    // Set the first 96 bits to 0:0:0:ffff for IPv4-mapped IPv6 address
+    gid4.raw[0] = 0x00;
+    gid4.raw[1] = 0x00;
+    gid4.raw[2] = 0x00;
+    gid4.raw[3] = 0x00;
+    gid4.raw[4] = 0x00;
+    gid4.raw[5] = 0x00;
+    gid4.raw[6] = 0xff;
+    gid4.raw[7] = 0xff;
+    // Set the last 32 bits to any valid IPv4 address, e.g., 192.0.2.1
+    gid4.raw[8] = 192;
+    gid4.raw[9] = 0;
+    gid4.raw[10] = 2;
+    gid4.raw[11] = 1;
+    // The rest can be any value
+    gid4.raw[12] = 0x00;
+    gid4.raw[13] = 0x00;
+    gid4.raw[14] = 0x00;
+    gid4.raw[15] = 0x00;
 
      INFO("[IbTest] init val %u \n", res);
-     res = getGidAddrFamily(&dummy_gid);
+     res = getGidAddrFamily(&gid4);
      INFO("[IbTest] final val %u \n", res);
+     INFO("[IbTest] AF_INET %u AF_INET6 %u \n", AF_INET, AF_INET6);
+     union ibv_gid gid;
+    // Set the first 96 bits to a value that is not 0:0:0:ffff (for IPv4-mapped) or ff0e:0:0:ffff (for IPv4-mapped multicast)
+    gid.raw[0] = 0x20; // Example value
+    gid.raw[1] = 0x01; // Example value
+    gid.raw[2] = 0x0d; // Example value
+    gid.raw[3] = 0xb8; // Example value
+    gid.raw[4] = 0x85; // Example value
+    gid.raw[5] = 0xa3; // Example value
+    gid.raw[6] = 0x00; // Example value
+    gid.raw[7] = 0x00; // Example value
+    // The rest can be any value
+    gid.raw[8] = 0x8a; // Example value
+    gid.raw[9] = 0x2e; // Example value
+    gid.raw[10] = 0x03; // Example value
+    gid.raw[11] = 0x70; // Example value
+    gid.raw[12] = 0x73; // Example value
+    gid.raw[13] = 0x34; // Example value
+    gid.raw[14] = 0x00; // Example value
+    gid.raw[15] = 0x00; // Example value
 
-     assert(res != 0);
-
-     INFO("[IbTest] test complete\n");
+    res = 0;
+    INFO("[IbTest] init val %u \n", res);
+    res = getGidAddrFamily(&gid);
+    INFO("[IbTest] final val %u \n", res);
+    ASSERT_EQ(res, AF_INET6);
+    INFO("[IbTest] AF_INET %u AF_INET6 %u \n", AF_INET, AF_INET6);
+    INFO("[IbTest] test complete\n");
   }
 
   TEST(IbTest, ConfiguredGid)
@@ -282,17 +321,37 @@ namespace RcclUnitTesting
      INFO("[IbTest] test begin\n");
      bool res = false;
      
-     union ibv_gid dummy_gid;
+    union ibv_gid gid;
+    // Set the first 32 bits to a non-zero value that is not 0xfe800000
+    gid.raw[0] = 0x20; // Example value
+    gid.raw[1] = 0x01; // Example value
+    gid.raw[2] = 0x0d; // Example value
+    gid.raw[3] = 0xb8; // Example value
+    // Set the next 96 bits to any non-zero value
+    gid.raw[4] = 0x85; // Example value
+    gid.raw[5] = 0xa3; // Example value
+    gid.raw[6] = 0x00; // Example value
+    gid.raw[7] = 0x00; // Example value
+    gid.raw[8] = 0x8a; // Example value
+    gid.raw[9] = 0x2e; // Example value
+    gid.raw[10] = 0x03; // Example value
+    gid.raw[11] = 0x70; // Example value
+    gid.raw[12] = 0x73; // Example value
+    gid.raw[13] = 0x34; // Example value
+    gid.raw[14] = 0x00; // Example value
+    gid.raw[15] = 0x00; // Example value
+
+     /*union ibv_gid dummy_gid;
      for(int i=0;i<16;i++)
      {
         dummy_gid.raw[i] = 1;
-     }
+     }*/
 
      INFO("[IbTest] init val %u \n", res);
-     res = configuredGid(&dummy_gid);
+     res = configuredGid(&gid);
      INFO("[IbTest] final val %u \n", res);
 
-     assert(res == true);
+     ASSERT_EQ(res, true);
 
      INFO("[IbTest] test complete\n");
   }
@@ -304,20 +363,36 @@ namespace RcclUnitTesting
      INFO("[IbTest] test begin\n");
      bool res = false;
      
-     union ibv_gid* dummy_gid = new ibv_gid;
+     /*union ibv_gid* dummy_gid = new ibv_gid;
      struct in6_addr *dummy_a = (struct in6_addr *)dummy_gid->raw;
      dummy_a->s6_addr32[0] = htonl(0xfe800000);
-     dummy_a->s6_addr32[1] = 0UL;
+     dummy_a->s6_addr32[1] = 0UL;*/
      /*for(int i=0;i<16;i++)
      {
         dummy_gid.raw[i] = 1;
      }*/
 
+    union ibv_gid gid;
+    // Set the first 32 bits to 0xfe800000
+    gid.raw[0] = 0xfe;
+    gid.raw[1] = 0x80;
+    gid.raw[2] = 0x00;
+    gid.raw[3] = 0x00;
+    // Set the next 32 bits to 0x00000000
+    gid.raw[4] = 0x00;
+    gid.raw[5] = 0x00;
+    gid.raw[6] = 0x00;
+    gid.raw[7] = 0x00;
+    // The rest can be any value
+    for (int i = 8; i < 16; i++) {
+        gid.raw[i] = 0x00;
+    }
+
      INFO("[IbTest] init val %u \n", res);
-     res = linkLocalGid(dummy_gid);
+     res = linkLocalGid(&gid);
      INFO("[IbTest] final val %u \n", res);
-     
-     delete dummy_gid;
+     ASSERT_EQ(res, true);
+     //delete dummy_gid;
      INFO("[IbTest] test complete\n");
   }
 
@@ -326,16 +401,39 @@ namespace RcclUnitTesting
      INFO("[IbTest] test begin\n");
      bool res = false;
      
+     /*
      union ibv_gid* dummy_gid = new ibv_gid;
      struct in6_addr *dummy_a = (struct in6_addr *)dummy_gid->raw;
      dummy_a->s6_addr32[0] = htonl(0xfe800000);
-     dummy_a->s6_addr32[1] = 0UL;
+     dummy_a->s6_addr32[1] = 0UL;*/
 
-     INFO("init val %u \n", res);
-     res = validGid(dummy_gid);
-     INFO("[IbTest] final val %u \n", res);
+    union ibv_gid gid;
+    // Set the first 32 bits to a value that is not 0xfe800000
+    gid.raw[0] = 0x20; // Example value
+    gid.raw[1] = 0x01; // Example value
+    gid.raw[2] = 0x0d; // Example value
+    gid.raw[3] = 0xb8; // Example value
+    // Set the next 32 bits to any non-zero value
+    gid.raw[4] = 0x00;
+    gid.raw[5] = 0x00;
+    gid.raw[6] = 0x00;
+    gid.raw[7] = 0x01; // Non-zero value
+    // The rest can be any value
+    gid.raw[8] = 0x00;
+    gid.raw[9] = 0x00;
+    gid.raw[10] = 0x00;
+    gid.raw[11] = 0x00;
+    gid.raw[12] = 0x00;
+    gid.raw[13] = 0x00;
+    gid.raw[14] = 0x00;
+    gid.raw[15] = 0x00;
     
-     delete dummy_gid;
+     INFO("init val %u \n", res);
+     res = validGid(&gid);
+     INFO("[IbTest] final val %u \n", res);
+     ASSERT_EQ(res, true);
+     
+     //delete dummy_gid;
      INFO("[IbTest] test complete\n");
   }
 
@@ -360,7 +458,6 @@ namespace RcclUnitTesting
 
   }
 }
-
 
 
 
