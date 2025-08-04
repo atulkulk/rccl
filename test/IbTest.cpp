@@ -136,51 +136,60 @@ namespace RcclUnitTesting
   TEST(IbTest, GidAddrPrefix)
   {
     INFO("[IbTest] Test begin \n");
-    sa_family_t af = 2;
-    struct in_addr t_struct;
-    t_struct.s_addr = 0x12345678;
+    struct in_addr prefix;
+    inet_pton(AF_INET, "192.168.1.0", &prefix);
 
-    void* prefix = (void*)&t_struct;
-    int prefixlen = 0;
+    union ibv_gid gid;
+    inet_pton(AF_INET, "192.168.1.10", &gid.raw[12]); // IPv4 address is stored in the last 4 bytes of the IPv6 address
 
-    union ibv_gid dummy_gid;
-    for(int i=0;i<16;i++)
-    {
-      dummy_gid.raw[i] = 1;
-    }
-    bool res = false;
+    bool result_ipv4 = matchGidAddrPrefix(AF_INET, &prefix, 24, &gid);
+    INFO("[IbTest] Match result ipv4: %s\n", result_ipv4 ? "true" : "false");
+    ASSERT_EQ(result_ipv4, true);
 
-    INFO("[IbTest] init res %u \n", res);
-    res = matchGidAddrPrefix(af, prefix, prefixlen, &dummy_gid);
-    INFO("[IbTest] Final res %u \n", res);
-    assert(res == true);
+
+    struct in6_addr prefix2;
+    inet_pton(AF_INET6, "2001:0db8:85a3::", &prefix2);
+
+    union ibv_gid gid2;
+    inet_pton(AF_INET6, "2001:0db8:85a3:0000:0000:8a2e:0370:7334", &gid2.raw);
+
+    bool result_ipv6 = matchGidAddrPrefix(AF_INET6, &prefix2, 64, &gid2);
+    INFO("Match result ipv6: %s\n", result_ipv6 ? "true" : "false");
+    ASSERT_EQ(result_ipv6, true);
     INFO("[IbTest] Test complete \n");
 
   }
-	TEST(IbTest, AddrRange) // Should be run with 'export NCCL_IB_ADDR_RANGE=192.168.1.1/'
+	TEST(IbTest, AddrRangeIPV4) // Should be run with 'export NCCL_IB_ADDR_RANGE=192.168.1.1/24' for ipv4 test 
   {
+    int mask = 0;
     INFO("[IbTest] Test begin \n");
-    int mask = 64;
-    sa_family_t af = 2;
+    struct in_addr* ptr4 = (struct in_addr*)envIbAddrRange(AF_INET, &mask);
+    INFO("[IbTest] IP Address 4: %s\n", inet_ntoa(*ptr4) );
 
-    INFO("[IbTest] Init mask %u \n", mask);
-    void *prefix = nullptr;
-    //char* prefix = new char[512];
-    //INFO("[IbTest] Init prefix %s \n", prefix);
-    //INFO("[IbTest] Init prefix address %p \n", prefix);
-    prefix = envIbAddrRange(af, &mask);
-    //INFO("[IbTest] Final prefix %s \n", prefix);
-    INFO("[IbTest] Final mask %s \n", mask);
-    INFO("[IbTest] Final prefix address %p \n", prefix);
+    ASSERT_EQ(mask, 24); // Check if the mask is set correctly for IPv4
+    INFO("[IbTest] Test complete \n");
+    
+  }
+  TEST(IbTest, AddrRangeIPV6) // Should be run with 'export NCCL_IB_ADDR_RANGE=2001:0db8:85a3::/64' for ipv6 test 
+  {
+    int mask = 0;
 
-    printf("F char val = %d %d %d %d\n", ((char*)prefix)[0], ((char*)prefix)[1], ((char*)prefix)[2], ((char*)prefix)[3] );
-    assert(prefix != nullptr);
+    INFO("[IbTest] Test complete \n");
+    struct in6_addr* ptr6 = (struct in6_addr*)envIbAddrRange(AF_INET6, &mask);
+    char ipv6_str[INET6_ADDRSTRLEN];
+
+    if (inet_ntop(AF_INET6, ptr6, ipv6_str, INET6_ADDRSTRLEN) == NULL) {
+        INFO("[IbTest] inet_ntop failed");
+        assert(0);
+    }
+    INFO("IP Address 6: %s\n", ipv6_str);
+    ASSERT_EQ(mask, 64); // Check if the mask is set correctly for IPv6
+
     INFO("[IbTest] Test complete \n");
   }
 
   TEST(IbTest, Devftl)
 	{
-		//TestBed tb;
 		struct ncclIbDev test_structure;
 
 		//Config the test struct
@@ -190,20 +199,17 @@ namespace RcclUnitTesting
 		ncclIbDevFatalError(&test_structure);
 		
 		INFO("[IbTest] new value %u \n", test_structure.stats.fatalErrorCount);
-		assert(test_structure.stats.fatalErrorCount == 1);
+		ASSERT_EQ(test_structure.stats.fatalErrorCount, 1);
 
 		INFO("[IbTest] test complete\n");
-
-		//tb.Finalize();
 	}
 
   TEST(IbTest, Cqftl)
 	{
-		//TestBed tb;
 		struct ibv_cq test_structure;
-    struct ncclIbStats test_structure2;
+        struct ncclIbStats test_structure2;
 
-    test_structure.cq_context = (void*)&test_structure2;
+        test_structure.cq_context = (void*)&test_structure2;
 		struct ncclIbStats* t_ptr = (struct ncclIbStats*)test_structure.cq_context;
 
 		//Config the test struct
@@ -213,20 +219,18 @@ namespace RcclUnitTesting
 		ncclIbCqFatalError(&test_structure);//This function will atomically increase the counter
 		
 		INFO("[IbTest] new value %u \n", t_ptr->fatalErrorCount);
-		assert(t_ptr->fatalErrorCount == 1);
+		ASSERT_EQ(t_ptr->fatalErrorCount, 1);
 
 		INFO("[IbTest] test complete\n");
-
-		//tb.Finalize();
 	}
 
 	TEST(IbTest, Qpftl)
 	{
-		//TestBed tb;
+		
 		struct ibv_qp test_structure;
-    struct ncclIbStats test_structure2;
+        struct ncclIbStats test_structure2;
 
-    test_structure.qp_context = (void*)&test_structure2;
+        test_structure.qp_context = (void*)&test_structure2;
 		struct ncclIbStats* t_ptr = (struct ncclIbStats*)test_structure.qp_context;
 
 		//Config the test struct
@@ -236,11 +240,9 @@ namespace RcclUnitTesting
 		ncclIbQpFatalError(&test_structure);//This function will atomically increase the counter
 		
 		INFO("[IbTest] new value %u \n", t_ptr->fatalErrorCount);
-		assert(t_ptr->fatalErrorCount == 1);
+		ASSERT_EQ(t_ptr->fatalErrorCount, 1);
 
 		INFO("[IbTest] test complete\n");
-
-		//tb.Finalize();
 	}
 
   
@@ -259,35 +261,24 @@ namespace RcclUnitTesting
 
   TEST(IbTest, GetGidAddrFamily)
   {
-     INFO("[IbTest] test begin\n");
-     sa_family_t res = 0;
+    INFO("[IbTest] test begin for ipv4\n");
+    sa_family_t res = 0;
      
-    union ibv_gid gid4;
-    // Set the first 96 bits to 0:0:0:ffff for IPv4-mapped IPv6 address
-    gid4.raw[0] = 0x00;
-    gid4.raw[1] = 0x00;
-    gid4.raw[2] = 0x00;
-    gid4.raw[3] = 0x00;
-    gid4.raw[4] = 0x00;
-    gid4.raw[5] = 0x00;
-    gid4.raw[6] = 0xff;
-    gid4.raw[7] = 0xff;
-    // Set the last 32 bits to any valid IPv4 address, e.g., 192.0.2.1
-    gid4.raw[8] = 192;
-    gid4.raw[9] = 0;
-    gid4.raw[10] = 2;
-    gid4.raw[11] = 1;
-    // The rest can be any value
-    gid4.raw[12] = 0x00;
-    gid4.raw[13] = 0x00;
-    gid4.raw[14] = 0x00;
-    gid4.raw[15] = 0x00;
+    struct in6_addr tst;
+    tst.s6_addr32[1] = 0;
+    tst.s6_addr32[0] = 0;
+    tst.s6_addr32[2] = htonl(0x0000ffff);//Configuring such that the address is IPv4 mapped
+    union ibv_gid* tst_cast = (ibv_gid*)&tst;
 
-     INFO("[IbTest] init val %u \n", res);
-     res = getGidAddrFamily(&gid4);
-     INFO("[IbTest] final val %u \n", res);
-     INFO("[IbTest] AF_INET %u AF_INET6 %u \n", AF_INET, AF_INET6);
-     union ibv_gid gid;
+    INFO("[IbTest] init val %u \n", res);
+    res = getGidAddrFamily(tst_cast);
+    INFO("[IbTest] final val %u \n", res);
+    INFO("[IbTest] AF_INET %u AF_INET6 %u \n", AF_INET, AF_INET6);
+
+    ASSERT_EQ(res, AF_INET);
+
+    INFO("[IbTest] test begin for ipv6\n");
+    union ibv_gid gid;
     // Set the first 96 bits to a value that is not 0:0:0:ffff (for IPv4-mapped) or ff0e:0:0:ffff (for IPv4-mapped multicast)
     gid.raw[0] = 0x20; // Example value
     gid.raw[1] = 0x01; // Example value
@@ -313,6 +304,7 @@ namespace RcclUnitTesting
     INFO("[IbTest] final val %u \n", res);
     ASSERT_EQ(res, AF_INET6);
     INFO("[IbTest] AF_INET %u AF_INET6 %u \n", AF_INET, AF_INET6);
+    ASSERT_EQ(res, AF_INET6);
     INFO("[IbTest] test complete\n");
   }
 
@@ -341,36 +333,24 @@ namespace RcclUnitTesting
     gid.raw[14] = 0x00; // Example value
     gid.raw[15] = 0x00; // Example value
 
-     /*union ibv_gid dummy_gid;
-     for(int i=0;i<16;i++)
-     {
-        dummy_gid.raw[i] = 1;
-     }*/
 
-     INFO("[IbTest] init val %u \n", res);
-     res = configuredGid(&gid);
-     INFO("[IbTest] final val %u \n", res);
 
-     ASSERT_EQ(res, true);
+    INFO("[IbTest] init val %u \n", res);
+    res = configuredGid(&gid);
+    INFO("[IbTest] final val %u \n", res);
 
-     INFO("[IbTest] test complete\n");
+    ASSERT_EQ(res, true);
+
+    INFO("[IbTest] test complete\n");
   }
 
   
 
   TEST(IbTest, LinkLocalGid)
   {
-     INFO("[IbTest] test begin\n");
-     bool res = false;
-     
-     /*union ibv_gid* dummy_gid = new ibv_gid;
-     struct in6_addr *dummy_a = (struct in6_addr *)dummy_gid->raw;
-     dummy_a->s6_addr32[0] = htonl(0xfe800000);
-     dummy_a->s6_addr32[1] = 0UL;*/
-     /*for(int i=0;i<16;i++)
-     {
-        dummy_gid.raw[i] = 1;
-     }*/
+    INFO("[IbTest] test begin\n");
+    bool res = false;
+    
 
     union ibv_gid gid;
     // Set the first 32 bits to 0xfe800000
@@ -384,28 +364,23 @@ namespace RcclUnitTesting
     gid.raw[6] = 0x00;
     gid.raw[7] = 0x00;
     // The rest can be any value
-    for (int i = 8; i < 16; i++) {
+    for (int i = 8; i < 16; i++)
+    {
         gid.raw[i] = 0x00;
     }
 
-     INFO("[IbTest] init val %u \n", res);
-     res = linkLocalGid(&gid);
-     INFO("[IbTest] final val %u \n", res);
-     ASSERT_EQ(res, true);
-     //delete dummy_gid;
-     INFO("[IbTest] test complete\n");
+    INFO("[IbTest] init val %u \n", res);
+    res = linkLocalGid(&gid);
+    INFO("[IbTest] final val %u \n", res);
+    ASSERT_EQ(res, true);
+     
+    INFO("[IbTest] test complete\n");
   }
 
   TEST(IbTest, ValidGid)
   {
-     INFO("[IbTest] test begin\n");
-     bool res = false;
-     
-     /*
-     union ibv_gid* dummy_gid = new ibv_gid;
-     struct in6_addr *dummy_a = (struct in6_addr *)dummy_gid->raw;
-     dummy_a->s6_addr32[0] = htonl(0xfe800000);
-     dummy_a->s6_addr32[1] = 0UL;*/
+    INFO("[IbTest] test begin\n");
+    bool res = false;
 
     union ibv_gid gid;
     // Set the first 32 bits to a value that is not 0xfe800000
@@ -428,13 +403,13 @@ namespace RcclUnitTesting
     gid.raw[14] = 0x00;
     gid.raw[15] = 0x00;
     
-     INFO("init val %u \n", res);
-     res = validGid(&gid);
-     INFO("[IbTest] final val %u \n", res);
-     ASSERT_EQ(res, true);
+    INFO("init val %u \n", res);
+    res = validGid(&gid);
+    INFO("[IbTest] final val %u \n", res);
+    ASSERT_EQ(res, true);
      
-     //delete dummy_gid;
-     INFO("[IbTest] test complete\n");
+    
+    INFO("[IbTest] test complete\n");
   }
 
   
@@ -458,7 +433,6 @@ namespace RcclUnitTesting
 
   }
 }
-
 
 
 
