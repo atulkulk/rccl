@@ -99,7 +99,6 @@ if(BUILD_TESTS)
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
-    RcclWrapTests.cpp
     _RecorderTests.cpp
     common/main.cpp
     common/CallCollectiveForked.cpp
@@ -144,6 +143,7 @@ if(BUILD_TESTS)
       ArgCheckTests.cpp
       IpcsocketTests.cpp
       CollRegTests.cpp
+      RcclWrapTests.cpp
       ShmTests.cpp
       P2pTests.cpp
       BitOpsTests.cpp

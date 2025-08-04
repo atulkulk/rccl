@@ -1120,7 +1120,6 @@ if(ENABLE_CODE_COVERAGE)
 
   message(STATUS "Code coverage is enabled with build type '${CMAKE_BUILD_TYPE}'.")
 
-  add_definitions(-DRCCL_STATIC_EXPOSE)
   target_compile_options(rccl PRIVATE
     -fvisibility=default -Xarch_host -fprofile-instr-generate
     -Xarch_host -fcoverage-mapping)
@@ -1138,6 +1137,7 @@ if(ENABLE_CODE_COVERAGE)
   target_link_options(rccl PRIVATE ${COVERAGE_SHARED_LINKER_FLAGS})
   target_link_options(rccl PRIVATE ${COVERAGE_EXE_LINKER_FLAGS})
 elseif(BUILD_TESTS) # Enable default/hidden visibility based on build type and ROCM_VERSION
+  add_definitions(-DRCCL_EXPOSE_STATIC)
   if (ROCM_VERSION VERSION_GREATER_EQUAL "60400" AND CMAKE_BUILD_TYPE MATCHES "Debug")
     target_compile_options(rccl PRIVATE -fvisibility=default)
   else()

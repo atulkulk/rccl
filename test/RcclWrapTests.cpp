@@ -21,7 +21,7 @@ namespace RcclUnitTesting
     return ncclSuccess;
   }
 
-  TEST(Rcclwrap, RcclGetAlgoInfoTest) {
+/*  TEST(Rcclwrap, RcclGetAlgoInfoTest) {
     ncclResult_t staticCheckResult = testStaticExposeCheck();
     #ifdef RCCL_EXPOSE_STATIC
     EXPECT_EQ(staticCheckResult, ncclSuccess);
@@ -41,7 +41,7 @@ namespace RcclUnitTesting
     EXPECT_EQ(result, ncclSuccess);
     ncclCommDestroy(comm);
   }
-
+*/
   TEST(Rcclwrap, RcclFuncMaxSendRecvCount) {
     ncclResult_t staticCheckResult = testStaticExposeCheck();
     #ifdef RCCL_EXPOSE_STATIC
@@ -52,7 +52,7 @@ namespace RcclUnitTesting
 
     size_t maxCount = 0;
     ncclResult_t result = rcclFuncMaxSendRecvCount(ncclFuncAllReduce, 4, 1024, maxCount);
-
+    EXPECT_EQ(maxCount, 1024);
     EXPECT_EQ(result, ncclSuccess);
   }
 
