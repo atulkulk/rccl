@@ -21,27 +21,6 @@ namespace RcclUnitTesting
     return ncclSuccess;
   }
 
-/*  TEST(Rcclwrap, RcclGetAlgoInfoTest) {
-    ncclResult_t staticCheckResult = testStaticExposeCheck();
-    #ifdef RCCL_EXPOSE_STATIC
-    EXPECT_EQ(staticCheckResult, ncclSuccess);
-    #else
-    EXPECT_EQ(staticCheckResult, ncclInvalidUsage);
-    #endif
-
-    ncclComm_t comm;
-    int nRanks = 1, rank = 0;
-
-    ncclCommInitAll(&comm, nRanks, &rank);  // Valid single-rank init
-
-    int algo = -1, proto = -1, maxCh = 0;
-    ncclResult_t result = rcclGetAlgoInfo(comm, ncclFuncAllReduce, 1024, ncclFloat32,
-                                          1, 1, 0, &algo, &proto, &maxCh);
-
-    EXPECT_EQ(result, ncclSuccess);
-    ncclCommDestroy(comm);
-  }
-*/
   TEST(Rcclwrap, RcclFuncMaxSendRecvCount) {
     ncclResult_t staticCheckResult = testStaticExposeCheck();
     #ifdef RCCL_EXPOSE_STATIC
