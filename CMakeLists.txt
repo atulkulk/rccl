@@ -41,6 +41,7 @@ option(FAULT_INJECTION                         "Enable fault injection"         
 option(FORCE_REDUCE_PIPELINING                 "Force reduce pipelining"                       OFF)
 option(DISABLE_CHEAP_THREADFENCE               "Compile-time killswitch for simpler fence"     OFF)
 option(RCCL_EXPOSE_STATIC                      "Expose internal static functions for testing"  OFF)
+option(ENABLE_LLVM_CALLGRAPH                   "Enable LLVM IR call graph generation"          OFF)
 
 # Default GPU architectures to build
 #==================================================================================================
@@ -736,6 +737,65 @@ endforeach()
 # This is required to make sure that all the hipified source files are
 # available before compiling the unit tests executable(s)
 add_custom_target(hipify_all DEPENDS ${HIP_SOURCES})
+
+if(ENABLE_LLVM_CALLGRAPH)
+  message(STATUS "LLVM IR call graph generation and visualization enabled")
+
+  # Emit LLVM IR for all compilation units
+  target_compile_options(rccl PRIVATE -emit-llvm)
+
+  # Set output directory for IR and dot files
+  set(CALLGRAPH_DIR "${CMAKE_BINARY_DIR}/callgraph")
+  file(MAKE_DIRECTORY "${CALLGRAPH_DIR}")
+
+  # Find required tools
+  find_program(LLVM_OPT_EXECUTABLE opt)
+  find_program(GRAPHVIZ_DOT_EXECUTABLE dot)
+  if(NOT LLVM_OPT_EXECUTABLE)
+    message(FATAL_ERROR "LLVM opt tool not found in PATH")
+  endif()
+  if(NOT GRAPHVIZ_DOT_EXECUTABLE)
+    message(FATAL_ERROR "Graphviz dot tool not found in PATH")
+  endif()
+
+  # Gather all object files (should be .bc if -emit-llvm is used)
+  add_custom_target(generate_callgraphs ALL
+    COMMENT "Generating LLVM call graphs and visualizations"
+  )
+
+  # This glob will match all .bc files in the build tree
+  file(GLOB_RECURSE LLVM_BC_FILES "${CMAKE_BINARY_DIR}/*.bc")
+
+  foreach(BC_FILE ${LLVM_BC_FILES})
+    get_filename_component(BASENAME ${BC_FILE} NAME_WE)
+    set(DOT_FILE "${CALLGRAPH_DIR}/${BASENAME}.callgraph.dot")
+    set(SVG_FILE "${CALLGRAPH_DIR}/${BASENAME}.callgraph.svg")
+
+    add_custom_command(
+      OUTPUT ${DOT_FILE}
+      COMMAND ${LLVM_OPT_EXECUTABLE} -dot-callgraph ${BC_FILE}
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different callgraph.dot ${DOT_FILE}
+      DEPENDS ${BC_FILE}
+      WORKING_DIRECTORY ${CALLGRAPH_DIR}
+      COMMENT "Generating call graph dot for ${BC_FILE}"
+      VERBATIM
+    )
+
+    add_custom_command(
+      OUTPUT ${SVG_FILE}
+      COMMAND ${GRAPHVIZ_DOT_EXECUTABLE} -Tsvg ${DOT_FILE} -o ${SVG_FILE}
+      DEPENDS ${DOT_FILE}
+      COMMENT "Generating SVG visualization for ${DOT_FILE}"
+      VERBATIM
+    )
+
+    add_custom_target(${BASENAME}_callgraph_svg ALL
+      DEPENDS ${SVG_FILE}
+    )
+
+    add_dependencies(generate_callgraphs ${BASENAME}_callgraph_svg)
+  endforeach()
+endif()
 
 if (BUILD_TESTS)
   if (ROCM_VERSION VERSION_GREATER_EQUAL "60400" AND CMAKE_BUILD_TYPE MATCHES "Debug")
