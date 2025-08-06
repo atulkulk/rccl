@@ -735,6 +735,9 @@ add_custom_target(hipify_all DEPENDS ${HIP_SOURCES})
 
 if (BUILD_TESTS)
   if (ROCM_VERSION VERSION_GREATER_EQUAL "60400" AND CMAKE_BUILD_TYPE MATCHES "Debug")
+    ## Set definition for exposing rccl static function
+    add_definitions(-DRCCL_EXPOSE_STATIC)
+
     set(HIPIFY_SRC_DIR "${PROJECT_BINARY_DIR}/hipify/src")
     set(REPLACE_SCRIPT "${CMAKE_SOURCE_DIR}/tools/scripts/replace_static.sh")
     message ("Replacing static functions in ${HIPIFY_SRC_DIR} with ${REPLACE_SCRIPT} for unit tests")
@@ -1137,7 +1140,6 @@ if(ENABLE_CODE_COVERAGE)
   target_link_options(rccl PRIVATE ${COVERAGE_SHARED_LINKER_FLAGS})
   target_link_options(rccl PRIVATE ${COVERAGE_EXE_LINKER_FLAGS})
 elseif(BUILD_TESTS) # Enable default/hidden visibility based on build type and ROCM_VERSION
-  add_definitions(-DRCCL_EXPOSE_STATIC)
   if (ROCM_VERSION VERSION_GREATER_EQUAL "60400" AND CMAKE_BUILD_TYPE MATCHES "Debug")
     target_compile_options(rccl PRIVATE -fvisibility=default)
   else()
