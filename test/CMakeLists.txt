@@ -94,7 +94,6 @@ if(BUILD_TESTS)
     GatherTests.cpp
     GroupCallTests.cpp
     NonBlockingTests.cpp
-    ProxyTest.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
     ScatterTests.cpp
@@ -148,6 +147,7 @@ if(BUILD_TESTS)
       CommTests.cpp
       EnqueueTests.cpp
       P2pTests.cpp
+      ProxyTests.cpp
       RcclWrapTests.cpp
       ShmTests.cpp
       TransportTests.cpp
