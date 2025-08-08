@@ -145,6 +145,7 @@ if(BUILD_TESTS)
       IpcsocketTests.cpp
       CollRegTests.cpp
       CommTests.cpp
+      EnqueueTests.cpp
       P2pTests.cpp
       RcclWrapTests.cpp
       ShmTests.cpp
