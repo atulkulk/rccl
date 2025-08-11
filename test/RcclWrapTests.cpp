@@ -170,4 +170,145 @@ TEST(Rcclwrap, RcclUpdateCollectiveProtocol_SimpleFallbackWhenNoRanges) {
   delete comm->topo;
   delete comm;
 }
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
+  setenv("NCCL_THREAD_THRESHOLDS", "1", 1);
+
+  ncclComm comm = { .nRanks = 8, .nNodes = 4};
+  ncclTaskColl info = { .func = ncclFuncReduceScatter, .protocol = 0 };
+  memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+  int threadThreshold = 5; //Any number should do, we should make sure this number does not change
+  rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+  EXPECT_EQ(threadThreshold, 5);
+  unsetenv("NCCL_THREAD_THRESHOLDS");
+}
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
+    setenv("NCCL_MIN_NCHANNELS", "1", 1);
+
+    ncclComm comm{};
+    ncclTaskColl info{};
+    int threadThreshold = 5;
+
+    comm.nRanks = 4;
+    comm.nNodes = 4;
+    info.func = ncclFuncAllGather;
+    info.protocol = 0;
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+    EXPECT_EQ(threadThreshold, 5);
+    unsetenv("NCCL_MIN_NCHANNELS");
+}
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_MNChannelsSet) {
+    setenv("NCCL_MAX_NCHANNELS", "1", 1);
+
+    ncclComm comm{};
+    ncclTaskColl info{};
+    int threadThreshold = 5;
+
+    comm.nRanks = 4;
+    comm.nNodes = 4;
+    info.func = ncclFuncAllGather;
+    info.protocol = 0;
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+    EXPECT_EQ(threadThreshold, 5);
+    unsetenv("NCCL_MAX_NCHANNELS");
+}
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_nNodesLessThan2) {
+    unsetenv("NCCL_THREAD_THRESHOLDS");
+    unsetenv("NCCL_MAX_NCHANNELS");
+    unsetenv("NCCL_MIN_NCHANNELS");
+
+    ncclComm comm{};
+    ncclTaskColl info{};
+    int threadThreshold = 5;
+
+    comm.nRanks = 4;
+    comm.nNodes = 1;  // less than 2
+    info.func = ncclFuncReduceScatter;
+    info.protocol = 0;
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+    EXPECT_EQ(threadThreshold, 5);  // no change
+}
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_FuncUnsupported) {
+    unsetenv("NCCL_THREAD_THRESHOLDS");
+    unsetenv("NCCL_MAX_NCHANNELS");
+    unsetenv("NCCL_MIN_NCHANNELS");
+
+    ncclComm comm{};
+    ncclTaskColl info{};
+    int threadThreshold = 5;
+
+    comm.nRanks = 4;
+    comm.nNodes = 2;
+    info.func = ncclFuncAllReduce;  // unsupported func
+    info.protocol = 0;
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+    EXPECT_EQ(threadThreshold, 5);
+}
+
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_UpdateOccurs) {
+    unsetenv("NCCL_THREAD_THRESHOLDS");
+    unsetenv("NCCL_MAX_NCHANNELS");
+    unsetenv("NCCL_MIN_NCHANNELS");
+
+    ncclComm comm{};
+    ncclTaskColl info{};
+    int threadThreshold = 5;
+
+    comm.nRanks = 4;
+    comm.nNodes = 2;
+    info.func = ncclFuncReduceScatter;
+    info.protocol = 0;
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+    int idx = rcclGetTunableIndex(info.func);
+    comm.minMaxLLRange[idx][info.protocol][RCCL_PROTOCOL_THREAD_THRESHOLD_IDX] = 10;
+
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+    EXPECT_EQ(threadThreshold, 40);  // 10 * 4
+}
+
+
+TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_ThresholdUndefined) {
+    unsetenv("NCCL_THREAD_THRESHOLDS");
+    unsetenv("NCCL_MAX_NCHANNELS");
+    unsetenv("NCCL_MIN_NCHANNELS");
+
+    ncclComm comm{};
+    ncclTaskColl info{};
+    int threadThreshold = 5;
+
+    comm.nRanks = 4;
+    comm.nNodes = 3;
+    info.func = ncclFuncAllGather;
+    info.protocol = 0;
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+    int idx = rcclGetTunableIndex(info.func);
+    comm.minMaxLLRange[idx][info.protocol][RCCL_PROTOCOL_THREAD_THRESHOLD_IDX] = RCCL_LL_LIMITS_UNDEFINED;
+
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+    EXPECT_EQ(threadThreshold, 5);
+}
+
 } //RcclUnitTesting
