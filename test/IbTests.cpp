@@ -79,6 +79,17 @@ ncclResult_t ncclUpdateGidIndex(struct ibv_context *context, uint8_t portNum,
                                 int roceVer, int gidIndexCandidate,
                                 int *gidIndex);
 
+int compareStrings(const char *str1, const char *str2) {
+  int result = strcmp(str1, str2);
+
+  if (result == 0) {
+    return 0; // Strings are equal
+  } else if (result < 0) {
+    return -1; // str1 is less than str2
+  } else {
+    return 1; // str1 is greater than str2
+  }
+}
 namespace RcclUnitTesting {
 TEST(IbTests, GidAddrPrefix) {
   INFO(NCCL_LOG_INFO, "[IbTests] Test begin \n");
@@ -107,35 +118,73 @@ TEST(IbTests, GidAddrPrefix) {
   ASSERT_EQ(result_ipv6, true);
   INFO(NCCL_LOG_INFO, "[IbTests] Test complete \n");
 }
+
 TEST(IbTests, AddrRangeIPV4) // Should be run with 'export
                              // NCCL_IB_ADDR_RANGE=192.168.1.1/24' for ipv4 test
 {
   int mask = 0;
   INFO(NCCL_LOG_INFO, "[IbTests] Test begin \n");
-  struct in_addr *ptr4 = (struct in_addr *)envIbAddrRange(AF_INET, &mask);
-  INFO(NCCL_LOG_INFO, "[IbTests] IP Address 4: %s\n", inet_ntoa(*ptr4));
+  const char *ipv4 = "192.168.1.1/24"; // test value
+  const char *env = getenv("NCCL_IB_ADDR_RANGE");
+  if (env != nullptr && compareStrings(env, ipv4) == 0) {
+    // run test
+    struct in_addr *ptr4 = (struct in_addr *)envIbAddrRange(AF_INET, &mask);
+    INFO(NCCL_LOG_INFO, "[IbTests] IP Address 4: %s\n", inet_ntoa(*ptr4));
 
-  ASSERT_EQ(mask, 24); // Check if the mask is set correctly for IPv4
-  INFO(NCCL_LOG_INFO, "[IbTests] Test complete \n");
+    ASSERT_EQ(mask, 24); // Check if the mask is set correctly for IPv4
+    INFO(NCCL_LOG_INFO, "[IbTests] Test complete \n");
+  } else {
+    // skip test
+    if (env == nullptr) {
+      INFO(NCCL_LOG_INFO, "[IbTests] Test skipped - NCCL_IB_ADDR_RANGE "
+                          "environment variable not set. Try running with "
+                          "export NCCL_IB_ADDR_RANGE=192.168.1.1/24 \n");
+    } else {
+      INFO(NCCL_LOG_INFO,
+           "[IbTests] Test skipped - NCCL_IB_ADDR_RANGE=%s does not match "
+           "expected value. Try running with export "
+           "NCCL_IB_ADDR_RANGE=192.168.1.1/24 \n",
+           env);
+    }
+  }
 }
+
 TEST(IbTests,
      AddrRangeIPV6) // Should be run with 'export
                     // NCCL_IB_ADDR_RANGE=2001:0db8:85a3::/64' for ipv6 test
 {
   int mask = 0;
 
-  INFO(NCCL_LOG_INFO, "[IbTests] Test complete \n");
-  struct in6_addr *ptr6 = (struct in6_addr *)envIbAddrRange(AF_INET6, &mask);
-  char ipv6_str[INET6_ADDRSTRLEN];
+  const char *ipv6 = "2001:0db8:85a3::/64";
+  const char *env = getenv("NCCL_IB_ADDR_RANGE");
+  if (env != nullptr && compareStrings(env, ipv6) == 0) {
+    // run test
+    INFO(NCCL_LOG_INFO, "[IbTests] Test start \n");
+    struct in6_addr *ptr6 = (struct in6_addr *)envIbAddrRange(AF_INET6, &mask);
+    char ipv6_str[INET6_ADDRSTRLEN];
 
-  if (inet_ntop(AF_INET6, ptr6, ipv6_str, INET6_ADDRSTRLEN) == NULL) {
-    INFO(NCCL_LOG_INFO, "[IbTests] inet_ntop failed");
-    assert(0);
+    if (inet_ntop(AF_INET6, ptr6, ipv6_str, INET6_ADDRSTRLEN) == NULL) {
+      INFO(NCCL_LOG_INFO, "[IbTests] inet_ntop failed");
+      assert(0);
+    }
+    INFO(NCCL_LOG_INFO, "IP Address 6: %s\n", ipv6_str);
+    ASSERT_EQ(mask, 64); // Check if the mask is set correctly for IPv6
+
+    INFO(NCCL_LOG_INFO, "[IbTests] Test complete \n");
+  } else {
+    // skip test
+    if (env == nullptr) {
+      INFO(NCCL_LOG_INFO, "[IbTests] Test skipped - NCCL_IB_ADDR_RANGE "
+                          "environment variable not set. Try running with "
+                          "export NCCL_IB_ADDR_RANGE=2001:0db8:85a3::/64 \n");
+    } else {
+      INFO(NCCL_LOG_INFO,
+           "[IbTests] Test skipped - NCCL_IB_ADDR_RANGE=%s does not match "
+           "expected value. Try running with export "
+           "NCCL_IB_ADDR_RANGE=2001:0db8:85a3::/64 \n",
+           env);
+    }
   }
-  INFO(NCCL_LOG_INFO, "IP Address 6: %s\n", ipv6_str);
-  ASSERT_EQ(mask, 64); // Check if the mask is set correctly for IPv6
-
-  INFO(NCCL_LOG_INFO, "[IbTests] Test complete \n");
 }
 
 TEST(IbTests, Devftl) {
