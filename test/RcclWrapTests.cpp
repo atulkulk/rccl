@@ -172,22 +172,31 @@ TEST(Rcclwrap, RcclUpdateCollectiveProtocol_SimpleFallbackWhenNoRanges) {
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
-  setenv("NCCL_THREAD_THRESHOLDS", "1", 1);
+  const char* value = getenv("NCCL_THREAD_THRESHOLDS");
 
-  ncclComm comm = { .nRanks = 8, .nNodes = 4};
-  ncclTaskColl info = { .func = ncclFuncReduceScatter, .protocol = 0 };
-  memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+  if (!value){
+    INFO("%d %s", NCCL_ENV, "[Rcclwrap] Test skipped. Set environment variable NCCL_THREAD_THRESHOLD\n");
+    GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable NCCL_THREAD_THRESHOLD\n";
+  }
+  else{
+    ncclComm comm = { .nRanks = 8, .nNodes = 4};
+    ncclTaskColl info = { .func = ncclFuncReduceScatter, .protocol = 0 };
+    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
 
-  int threadThreshold = 5; //Any number should do, we should make sure this number does not change
-  rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+    int threadThreshold = 5; //Any number should do, we should make sure this number does not change
+    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
-  EXPECT_EQ(threadThreshold, 5);
-  unsetenv("NCCL_THREAD_THRESHOLDS");
+    EXPECT_EQ(threadThreshold, 5);
+  }
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
-    setenv("NCCL_MIN_NCHANNELS", "1", 1);
-
+  const char* value = getenv("NCCL_MIN_NCHANNELS");
+  if (!value){
+    INFO("%d %s", NCCL_ENV, "[Rcclwrap] Test skipped. Set environment variable NCCL_MIN_NCHANNELS\n");
+    GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable NCCL_MIN_NCHANNELS\n";
+  }
+  else{
     ncclComm comm{};
     ncclTaskColl info{};
     int threadThreshold = 5;
@@ -201,12 +210,16 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
     rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
     EXPECT_EQ(threadThreshold, 5);
-    unsetenv("NCCL_MIN_NCHANNELS");
+  }
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MNChannelsSet) {
-    setenv("NCCL_MAX_NCHANNELS", "1", 1);
-
+  const char* value = getenv("NCCL_MAX_NCHANNELS");
+  if (!value){
+    INFO("%d %s", NCCL_ENV, "[Rcclwrap] Test skipped. Set environment variable NCCL_MAX_NCHANNELS\n");
+    GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable NCCL_MAX_NCHANNELS\n";
+  }
+  else{
     ncclComm comm{};
     ncclTaskColl info{};
     int threadThreshold = 5;
@@ -220,14 +233,10 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_MNChannelsSet) {
     rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
     EXPECT_EQ(threadThreshold, 5);
-    unsetenv("NCCL_MAX_NCHANNELS");
+  }
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_nNodesLessThan2) {
-    unsetenv("NCCL_THREAD_THRESHOLDS");
-    unsetenv("NCCL_MAX_NCHANNELS");
-    unsetenv("NCCL_MIN_NCHANNELS");
-
     ncclComm comm{};
     ncclTaskColl info{};
     int threadThreshold = 5;
@@ -244,10 +253,6 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_nNodesLessThan2) {
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_FuncUnsupported) {
-    unsetenv("NCCL_THREAD_THRESHOLDS");
-    unsetenv("NCCL_MAX_NCHANNELS");
-    unsetenv("NCCL_MIN_NCHANNELS");
-
     ncclComm comm{};
     ncclTaskColl info{};
     int threadThreshold = 5;
@@ -265,10 +270,6 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_FuncUnsupported) {
 
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_UpdateOccurs) {
-    unsetenv("NCCL_THREAD_THRESHOLDS");
-    unsetenv("NCCL_MAX_NCHANNELS");
-    unsetenv("NCCL_MIN_NCHANNELS");
-
     ncclComm comm{};
     ncclTaskColl info{};
     int threadThreshold = 5;
@@ -289,10 +290,6 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_UpdateOccurs) {
 
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_ThresholdUndefined) {
-    unsetenv("NCCL_THREAD_THRESHOLDS");
-    unsetenv("NCCL_MAX_NCHANNELS");
-    unsetenv("NCCL_MIN_NCHANNELS");
-
     ncclComm comm{};
     ncclTaskColl info{};
     int threadThreshold = 5;
