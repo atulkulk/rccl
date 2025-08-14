@@ -103,6 +103,10 @@ TEST(ProxyTests,
   INFO(NCCL_LOG_INFO, "[ProxyTests] res %u \n", res);
   assert(res == ncclSuccess);
 
+    delete pool_ptr;
+    delete pools_ptr;
+    delete pools2_ptr;
+    delete state_ptr;
   INFO(NCCL_LOG_INFO, "[ProxyTests] Test Complete \n");
 }
 
@@ -139,6 +143,10 @@ TEST(ProxyTests, printProxyOp) {
   INFO(NCCL_LOG_INFO, "[ProxyTests] res %u \n", res);
   assert(res == ncclSuccess);
 
+    delete pools_ptr;
+    delete pools2_ptr;
+    delete pool_ptr;
+    delete state_ptr;
   INFO(NCCL_LOG_INFO, "[ProxyTests] Test Complete \n");
 }
 
@@ -179,6 +187,12 @@ TEST(ProxyTests, dumpProxyState) {
   INFO(NCCL_LOG_INFO, "[ProxyTests] res %u \n", res);
   ASSERT_EQ(res, ncclSuccess);
 
+    delete pools_ptr;
+    
+    delete pools2_ptr;
+    
+    
+    delete state_ptr;
   INFO(NCCL_LOG_INFO, "[ProxyTests] Test Complete \n");
 }
 
@@ -248,6 +262,14 @@ TEST(ProxyTests, ncclProxyCallBlockingUDS) {
   bool bool_res = (res >= ncclSuccess && res <= ncclRemoteError);
   INFO(NCCL_LOG_INFO, "[ProxyTests] res %u \n", bool_res);
   ASSERT_EQ(bool_res, true);
+    delete comm;
+    delete sharedProxyState;
+    delete proxyConn;
+    delete[] arr_x;
+    delete[] arr;
+    delete[] arr2;
+    delete[] x_mem;
+    delete[] x_mem2;
 
   INFO(NCCL_LOG_INFO, "[ProxyTests] Test Complete \n");
 }
@@ -315,6 +337,14 @@ TEST(ProxyTests, ncclProxyClientGetFdBlocking) {
   INFO(NCCL_LOG_INFO, "[ProxyTests] res %u \n", bool_res);
   ASSERT_EQ(bool_res, true);
 
+    delete comm;
+    delete sharedProxyState;
+    delete proxyConn;
+    delete[] arr_x;
+    delete[] arr;
+    delete[] arr2;
+    delete[] x_mem;
+    delete[] x_mem2;
   INFO(NCCL_LOG_INFO, "[ProxyTests] Test Complete \n");
 }
 
@@ -389,6 +419,14 @@ TEST(ProxyTests, ncclProxyClientQueryFdBlocking) {
   INFO(NCCL_LOG_INFO, "[ProxyTests] res %u \n", bool_res);
   ASSERT_EQ(bool_res, true);
 
+    delete comm;
+    delete sharedProxyState;
+    delete proxyConn;
+    delete[] arr_x;
+    delete[] arr;
+    delete[] arr2;
+    delete[] x_mem;
+    delete[] x_mem2;
   INFO(NCCL_LOG_INFO, "[ProxyTests] Test Complete \n");
 }
 
