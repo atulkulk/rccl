@@ -14,6 +14,29 @@ extern ncclNet_t ncclNetSocket;
 
 namespace RcclUnitTesting {
 
+/**
+ * @brief Establishes a reliable connection pair (send and receive communicators) using the provided handle and listen communicator.
+ *
+ * This function attempts to create a pair of connected communicators (sendComm and recvComm) using the ncclNetSocket API.
+ * It uses internal RAII guards to ensure proper cleanup in case of partial failures. The function coordinates accept and connect
+ * operations in parallel threads, with extended timeouts and retries for robustness.
+ *
+ * @param handle        Pointer to the device handle used for connection.
+ * @param listenComm    Pointer to the listen communicator, used for accepting connections.
+ * @param[out] sendComm Reference to a pointer that will receive the newly created send communicator on success.
+ *                      WARNING: The ownership of the communicator is transferred to the caller. The caller is responsible for
+ *                      closing and cleaning up sendComm. If sendComm was previously pointing to a resource (e.g., a unique_ptr or
+ *                      other managed pointer), it will be overwritten and the previous resource may be leaked. Ensure sendComm is
+ *                      either nullptr or properly released before calling this function.
+ * @param[out] recvComm Reference to a pointer that will receive the newly created receive communicator on success.
+ *                      WARNING: The ownership of the communicator is transferred to the caller. The caller is responsible for
+ *                      closing and cleaning up recvComm. If recvComm was previously pointing to a resource (e.g., a unique_ptr or
+ *                      other managed pointer), it will be overwritten and the previous resource may be leaked. Ensure recvComm is
+ *                      either nullptr or properly released before calling this function.
+ *
+ * @return true if both send and receive communicators were successfully established and ownership transferred to the caller;
+ *         false otherwise (in which case all resources are cleaned up internally).
+ */
 class NetSocketTests : public ::testing::Test {
 
 private:
@@ -50,10 +73,10 @@ private:
     void reset(void *comm = nullptr) {
       if (comm_ && comm_ != comm) {
         ncclResult_t result = ncclNetSocket.closeSend(comm_);
-        if (result != ncclSuccess) {
-          INFO(NCCL_LOG_INFO, "Warning: SendCommGuard cleanup failed: %d",
-               result);
-        }
+        ASSERT_EQ(result, ncclSuccess) << "SendCommGuard failed to close send communicator (comm_="
+                                      << comm_ << "). ncclNetSocket.closeSend() returned error code: "
+                                      << result << ". This indicates a potential resource leak or "
+                                      << "invalid communicator state during RAII cleanup.";
       }
       comm_ = comm;
     }
@@ -100,10 +123,10 @@ private:
     void reset(void *comm = nullptr) {
       if (comm_ && comm_ != comm) {
         ncclResult_t result = ncclNetSocket.closeRecv(comm_);
-        if (result != ncclSuccess) {
-          INFO(NCCL_LOG_INFO, "Warning: RecvCommGuard cleanup failed: %d",
-               result);
-        }
+        ASSERT_EQ(result, ncclSuccess) << "RecvCommGuard failed to close receive communicator (comm_="
+                                      << comm_ << "). ncclNetSocket.closeRecv() returned error code: "
+                                      << result << ". This indicates a potential resource leak or "
+                                      << "invalid communicator state during RAII cleanup.";
       }
       comm_ = comm;
     }
@@ -121,13 +144,18 @@ private:
 protected:
   void SetUp() override {
     ncclResult_t result = ncclNetSocket.init(nullptr, nullptr);
-    ASSERT_EQ(result, ncclSuccess);
+    ASSERT_EQ(result, ncclSuccess) << "Failed to initialize ncclNetSocket. "
+                                   << "Error code: " << result
+                                   << ". Ensure RCCL networking is properly configured.";
 
     result = ncclNetSocket.devices(&ndev);
-    ASSERT_EQ(result, ncclSuccess);
+    ASSERT_EQ(result, ncclSuccess) << "Failed to query network devices. "
+                                   << "Error code: " << result
+                                   << ". Check if network devices are available and accessible.";
 
     if (ndev == 0) {
-      GTEST_SKIP() << "No network devices available for testing";
+      GTEST_SKIP() << "No network devices available for testing. "
+                   << "Ensure network hardware is present and properly configured.";
     }
   }
 
@@ -151,13 +179,29 @@ protected:
              props.speed, props.port, props.maxComms);
       }
       EXPECT_EQ(propsResult, ncclSuccess)
-          << "getProperties failed for device " << dev;
+          << "getProperties failed for device " << dev
+          << ". ncclNetSocket.getProperties() returned error code: " << propsResult
+          << ". Verify device " << dev << " is available and properly configured.";
     }
   }
 
   // Common function to establish a connection pair with improved reliability
   bool EstablishConnectionPair(void *handle, void *listenComm, void *&sendComm,
                                void *&recvComm) {
+    // Allow overriding max attempts via environment variable for flexibility
+    int maxAttempts = 100;
+    const char* maxAttemptsEnv = getenv("RCCL_TEST_NETSOCKET_MAX_ATTEMPTS");
+    if (maxAttemptsEnv) {
+      maxAttempts = ParseEnvVar(maxAttemptsEnv, "RCCL_TEST_NETSOCKET_MAX_ATTEMPTS", 100, 1);
+    }
+
+    // Allow overriding sleep duration via environment variable for flexibility
+    int sleepMs = 100;
+    const char* sleepMsEnv = getenv("RCCL_TEST_NETSOCKET_SLEEP_MS");
+    if (sleepMsEnv) {
+      sleepMs = ParseEnvVar(sleepMsEnv, "RCCL_TEST_NETSOCKET_SLEEP_MS", 100, 1);
+    }
+
     // Initialize output parameters
     sendComm = nullptr;
     recvComm = nullptr;
@@ -181,23 +225,23 @@ protected:
         void *tempRecvComm = nullptr;
 
         // Increased attempts and longer total timeout for reliability
-        for (int attempt = 0; attempt < 100 && !shouldStop.load(); attempt++) {
+        for (int attempt = 0; attempt < maxAttempts && !shouldStop.load(); attempt++) {
           ncclResult_t acceptResult =
               ncclNetSocket.accept(listenComm, &tempRecvComm, &recvDevComm);
           if (acceptResult == ncclSuccess && tempRecvComm != nullptr) {
             recvGuard.reset(tempRecvComm);
-            acceptCompleted = true;
+            acceptCompleted.store(true);
             INFO(NCCL_LOG_INFO, "Accept completed successfully on attempt %d",
                  attempt + 1);
             break;
           }
 
           // Longer sleep for network stability
-          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+          std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         }
 
         if (!acceptCompleted.load()) {
-          INFO(NCCL_LOG_INFO, "Accept thread timed out after 100 attempts");
+          INFO(NCCL_LOG_INFO, "Accept thread timed out after %d attempts", maxAttempts);
         }
       });
 
@@ -208,7 +252,7 @@ protected:
         void *tempSendComm = nullptr;
 
         // Give accept thread more time to start listening
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
 
         // Increased attempts and longer total timeout for reliability
         for (int attempt = 0; attempt < 100 && !shouldStop.load(); attempt++) {
@@ -223,11 +267,11 @@ protected:
           }
 
           // Longer sleep for network stability
-          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+          std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         }
 
         if (!connectCompleted.load()) {
-          INFO(NCCL_LOG_INFO, "Connect thread timed out after 100 attempts");
+          INFO(NCCL_LOG_INFO, "Connect thread timed out after %d attempts", maxAttempts);
         }
       });
 
@@ -241,7 +285,7 @@ protected:
         if (currentTime - startTime > maxWaitTime) {
           INFO(NCCL_LOG_INFO,
                "Overall connection timeout reached, stopping threads");
-          shouldStop = true;
+          shouldStop.store(true);
           break;
         }
 
@@ -301,10 +345,12 @@ protected:
         ncclNetSocket.regMr(recvComm, recvBuffers.back().data(), testSize,
                             NCCL_PTR_HOST, &recvMhandle);
 
-    if (sendRegResult == ncclSuccess && recvRegResult == ncclSuccess) {
-      sendMhandles.push_back(sendMhandle);
-      recvMhandles.push_back(recvMhandle);
+    // Always add handles to vectors (even if nullptr)
+    // to maintain consistency with buffer vectors for proper cleanup
+    sendMhandles.push_back(sendMhandle);
+    recvMhandles.push_back(recvMhandle);
 
+    if (sendRegResult == ncclSuccess && recvRegResult == ncclSuccess) {
       INFO(NCCL_LOG_INFO, "Memory registration successful for size %zu",
            testSize);
 
@@ -336,14 +382,15 @@ protected:
              sendResult, recvResult);
         sendRequests.push_back(nullptr);
         recvRequests.push_back(nullptr);
+        // NOTE: Memory handles are already in vectors and will be cleaned up by DeregisterMemory
         return false;
       }
     } else {
       INFO(NCCL_LOG_INFO,
            "Failed to register memory - send result: %d, recv result: %d",
            sendRegResult, recvRegResult);
-      sendMhandles.push_back(nullptr);
-      recvMhandles.push_back(nullptr);
+      // NOTE: Even if only one registration succeeded, the handle is in the vector
+      // and will be properly cleaned up by DeregisterMemory (it handles nullptr gracefully)
       sendRequests.push_back(nullptr);
       recvRequests.push_back(nullptr);
       return false;
@@ -387,6 +434,12 @@ protected:
           taskCreationExercised = true;
           INFO(NCCL_LOG_INFO,
                "    *** SUCCESS: ncclNetSocketGetTask was exercised! ***");
+          INFO(NCCL_LOG_INFO,
+               "    Task exercised with sendTestResult=%d (%s), recvTestResult=%d (%s)",
+               sendTestResult,
+               (sendTestResult == ncclSuccess) ? "ncclSuccess" : "ncclInProgress",
+               recvTestResult,
+               (recvTestResult == ncclSuccess) ? "ncclSuccess" : "ncclInProgress");
         }
 
         // Count completed operations
@@ -438,8 +491,10 @@ protected:
         ncclResult_t deregResult =
             ncclNetSocket.deregMr(sendComm, sendMhandles[j]);
         INFO(NCCL_LOG_INFO, "Send memory deregMr result: %d", deregResult);
-        EXPECT_EQ(deregResult, ncclSuccess)
-            << "deregMr should succeed for send memory, size: " << testSize;
+        EXPECT_EQ(deregResult, ncclSuccess) << "Failed to deregister send memory handle " << j
+                                    << " for buffer size " << testSize << ". "
+                                    << "ncclNetSocket.deregMr() returned error code: " << deregResult
+                                    << ". This may indicate memory registration/deregistration mismatch.";
       }
     }
 
@@ -451,8 +506,10 @@ protected:
         ncclResult_t deregResult =
             ncclNetSocket.deregMr(recvComm, recvMhandles[j]);
         INFO(NCCL_LOG_INFO, "Recv memory deregMr result: %d", deregResult);
-        EXPECT_EQ(deregResult, ncclSuccess)
-            << "deregMr should succeed for recv memory, size: " << testSize;
+        EXPECT_EQ(deregResult, ncclSuccess) << "Failed to deregister send memory handle " << j
+                                    << " for buffer size " << testSize << ". "
+                                    << "ncclNetSocket.deregMr() returned error code: " << deregResult
+                                    << ". This may indicate memory registration/deregistration mismatch.";
       }
     }
   }
@@ -467,10 +524,9 @@ protected:
       if (sendComms[i]) {
         INFO(NCCL_LOG_INFO, "Closing send communicator %zu", i);
         ncclResult_t closeResult = ncclNetSocket.closeSend(sendComms[i]);
-        if (closeResult != ncclSuccess) {
-          INFO(NCCL_LOG_INFO, "Note: Send communicator %zu close returned: %d",
-               i, closeResult);
-        }
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator " << i
+                                           << ". ncclNetSocket.closeSend() returned error code: " << closeResult
+                                           << ". This may indicate communicator state corruption or resource cleanup issues.";
       }
     }
 
@@ -478,20 +534,19 @@ protected:
       if (recvComms[i]) {
         INFO(NCCL_LOG_INFO, "Closing recv communicator %zu", i);
         ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComms[i]);
-        if (closeResult != ncclSuccess) {
-          INFO(NCCL_LOG_INFO, "Note: Recv communicator %zu close returned: %d",
-               i, closeResult);
-        }
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator " << i
+                                           << ". ncclNetSocket.closeRecv() returned error code: " << closeResult
+                                           << ". This may indicate communicator state corruption or resource cleanup issues.";
       }
     }
 
     if (listenComm) {
       INFO(NCCL_LOG_INFO, "Closing listen communicator");
       ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
-      if (closeResult != ncclSuccess) {
-        INFO(NCCL_LOG_INFO, "Note: Listen communicator close returned: %d",
-             closeResult);
-      }
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator. "
+                                         << "ncclNetSocket.closeListen() returned error code: " << closeResult
+                                         << ". This may indicate listen socket state corruption or resource cleanup issues.";
+      listenComm = nullptr;
     }
   }
 
@@ -507,6 +562,56 @@ protected:
         2 * 1024 * 1024 // Very large - comprehensive test
     };
   }
+
+  // Helper function to safely parse environment variables
+  int ParseEnvVar(const char* envVar, const char* envName, int defaultValue = 0, int minValue = 0) {
+    if (!envVar || strlen(envVar) == 0) {
+      return defaultValue;
+    }
+
+    char* endPtr = nullptr;
+    errno = 0;
+    long result = std::strtol(envVar, &endPtr, 10);
+
+    // Check for various error conditions - using ADD_FAILURE instead of GTEST_FAIL
+    if (errno == ERANGE) {
+      ADD_FAILURE() << "Environment variable " << envName << "='" << envVar
+                   << "' is out of range for integer conversion. "
+                   << "Please provide a valid integer value.";
+      return defaultValue;
+    }
+
+    if (endPtr == envVar) {
+      ADD_FAILURE() << "Environment variable " << envName << "='" << envVar
+                   << "' is not a valid number. "
+                   << "Please provide a valid integer value (e.g., " << envName << "=8).";
+      return defaultValue;
+    }
+
+    if (*endPtr != '\0') {
+      ADD_FAILURE() << "Environment variable " << envName << "='" << envVar
+                   << "' contains non-numeric characters. "
+                   << "Please provide a valid integer value (e.g., " << envName << "=8).";
+      return defaultValue;
+    }
+
+    if (result < minValue) {
+      ADD_FAILURE() << "Environment variable " << envName << "='" << envVar
+                   << "' must be >= " << minValue << ". "
+                   << "Current value: " << result << ". Please provide a valid positive integer.";
+      return defaultValue;
+    }
+
+    if (result > INT_MAX) {
+      ADD_FAILURE() << "Environment variable " << envName << "='" << envVar
+                   << "' is too large (> " << INT_MAX << "). "
+                   << "Please provide a smaller integer value.";
+      return defaultValue;
+    }
+
+    return static_cast<int>(result);
+  }
+
 };
 
 // Test concurrent operations task creation in default configuration (without
@@ -524,7 +629,9 @@ TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreationDefault) {
   void *listenComm = nullptr;
 
   ncclResult_t result = ncclNetSocket.listen(0, handle, &listenComm);
-  ASSERT_EQ(result, ncclSuccess);
+  ASSERT_EQ(result, ncclSuccess) << "Failed to establish listening socket for test execution. "
+                                << "ncclNetSocket.listen() returned error code: " << result
+                                << ". Verify network device availability and port accessibility.";
 
   INFO(NCCL_LOG_INFO, "Testing task creation functionality in default mode");
 
@@ -609,38 +716,76 @@ TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreation) {
   const char *nSocksPerThreadEnv = getenv("NCCL_NSOCKS_PERTHREAD");
 
   if (!nThreadsEnv || !nSocksPerThreadEnv) {
-    INFO(NCCL_LOG_INFO,
-         "SKIPPING TEST: Required environment variables not set");
-    INFO(NCCL_LOG_INFO,
-         "Please set the following environment variables to run this test:");
-    INFO(NCCL_LOG_INFO, "  export NCCL_SOCKET_NTHREADS=1");
-    INFO(NCCL_LOG_INFO, "  export NCCL_NSOCKS_PERTHREAD=2");
-    INFO(NCCL_LOG_INFO,
-         "This ensures nSocks > 0 so that ncclNetSocketGetTask gets called");
-    GTEST_SKIP() << "Environment variables NCCL_SOCKET_NTHREADS and "
-                    "NCCL_NSOCKS_PERTHREAD must be set";
+    GTEST_SKIP() << "SKIPPING TEST: Required environment variables not set. "
+                 << "Please set the following environment variables to run this test: "
+                 << "export NCCL_SOCKET_NTHREADS=1 and export NCCL_NSOCKS_PERTHREAD=2. "
+                 << "This ensures nSocks > 0 so that ncclNetSocketGetTask gets called. "
+                 << "Environment variables NCCL_SOCKET_NTHREADS and NCCL_NSOCKS_PERTHREAD must be set";
     return;
   }
 
-  int nThreads = std::atoi(nThreadsEnv);
-  int nSocksPerThread = std::atoi(nSocksPerThreadEnv);
-  int expectedNSocks = nThreads * nSocksPerThread;
+  int nThreads = ParseEnvVar(nThreadsEnv, "NCCL_SOCKET_NTHREADS", 0, 1);
+  int nSocksPerThread = ParseEnvVar(nSocksPerThreadEnv, "NCCL_NSOCKS_PERTHREAD", 0, 1);
+
+  // Additional validation for reasonable upper bounds
+  const int MAX_THREADS = 16;
+  const int MAX_SOCKS_PER_THREAD = 64;
+  const int MAX_TOTAL_SOCKETS = 64;
+
+  if (nThreads > MAX_THREADS) {
+    GTEST_SKIP() << "SKIPPING TEST: NCCL_SOCKET_NTHREADS=" << nThreads << " exceeds maximum " << MAX_THREADS << ". "
+                 << "Please provide a reasonable value (e.g., NCCL_SOCKET_NTHREADS=8). "
+                 << "Values too large may cause resource exhaustion.";
+    return;
+  }
+
+  if (nSocksPerThread > MAX_SOCKS_PER_THREAD) {
+    GTEST_SKIP() << "SKIPPING TEST: NCCL_NSOCKS_PERTHREAD=" << nSocksPerThread << " exceeds maximum " << MAX_SOCKS_PER_THREAD << ". "
+                 << "Please provide a reasonable value (e.g., NCCL_NSOCKS_PERTHREAD=4). "
+                 << "Values too large may cause resource exhaustion.";
+    return;
+  }
+
+  // Check for potential overflow before multiplication
+  if (nThreads > 0 && nSocksPerThread > INT_MAX / nThreads) {
+    GTEST_SKIP() << "SKIPPING TEST: Configuration would cause integer overflow. "
+                 << "NCCL_SOCKET_NTHREADS=" << nThreads << " * NCCL_NSOCKS_PERTHREAD=" << nSocksPerThread
+                 << " exceeds maximum integer value. Please use smaller values.";
+    return;
+  }
+
+  int totalSockets = nThreads * nSocksPerThread;
 
   INFO(NCCL_LOG_INFO, "Environment configuration found:");
   INFO(NCCL_LOG_INFO, "  NCCL_SOCKET_NTHREADS=%d", nThreads);
   INFO(NCCL_LOG_INFO, "  NCCL_NSOCKS_PERTHREAD=%d", nSocksPerThread);
-  INFO(NCCL_LOG_INFO, "  Expected nSocks=%d", expectedNSocks);
+  INFO(NCCL_LOG_INFO, "  Total sockets=%d", totalSockets);
 
-  if (expectedNSocks <= 0) {
-    INFO(NCCL_LOG_INFO,
-         "SKIPPING TEST: Invalid configuration - nSocks must be > 0");
-    INFO(NCCL_LOG_INFO, "Current configuration results in nSocks=%d",
-         expectedNSocks);
-    INFO(
-        NCCL_LOG_INFO,
-        "Please ensure NCCL_SOCKET_NTHREADS > 0 and NCCL_NSOCKS_PERTHREAD > 0");
-    GTEST_SKIP() << "Environment variables must result in nSocks > 0 for "
-                    "ncclNetSocketGetTask to be called";
+  // Validate total sockets count
+  if (totalSockets <= 0) {
+    GTEST_SKIP() << "SKIPPING TEST: Invalid configuration - total sockets must be > 0. "
+                 << "Current configuration: nThreads=" << nThreads << " * nSocksPerThread=" << nSocksPerThread
+                 << " = " << totalSockets << ". "
+                 << "Both NCCL_SOCKET_NTHREADS and NCCL_NSOCKS_PERTHREAD must be positive integers. "
+                 << "Example: export NCCL_SOCKET_NTHREADS=2 && export NCCL_NSOCKS_PERTHREAD=2";
+    return;
+  }
+
+  if (totalSockets > MAX_TOTAL_SOCKETS) {
+    GTEST_SKIP() << "SKIPPING TEST: Total sockets " << totalSockets << " exceeds maximum " << MAX_TOTAL_SOCKETS << ". "
+                 << "Current configuration: nThreads=" << nThreads << " * nSocksPerThread=" << nSocksPerThread
+                 << " = " << totalSockets << ". "
+                 << "Please reduce either NCCL_SOCKET_NTHREADS or NCCL_NSOCKS_PERTHREAD. "
+                 << "Example: export NCCL_SOCKET_NTHREADS=8 && export NCCL_NSOCKS_PERTHREAD=4";
+    return;
+  }
+
+  if (totalSockets > NCCL_NET_MAX_REQUESTS) {
+    GTEST_SKIP() << "SKIPPING TEST: Total sockets " << totalSockets << " exceeds NCCL_NET_MAX_REQUESTS=" << NCCL_NET_MAX_REQUESTS << ". "
+                 << "Current configuration: nThreads=" << nThreads << " * nSocksPerThread=" << nSocksPerThread
+                 << " = " << totalSockets << ". "
+                 << "NCCL network layer can handle at most " << NCCL_NET_MAX_REQUESTS << " concurrent requests. "
+                 << "Please reduce configuration to stay within NCCL limits.";
     return;
   }
 
@@ -654,7 +799,9 @@ TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreation) {
   void *listenComm = nullptr;
 
   ncclResult_t result = ncclNetSocket.listen(0, handle, &listenComm);
-  ASSERT_EQ(result, ncclSuccess);
+  ASSERT_EQ(result, ncclSuccess) << "Failed to establish listening socket for test execution. "
+                                << "ncclNetSocket.listen() returned error code: " << result
+                                << ". Verify network device availability and port accessibility.";
 
   INFO(NCCL_LOG_INFO, "Testing task creation functionality - ensuring "
                       "ncclNetSocketGetTask is called");
@@ -735,7 +882,9 @@ TEST_F(NetSocketTests, TestInvalidDeviceIndexListen) {
   ncclResult_t result = ncclNetSocket.listen(-1, handle, &listenComm);
   INFO(NCCL_LOG_INFO, "Listen with dev=-1 returned: %d", result);
   EXPECT_EQ(result, ncclInternalError)
-      << "Listen should fail with negative device index";
+      << "Listen should fail with negative device index. "
+      << "ncclNetSocket.listen() with device index -1 should return ncclInternalError "
+      << "but returned: " << result << ". Verify input validation for device indices.";
 
   // Test with device index greater than available devices
   int invalidDev = ndev + 10;
@@ -743,7 +892,10 @@ TEST_F(NetSocketTests, TestInvalidDeviceIndexListen) {
   INFO(NCCL_LOG_INFO, "Listen with dev=%d (> ndev=%d) returned: %d", invalidDev,
        ndev, result);
   EXPECT_EQ(result, ncclInternalError)
-      << "Listen should fail with device index >= ndev";
+      << "Listen should fail with device index >= ndev. "
+      << "ncclNetSocket.listen() with device index " << invalidDev << " (> ndev=" << ndev
+      << ") should return ncclInternalError but returned: " << result
+      << ". Verify bounds checking for device indices.";
 
   INFO(NCCL_LOG_INFO, "TestInvalidDeviceIndexListen completed");
 }
@@ -762,7 +914,9 @@ TEST_F(NetSocketTests, TestInvalidDeviceIndexConnect) {
       ncclNetSocket.connect(-1, &config, handle, &sendComm, &sendDevComm);
   INFO(NCCL_LOG_INFO, "Connect with dev=-1 returned: %d", result);
   EXPECT_EQ(result, ncclInternalError)
-      << "Connect should fail with negative device index";
+      << "Connect should fail with negative device index. "
+      << "ncclNetSocket.connect() with device index -1 should return ncclInternalError "
+      << "but returned: " << result << ". Verify input validation for device indices.";
 
   // Test with device index greater than available devices
   int invalidDev = ndev + 10;
@@ -771,7 +925,10 @@ TEST_F(NetSocketTests, TestInvalidDeviceIndexConnect) {
   INFO(NCCL_LOG_INFO, "Connect with dev=%d (> ndev=%d) returned: %d",
        invalidDev, ndev, result);
   EXPECT_EQ(result, ncclInternalError)
-      << "Connect should fail with device index >= ndev";
+      << "Connect should fail with device index >= ndev. "
+      << "ncclNetSocket.connect() with device index " << invalidDev << " (> ndev=" << ndev
+      << ") should return ncclInternalError but returned: " << result
+      << ". Verify bounds checking for device indices.";
 
   INFO(NCCL_LOG_INFO, "TestInvalidDeviceIndexConnect completed");
 }
@@ -786,7 +943,9 @@ TEST_F(NetSocketTests, TestNullRequestInTest) {
   // Test with NULL request
   ncclResult_t result = ncclNetSocket.test(nullptr, &done, &size);
   INFO(NCCL_LOG_INFO, "Test with NULL request returned: %d", result);
-  EXPECT_EQ(result, ncclInternalError) << "Test should fail with NULL request";
+  EXPECT_EQ(result, ncclInternalError) << "Test should fail with NULL request. "
+                                      << "ncclNetSocket.test() with nullptr request should return ncclInternalError "
+                                      << "but returned: " << result << ". Verify NULL pointer validation.";
 
   INFO(NCCL_LOG_INFO, "TestNullRequestInTest completed");
 }
@@ -821,23 +980,37 @@ TEST_F(NetSocketTests, TestInvalidArraySizeIrecv) {
       result = ncclNetSocket.irecv(recvComm, 2, data, sizes, tags, mhandles,
                                    phandles, &request);
       INFO(NCCL_LOG_INFO, "Irecv with n=2 returned: %d", result);
-      EXPECT_EQ(result, ncclInternalError) << "Irecv should fail with n != 1";
+      EXPECT_EQ(result, ncclInternalError) << "Irecv should fail with n != 1. "
+                                          << "ncclNetSocket.irecv() with n=2 should return ncclInternalError "
+                                          << "but returned: " << result << ". Socket implementation only supports n=1.";
 
       // Test with n=0 (should fail)
       result = ncclNetSocket.irecv(recvComm, 0, data, sizes, tags, mhandles,
                                    phandles, &request);
       INFO(NCCL_LOG_INFO, "Irecv with n=0 returned: %d", result);
-      EXPECT_EQ(result, ncclInternalError) << "Irecv should fail with n != 1";
+      EXPECT_EQ(result, ncclInternalError) << "Irecv should fail with n != 1. "
+                                          << "ncclNetSocket.irecv() with n=0 should return ncclInternalError "
+                                          << "but returned: " << result << ". Socket implementation only supports n=1.";
 
-      // Cleanup
-      if (sendComm)
-        ncclNetSocket.closeSend(sendComm);
-      if (recvComm)
-        ncclNetSocket.closeRecv(recvComm);
+      // Cleanup communicators
+      if (sendComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeSend(sendComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator";
+        sendComm = nullptr;
+      }
+
+      if (recvComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator";
+        recvComm = nullptr;
+      }
     }
 
-    if (listenComm)
-      ncclNetSocket.closeListen(listenComm);
+    if (listenComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator";
+      listenComm = nullptr;
+    }
   }
 
   INFO(NCCL_LOG_INFO, "TestInvalidArraySizeIrecv completed");
@@ -867,24 +1040,38 @@ TEST_F(NetSocketTests, TestNonHostMemoryRegMr) {
                                    &mhandle);
       INFO(NCCL_LOG_INFO, "RegMr with NCCL_PTR_CUDA returned: %d", result);
       EXPECT_EQ(result, ncclInternalError)
-          << "RegMr should fail with non-host memory type";
+          << "RegMr should fail with non-host memory type. "
+          << "ncclNetSocket.regMr() with NCCL_PTR_CUDA should return ncclInternalError "
+          << "but returned: " << result << ". Socket implementation only supports NCCL_PTR_HOST.";
 
       // Test with valid NCCL_PTR_HOST (should succeed)
       result = ncclNetSocket.regMr(sendComm, buffer.data(), 1024, NCCL_PTR_HOST,
                                    &mhandle);
       INFO(NCCL_LOG_INFO, "RegMr with NCCL_PTR_HOST returned: %d", result);
       EXPECT_EQ(result, ncclSuccess)
-          << "RegMr should succeed with host memory type";
+          << "RegMr should succeed with host memory type. "
+          << "ncclNetSocket.regMr() with NCCL_PTR_HOST should return ncclSuccess "
+          << "but returned: " << result << ". Verify host memory registration support.";
 
-      // Cleanup
-      if (sendComm)
-        ncclNetSocket.closeSend(sendComm);
-      if (recvComm)
-        ncclNetSocket.closeRecv(recvComm);
+      // Cleanup communicators
+      if (sendComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeSend(sendComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator";
+        sendComm = nullptr;
+      }
+
+      if (recvComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator";
+        recvComm = nullptr;
+      }
     }
 
-    if (listenComm)
-      ncclNetSocket.closeListen(listenComm);
+    if (listenComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator";
+      listenComm = nullptr;
+    }
   }
 
   INFO(NCCL_LOG_INFO, "TestNonHostMemoryRegMr completed");
@@ -899,40 +1086,51 @@ TEST_F(NetSocketTests, TestExcessiveThreadConfig) {
   const char *nSocksPerThreadEnv = getenv("NCCL_NSOCKS_PERTHREAD");
 
   if (!nThreadsEnv || !nSocksPerThreadEnv) {
-    INFO(NCCL_LOG_INFO,
-         "SKIPPING TEST: Required environment variables not set");
-    INFO(NCCL_LOG_INFO,
-         "Please set the following environment variables to run this test:");
-    INFO(NCCL_LOG_INFO, "  export NCCL_SOCKET_NTHREADS=20");
-    INFO(NCCL_LOG_INFO, "  export NCCL_NSOCKS_PERTHREAD=1");
-    INFO(NCCL_LOG_INFO, "This test requires NCCL_SOCKET_NTHREADS > MAX_THREADS "
-                        "(16) to trigger warning");
-    GTEST_SKIP() << "Environment variables NCCL_SOCKET_NTHREADS and "
-                    "NCCL_NSOCKS_PERTHREAD must be set";
+    GTEST_SKIP() << "SKIPPING TEST: Required environment variables not set. "
+                 << "This test requires NCCL_SOCKET_NTHREADS > NCCL_NET_MAX_REQUESTS (" << NCCL_NET_MAX_REQUESTS << ") and NCCL_NSOCKS_PERTHREAD = 1 to trigger warning. "
+                 << "Environment variables NCCL_SOCKET_NTHREADS and NCCL_NSOCKS_PERTHREAD must be set";
     return;
   }
 
-  int nThreads = std::atoi(nThreadsEnv);
-  int nSocksPerThread = std::atoi(nSocksPerThreadEnv);
+  // Parse with validation - both must be positive
+  int nThreads = ParseEnvVar(nThreadsEnv, "NCCL_SOCKET_NTHREADS", 0, 1);
+  int nSocksPerThread = ParseEnvVar(nSocksPerThreadEnv, "NCCL_NSOCKS_PERTHREAD", 0, 1);
+
+  // Check for potential overflow before multiplication
+  if (nThreads > 0 && nSocksPerThread > INT_MAX / nThreads) {
+    GTEST_SKIP() << "SKIPPING TEST: Configuration would cause integer overflow. "
+                 << "NCCL_SOCKET_NTHREADS=" << nThreads << " * NCCL_NSOCKS_PERTHREAD=" << nSocksPerThread
+                 << " exceeds maximum integer value. Please use smaller values.";
+    return;
+  }
+
+  int totalSockets = nThreads * nSocksPerThread;
 
   INFO(NCCL_LOG_INFO, "Environment configuration found:");
   INFO(NCCL_LOG_INFO, "  NCCL_SOCKET_NTHREADS=%d", nThreads);
   INFO(NCCL_LOG_INFO, "  NCCL_NSOCKS_PERTHREAD=%d", nSocksPerThread);
+  INFO(NCCL_LOG_INFO, "  Total sockets=%d", totalSockets);
 
   // Check if configuration is set to trigger the excessive threads warning
-  if (nThreads <= 16) { // MAX_THREADS is 16
-    INFO(NCCL_LOG_INFO, "SKIPPING TEST: NCCL_SOCKET_NTHREADS must be > 16 to "
-                        "test excessive thread warning");
-    INFO(NCCL_LOG_INFO, "Current NCCL_SOCKET_NTHREADS=%d", nThreads);
-    INFO(NCCL_LOG_INFO, "Please set: export NCCL_SOCKET_NTHREADS=20");
-    GTEST_SKIP()
-        << "NCCL_SOCKET_NTHREADS must be > MAX_THREADS (16) to trigger warning";
+  // Use NCCL_NET_MAX_REQUESTS instead of arbitrary MAX_THREADS
+  if (nThreads <= NCCL_NET_MAX_REQUESTS) {
+    GTEST_SKIP() << "SKIPPING TEST: NCCL_SOCKET_NTHREADS must be > " << NCCL_NET_MAX_REQUESTS << " to test excessive thread warning. "
+                 << "Current NCCL_SOCKET_NTHREADS=" << nThreads << ". "
+                 << "Please set: export NCCL_SOCKET_NTHREADS=" << (NCCL_NET_MAX_REQUESTS + 1) << ". "
+                 << "NCCL_SOCKET_NTHREADS must be > NCCL_NET_MAX_REQUESTS (" << NCCL_NET_MAX_REQUESTS << ") to trigger warning";
+    return;
+  }
+
+  if (totalSockets > NCCL_NET_MAX_REQUESTS * 10) {  // Allow 10x for testing excessive config
+    GTEST_SKIP() << "SKIPPING TEST: Total sockets=" << totalSockets << " is unreasonably large (> " << (NCCL_NET_MAX_REQUESTS * 10) << "). "
+                 << "Please use more reasonable values for testing. NCCL_NET_MAX_REQUESTS=" << NCCL_NET_MAX_REQUESTS << ". "
+                 << "Example: export NCCL_SOCKET_NTHREADS=" << (NCCL_NET_MAX_REQUESTS + 1) << " && export NCCL_NSOCKS_PERTHREAD=1";
     return;
   }
 
   INFO(NCCL_LOG_INFO,
        "Configuration valid for testing excessive threads warning");
-  INFO(NCCL_LOG_INFO, "NCCL_SOCKET_NTHREADS=%d > MAX_THREADS=16", nThreads);
+  INFO(NCCL_LOG_INFO, "NCCL_SOCKET_NTHREADS=%d > NCCL_NET_MAX_REQUESTS=%d", nThreads, NCCL_NET_MAX_REQUESTS);
 
   // Test socket properties
   TestSocketProperties();
@@ -943,7 +1141,7 @@ TEST_F(NetSocketTests, TestExcessiveThreadConfig) {
   ncclResult_t result = ncclNetSocket.listen(0, handle, &listenComm);
 
   if (result == ncclSuccess && listenComm) {
-    // The implementation should have limited the threads to MAX_THREADS
+    // The implementation should have limited the threads to NCCL_NET_MAX_REQUESTS
     // internally
     INFO(NCCL_LOG_INFO,
          "*** SUCCESS: Listen succeeded with excessive NCCL_SOCKET_NTHREADS - "
@@ -965,21 +1163,24 @@ TEST_F(NetSocketTests, TestExcessiveSocketConfig) {
   const char *nSocksPerThreadEnv = getenv("NCCL_NSOCKS_PERTHREAD");
 
   if (!nThreadsEnv || !nSocksPerThreadEnv) {
-    INFO(NCCL_LOG_INFO,
-         "SKIPPING TEST: Required environment variables not set");
-    INFO(NCCL_LOG_INFO,
-         "Please set the following environment variables to run this test:");
-    INFO(NCCL_LOG_INFO, "  export NCCL_SOCKET_NTHREADS=8");
-    INFO(NCCL_LOG_INFO, "  export NCCL_NSOCKS_PERTHREAD=10");
-    INFO(NCCL_LOG_INFO, "This test requires total sockets (nThreads * "
-                        "nSocksPerThread) > MAX_SOCKETS (64)");
-    GTEST_SKIP() << "Environment variables NCCL_SOCKET_NTHREADS and "
-                    "NCCL_NSOCKS_PERTHREAD must be set";
+    GTEST_SKIP() << "SKIPPING TEST: Required environment variables not set. "
+                 << "This test requires total sockets (nThreads * nSocksPerThread) > MAX_SOCKETS (64). "
+                 << "Environment variables NCCL_SOCKET_NTHREADS and NCCL_NSOCKS_PERTHREAD must be set";
     return;
   }
 
-  int nThreads = std::atoi(nThreadsEnv);
-  int nSocksPerThread = std::atoi(nSocksPerThreadEnv);
+    // Parse with validation - both must be positive
+  int nThreads = ParseEnvVar(nThreadsEnv, "NCCL_SOCKET_NTHREADS", 0, 1);
+  int nSocksPerThread = ParseEnvVar(nSocksPerThreadEnv, "NCCL_NSOCKS_PERTHREAD", 0, 1);
+
+  // Check for potential overflow before multiplication
+  if (nThreads > 0 && nSocksPerThread > INT_MAX / nThreads) {
+    GTEST_SKIP() << "SKIPPING TEST: Configuration would cause integer overflow. "
+                 << "NCCL_SOCKET_NTHREADS=" << nThreads << " * NCCL_NSOCKS_PERTHREAD=" << nSocksPerThread
+                 << " exceeds maximum integer value. Please use smaller values.";
+    return;
+  }
+
   int totalSockets = nThreads * nSocksPerThread;
 
   INFO(NCCL_LOG_INFO, "Environment configuration found:");
@@ -988,18 +1189,22 @@ TEST_F(NetSocketTests, TestExcessiveSocketConfig) {
   INFO(NCCL_LOG_INFO, "  Total sockets=%d", totalSockets);
 
   // Check if configuration is set to trigger the excessive sockets warning
-  if (totalSockets <= 64) { // MAX_SOCKETS is 64
-    INFO(NCCL_LOG_INFO, "SKIPPING TEST: Total sockets must be > 64 to test "
-                        "excessive socket warning");
-    INFO(NCCL_LOG_INFO,
-         "Current total sockets=%d (nThreads * nSocksPerThread = %d * %d)",
-         totalSockets, nThreads, nSocksPerThread);
-    INFO(NCCL_LOG_INFO,
-         "Please set environment variables such that total > 64, e.g.:");
-    INFO(NCCL_LOG_INFO, "  export NCCL_SOCKET_NTHREADS=8");
-    INFO(NCCL_LOG_INFO, "  export NCCL_NSOCKS_PERTHREAD=10");
-    GTEST_SKIP()
-        << "Total sockets must be > MAX_SOCKETS (64) to trigger warning";
+  const int MAX_SOCKETS = 64;
+  if (totalSockets <= MAX_SOCKETS) {
+    GTEST_SKIP() << "SKIPPING TEST: Total sockets must be > " << MAX_SOCKETS << " to test excessive socket warning. "
+                 << "Current total sockets=" << totalSockets
+                 << " (nThreads=" << nThreads << " * nSocksPerThread=" << nSocksPerThread << "). "
+                 << "Please set environment variables such that total > " << MAX_SOCKETS << ", e.g.: "
+                 << "export NCCL_SOCKET_NTHREADS=9 && export NCCL_NSOCKS_PERTHREAD=8. "
+                 << "Total sockets must be > MAX_SOCKETS (" << MAX_SOCKETS << ") to trigger warning";
+    return;
+  }
+
+  // Additional validation against NCCL_NET_MAX_REQUESTS for reasonable upper bounds
+  if (totalSockets > NCCL_NET_MAX_REQUESTS * 10) {  // Allow 10x for testing excessive config
+    GTEST_SKIP() << "SKIPPING TEST: Total sockets=" << totalSockets << " is unreasonably large (> " << (NCCL_NET_MAX_REQUESTS * 10) << "). "
+                 << "Please use more reasonable values for testing. NCCL_NET_MAX_REQUESTS=" << NCCL_NET_MAX_REQUESTS << ". "
+                 << "Example: export NCCL_SOCKET_NTHREADS=10 && export NCCL_NSOCKS_PERTHREAD=10";
     return;
   }
 
@@ -1052,13 +1257,16 @@ TEST_F(NetSocketTests, TestRequestAllocationFailure) {
 
       // Try to allocate many requests to potentially exhaust the pool
       // MAX_REQUESTS is defined as NCCL_NET_MAX_REQUESTS in the code
-      for (int i = 0; i < 300; i++) { // Try to exceed typical MAX_REQUESTS
-        buffers.emplace_back(1024, 0xAA + (i % 10));
+      for (int i = 0; i < (NCCL_NET_MAX_REQUESTS * 10); i++) { // Try to exceed NCCL_NET_MAX_REQUESTS by a reasonable margin
+        buffers.emplace_back(1024, 0xAA + (i % 256));
         void *mhandle = nullptr;
 
         // Register memory first
         result = ncclNetSocket.regMr(sendComm, buffers.back().data(), 1024,
                                      NCCL_PTR_HOST, &mhandle);
+        EXPECT_EQ(result, ncclSuccess) << "Memory registration failed at iteration " << i
+                                      << ". ncclNetSocket.regMr() returned error code: " << result
+                                      << ". Verify memory registration limits and resource availability.";
         if (result != ncclSuccess)
           break;
         mhandles.push_back(mhandle);
@@ -1104,11 +1312,23 @@ TEST_F(NetSocketTests, TestRequestAllocationFailure) {
       }
 
       // Cleanup communicators
-      ncclNetSocket.closeSend(sendComm);
-      ncclNetSocket.closeRecv(recvComm);
+      if (sendComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeSend(sendComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator";
+        sendComm = nullptr;
+      }
+      if (recvComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator";
+        recvComm = nullptr;
+      }
     }
 
-    ncclNetSocket.closeListen(listenComm);
+    if (listenComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator";
+      listenComm = nullptr;
+    }
   }
 
   INFO(NCCL_LOG_INFO, "TestRequestAllocationFailure completed");
@@ -1147,17 +1367,23 @@ TEST_F(NetSocketTests, TestMessageSizeMismatch) {
       // Register memory
       result = ncclNetSocket.regMr(sendComm, sendBuffer.data(), sendSize,
                                    NCCL_PTR_HOST, &sendMhandle);
-      EXPECT_EQ(result, ncclSuccess);
+      EXPECT_EQ(result, ncclSuccess) << "Failed to register send memory for size mismatch test. "
+                                    << "ncclNetSocket.regMr() returned error code: " << result
+                                    << ". Verify memory registration support for buffer size " << sendSize << ".";
 
       result = ncclNetSocket.regMr(recvComm, recvBuffer.data(), recvSize,
                                    NCCL_PTR_HOST, &recvMhandle);
-      EXPECT_EQ(result, ncclSuccess);
+      EXPECT_EQ(result, ncclSuccess) << "Failed to register receive memory for size mismatch test. "
+                                    << "ncclNetSocket.regMr() returned error code: " << result
+                                    << ". Verify memory registration support for buffer size " << recvSize << ".";
 
       // Start send operation with large size
       void *sendRequest = nullptr;
       result = ncclNetSocket.isend(sendComm, sendBuffer.data(), sendSize, 0,
                                    sendMhandle, nullptr, &sendRequest);
-      EXPECT_EQ(result, ncclSuccess);
+      EXPECT_EQ(result, ncclSuccess) << "Failed to start send operation for size mismatch test. "
+                                    << "ncclNetSocket.isend() returned error code: " << result
+                                    << ". Verify send operation support for buffer size " << sendSize << ".";
 
       // Start receive operation with small size
       void *recvRequest = nullptr;
@@ -1166,56 +1392,75 @@ TEST_F(NetSocketTests, TestMessageSizeMismatch) {
       int tag = 0;
       result = ncclNetSocket.irecv(recvComm, 1, &recvDataPtr, &recvSizeVar,
                                    &tag, &recvMhandle, nullptr, &recvRequest);
-      EXPECT_EQ(result, ncclSuccess);
+      EXPECT_EQ(result, ncclSuccess) << "Failed to start receive operation for size mismatch test. "
+                                    << "ncclNetSocket.irecv() returned error code: " << result
+                                    << ". Verify receive operation support for buffer size " << recvSize << ".";
 
       // Progress operations - this should eventually trigger the size mismatch
       // warning
       for (int i = 0; i < 100; i++) {
-        int sendDone = 0, recvDone = 0;
-        int sendSizeOut = 0, recvSizeOut = 0;
+          if (sendRequest) {
+            int sendDone = 0, sendSize_out = 0;
+            ncclResult_t sendTestResult = ncclNetSocket.test(sendRequest, &sendDone, &sendSize_out);
+            if (sendTestResult != ncclSuccess || sendDone) {
+              INFO(NCCL_LOG_INFO, "Send operation completed: result=%d, done=%d", sendTestResult, sendDone);
+              sendRequest = nullptr; // Request is cleaned up by the networking layer
+            }
+          }
 
-        ncclResult_t sendTestResult =
-            ncclNetSocket.test(sendRequest, &sendDone, &sendSizeOut);
-        ncclResult_t recvTestResult =
-            ncclNetSocket.test(recvRequest, &recvDone, &recvSizeOut);
+          if (recvRequest) {
+            int recvDone = 0, recvSize_out = 0;
+            ncclResult_t recvTestResult = ncclNetSocket.test(recvRequest, &recvDone, &recvSize_out);
+            if (recvTestResult != ncclSuccess || recvDone) {
+              INFO(NCCL_LOG_INFO, "Recv operation completed: result=%d, done=%d, size=%d",
+                   recvTestResult, recvDone, recvSize_out);
+              recvRequest = nullptr; // Request is cleaned up by the networking layer
+            }
+          }
 
-        // If receiver detects size mismatch, it should return ncclInvalidUsage
-        if (recvTestResult == ncclInvalidUsage) {
-          INFO(NCCL_LOG_INFO, "*** SUCCESS: Message size mismatch detected "
-                              "(ncclInvalidUsage) ***");
-          break;
-        }
-
-        if (sendDone && recvDone) {
-          INFO(NCCL_LOG_INFO,
-               "Operations completed without size mismatch detection");
-          break;
-        }
-
-        if (sendTestResult != ncclSuccess && sendTestResult != ncclInProgress) {
-          INFO(NCCL_LOG_INFO, "Send operation failed: %d", sendTestResult);
-          break;
-        }
-
-        if (recvTestResult != ncclSuccess && recvTestResult != ncclInProgress &&
-            recvTestResult != ncclInvalidUsage) {
-          INFO(NCCL_LOG_INFO, "Recv operation failed: %d", recvTestResult);
-          break;
-        }
+          if (!sendRequest && !recvRequest) {
+            INFO(NCCL_LOG_INFO, "Both operations completed after %d iterations", i + 1);
+            break;
+          }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
 
-      // Cleanup
-      if (sendMhandle)
-        ncclNetSocket.deregMr(sendComm, sendMhandle);
-      if (recvMhandle)
-        ncclNetSocket.deregMr(recvComm, recvMhandle);
-      ncclNetSocket.closeSend(sendComm);
-      ncclNetSocket.closeRecv(recvComm);
+      // Cleanup memory handles
+      if (sendMhandle && sendComm) {
+        ncclResult_t deregResult = ncclNetSocket.deregMr(sendComm, sendMhandle);
+        if (deregResult != ncclSuccess) {
+          INFO(NCCL_LOG_INFO, "Warning: Failed to deregister send memory handle: %d", deregResult);
+        }
+        sendMhandle = nullptr;
+      }
+
+      if (recvMhandle && recvComm) {
+        ncclResult_t deregResult = ncclNetSocket.deregMr(recvComm, recvMhandle);
+        if (deregResult != ncclSuccess) {
+          INFO(NCCL_LOG_INFO, "Warning: Failed to deregister recv memory handle: %d", deregResult);
+        }
+        recvMhandle = nullptr;
+      }
+
+      // Cleanup communicators
+      if (sendComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeSend(sendComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator";
+        sendComm = nullptr;
+      }
+      if (recvComm) {
+        ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComm);
+        EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator";
+        recvComm = nullptr;
+      }
     }
 
-    ncclNetSocket.closeListen(listenComm);
+    if (listenComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator";
+      listenComm = nullptr;
+    }
   }
 
   INFO(NCCL_LOG_INFO, "TestMessageSizeMismatch completed");
