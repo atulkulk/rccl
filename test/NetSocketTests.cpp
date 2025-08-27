@@ -1490,4 +1490,405 @@ TEST_F(NetSocketTests, TestIflushAlwaysFails) {
   INFO(NCCL_LOG_INFO, "TestIflushAlwaysFails completed");
 }
 
+
+
+// Test for different buffer alignments
+TEST_F(NetSocketTests, TestBufferAlignments) {
+  INFO(NCCL_LOG_INFO, "Testing various buffer alignments");
+
+  // Test socket properties
+  TestSocketProperties();
+
+  char handle[NCCL_NET_HANDLE_MAXSIZE];
+  void *listenComm = nullptr;
+
+  ncclResult_t result = ncclNetSocket.listen(0, handle, &listenComm);
+  ASSERT_EQ(result, ncclSuccess) << "Failed to establish listening socket for buffer alignment test. "
+                                << "ncclNetSocket.listen() returned error code: " << result;
+
+  void *sendComm = nullptr;
+  void *recvComm = nullptr;
+  bool connectionSuccess = EstablishConnectionPair(handle, listenComm, sendComm, recvComm);
+
+  if (connectionSuccess) {
+    const size_t baseSize = 4096;  // Base size for alignment tests
+    const size_t pageSize = 4096;  // Typical page size
+
+    // Test different alignment scenarios
+    struct AlignmentTest {
+      const char* name;
+      size_t alignment;
+      size_t offset;
+      size_t dataSize;
+      bool shouldSucceed;
+    };
+
+    std::vector<AlignmentTest> alignmentTests = {
+      // Page-aligned buffers
+      {"Page-aligned 4KB", pageSize, 0, baseSize, true},
+      {"Page-aligned 8KB", pageSize, 0, baseSize * 2, true},
+      {"Page-aligned 1KB", pageSize, 0, 1024, true},
+
+      // Non-page-aligned buffers
+      {"Non-page-aligned +1", 1, 1, baseSize, true},
+      {"Non-page-aligned +7", 1, 7, baseSize, true},
+      {"Non-page-aligned +63", 1, 63, baseSize, true},
+      {"Non-page-aligned +255", 1, 255, baseSize, true},
+      {"Non-page-aligned +1023", 1, 1023, baseSize, true},
+
+      // Word-aligned buffers (8-byte alignment)
+      {"Word-aligned 8B", 8, 0, baseSize, true},
+      {"Word-aligned 16B", 16, 0, baseSize, true},
+      {"Word-aligned 32B", 32, 0, baseSize, true},
+      {"Word-aligned 64B", 64, 0, baseSize, true},
+
+      // Non-word-aligned buffers
+      {"Non-word-aligned +1", 1, 1, baseSize, true},
+      {"Non-word-aligned +2", 1, 2, baseSize, true},
+      {"Non-word-aligned +3", 1, 3, baseSize, true},
+      {"Non-word-aligned +5", 1, 5, baseSize, true},
+      {"Non-word-aligned +7", 1, 7, baseSize, true},
+
+      // Cache line aligned (64-byte alignment)
+      {"Cache-line-aligned", 64, 0, baseSize, true},
+      {"Cache-line +1", 1, 1, baseSize, true},
+      {"Cache-line +31", 1, 31, baseSize, true},
+      {"Cache-line +32", 1, 32, baseSize, true},
+      {"Cache-line +63", 1, 63, baseSize, true},
+
+      // Odd sizes with various alignments
+      {"Odd size 1001B page-aligned", pageSize, 0, 1001, true},
+      {"Odd size 1001B +1", 1, 1, 1001, true},
+      {"Odd size 2047B word-aligned", 8, 0, 2047, true},
+      {"Odd size 2047B +3", 1, 3, 2047, true},
+    };
+
+    for (const auto& test : alignmentTests) {
+      INFO(NCCL_LOG_INFO, "\n=== Testing %s ===", test.name);
+
+      // Allocate oversized buffer to allow for alignment
+      size_t allocSize = test.dataSize + test.alignment + test.offset;
+      std::vector<char> sendBufferRaw(allocSize, 0xAA);
+      std::vector<char> recvBufferRaw(allocSize, 0x00);
+
+      // Calculate aligned pointers
+      uintptr_t sendAddr = reinterpret_cast<uintptr_t>(sendBufferRaw.data());
+      uintptr_t recvAddr = reinterpret_cast<uintptr_t>(recvBufferRaw.data());
+
+      // Align to specified boundary
+      if (test.alignment > 1) {
+        sendAddr = (sendAddr + test.alignment - 1) & ~(test.alignment - 1);
+        recvAddr = (recvAddr + test.alignment - 1) & ~(test.alignment - 1);
+      }
+
+      // Add offset for non-aligned tests
+      sendAddr += test.offset;
+      recvAddr += test.offset;
+
+      char* sendBuffer = reinterpret_cast<char*>(sendAddr);
+      char* recvBuffer = reinterpret_cast<char*>(recvAddr);
+
+      // Verify alignment
+      INFO(NCCL_LOG_INFO, "Send buffer address: %p (alignment: %zu, offset: %zu)",
+           sendBuffer, sendAddr % test.alignment, test.offset);
+      INFO(NCCL_LOG_INFO, "Recv buffer address: %p (alignment: %zu, offset: %zu)",
+           recvBuffer, recvAddr % test.alignment, test.offset);
+
+      // Initialize send buffer with test pattern
+      for (size_t i = 0; i < test.dataSize; i++) {
+        sendBuffer[i] = static_cast<char>(0xAA + (i % 85));
+      }
+
+      // Clear receive buffer
+      memset(recvBuffer, 0x00, test.dataSize);
+
+      void *sendMhandle = nullptr;
+      void *recvMhandle = nullptr;
+
+      // Register memory
+      ncclResult_t sendRegResult = ncclNetSocket.regMr(sendComm, sendBuffer, test.dataSize,
+                                                      NCCL_PTR_HOST, &sendMhandle);
+      ncclResult_t recvRegResult = ncclNetSocket.regMr(recvComm, recvBuffer, test.dataSize,
+                                                      NCCL_PTR_HOST, &recvMhandle);
+
+      if (test.shouldSucceed) {
+        EXPECT_EQ(sendRegResult, ncclSuccess) << "Failed to register send memory for " << test.name
+                                             << ". Error code: " << sendRegResult;
+        EXPECT_EQ(recvRegResult, ncclSuccess) << "Failed to register receive memory for " << test.name
+                                             << ". Error code: " << recvRegResult;
+      }
+
+      if (sendRegResult == ncclSuccess && recvRegResult == ncclSuccess) {
+        // Start operations
+        void *sendRequest = nullptr;
+        void *recvRequest = nullptr;
+
+        ncclResult_t sendResult = ncclNetSocket.isend(sendComm, sendBuffer, test.dataSize, 0,
+                                                     sendMhandle, nullptr, &sendRequest);
+
+        void *recvDataPtr = recvBuffer;
+        size_t recvSize = test.dataSize;
+        int tag = 0;
+        ncclResult_t recvResult = ncclNetSocket.irecv(recvComm, 1, &recvDataPtr, &recvSize, &tag,
+                                                     &recvMhandle, nullptr, &recvRequest);
+
+        if (sendResult == ncclSuccess && recvResult == ncclSuccess) {
+          // Wait for completion with appropriate timeout based on buffer size
+          int maxWaitTime = (test.dataSize > 1024*1024) ? 30000 : 10000; // 30s for large buffers
+          bool operationsCompleted = false;
+
+          for (int iter = 0; iter < maxWaitTime / 100; iter++) {
+            bool sendDone = false, recvDone = false;
+
+            if (sendRequest) {
+              int done = 0, size = 0;
+              if (ncclNetSocket.test(sendRequest, &done, &size) == ncclSuccess && done) {
+                sendDone = true;
+                sendRequest = nullptr;
+              }
+            } else {
+              sendDone = true;
+            }
+
+            if (recvRequest) {
+              int done = 0, size = 0;
+              if (ncclNetSocket.test(recvRequest, &done, &size) == ncclSuccess && done) {
+                recvDone = true;
+                recvRequest = nullptr;
+              }
+            } else {
+              recvDone = true;
+            }
+
+            if (sendDone && recvDone) {
+              operationsCompleted = true;
+              INFO(NCCL_LOG_INFO, "Operations completed successfully for %s", test.name);
+              break;
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          }
+
+          if (!operationsCompleted) {
+            ADD_FAILURE() << "Operations timed out: " << test.name;
+          }
+        }
+
+        // Cleanup memory handles
+        if (sendMhandle) {
+          ncclResult_t deregResult = ncclNetSocket.deregMr(sendComm, sendMhandle);
+          EXPECT_EQ(deregResult, ncclSuccess) << "Failed to deregister send memory for " << test.name;
+        }
+        if (recvMhandle) {
+          ncclResult_t deregResult = ncclNetSocket.deregMr(recvComm, recvMhandle);
+          EXPECT_EQ(deregResult, ncclSuccess) << "Failed to deregister receive memory for " << test.name;
+        }
+      }
+
+      INFO(NCCL_LOG_INFO, "=== Completed %s ===", test.name);
+    }
+
+    // Cleanup communicators
+    if (sendComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeSend(sendComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator";
+      sendComm = nullptr;
+    }
+    if (recvComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator";
+      recvComm = nullptr;
+    }
+  } else {
+    INFO(NCCL_LOG_INFO, "No connections established - skipping buffer alignment tests");
+  }
+
+  if (listenComm) {
+    ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
+    EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator";
+    listenComm = nullptr;
+  }
+  INFO(NCCL_LOG_INFO, "TestBufferAlignments completed successfully");
+}
+
+// Test for extreme alignment cases
+TEST_F(NetSocketTests, TestExtremeBufferAlignments) {
+  INFO(NCCL_LOG_INFO, "Testing extreme buffer alignment cases");
+
+  // Test socket properties
+  TestSocketProperties();
+
+  char handle[NCCL_NET_HANDLE_MAXSIZE];
+  void *listenComm = nullptr;
+
+  ncclResult_t result = ncclNetSocket.listen(0, handle, &listenComm);
+  ASSERT_EQ(result, ncclSuccess) << "Failed to establish listening socket for extreme alignment test. "
+                                << "ncclNetSocket.listen() returned error code: " << result;
+
+  void *sendComm = nullptr;
+  void *recvComm = nullptr;
+  bool connectionSuccess = EstablishConnectionPair(handle, listenComm, sendComm, recvComm);
+
+  if (connectionSuccess) {
+    struct ExtremeAlignmentTest {
+      const char* name;
+      size_t dataSize;
+      size_t alignment;
+      size_t offset;
+    };
+
+    std::vector<ExtremeAlignmentTest> extremeTests = {
+      // Very small buffers with different alignments
+      {"1-byte buffer, byte-aligned", 1, 1, 0},
+      {"1-byte buffer, +1 offset", 1, 1, 1},
+      {"3-byte buffer, +1 offset", 3, 1, 1},
+      {"7-byte buffer, +1 offset", 7, 1, 1},
+
+      // Small buffers crossing alignment boundaries
+      {"15-byte buffer, +1 offset", 15, 1, 1},
+      {"31-byte buffer, +1 offset", 31, 1, 1},
+      {"63-byte buffer, +1 offset", 63, 1, 1},
+      {"127-byte buffer, +1 offset", 127, 1, 1},
+
+      // Buffers with sizes that are powers of 2 - 1
+      {"255-byte buffer, +1 offset", 255, 1, 1},
+      {"511-byte buffer, +3 offset", 511, 1, 3},
+      {"1023-byte buffer, +7 offset", 1023, 1, 7},
+
+      // Large aligned buffers
+      {"1MB page-aligned", 1024 * 1024, 4096, 0},
+      {"1MB +1 offset", 1024 * 1024, 1, 1},
+      {"1MB +4095 offset", 1024 * 1024, 1, 4095},
+    };
+
+    for (const auto& test : extremeTests) {
+      INFO(NCCL_LOG_INFO, "\n=== Testing extreme case: %s ===", test.name);
+
+      // Allocate oversized buffer to allow for alignment
+      size_t allocSize = test.dataSize + test.alignment + test.offset + 4096;  // Extra padding
+      std::vector<char> sendBufferRaw(allocSize, 0xDD);
+      std::vector<char> recvBufferRaw(allocSize, 0x00);
+
+      // Calculate aligned pointers
+      uintptr_t sendAddr = reinterpret_cast<uintptr_t>(sendBufferRaw.data());
+      uintptr_t recvAddr = reinterpret_cast<uintptr_t>(recvBufferRaw.data());
+
+      // Align to specified boundary
+      if (test.alignment > 1) {
+        sendAddr = (sendAddr + test.alignment - 1) & ~(test.alignment - 1);
+        recvAddr = (recvAddr + test.alignment - 1) & ~(test.alignment - 1);
+      }
+
+      // Add offset
+      sendAddr += test.offset;
+      recvAddr += test.offset;
+
+      char* sendBuffer = reinterpret_cast<char*>(sendAddr);
+      char* recvBuffer = reinterpret_cast<char*>(recvAddr);
+
+      INFO(NCCL_LOG_INFO, "Buffer size: %zu, Send addr: %p, Recv addr: %p",
+           test.dataSize, sendBuffer, recvBuffer);
+
+      // Initialize with unique pattern
+      for (size_t i = 0; i < test.dataSize; i++) {
+        sendBuffer[i] = static_cast<char>(0xEE + (i % 7));  // Non-power-of-2 pattern
+      }
+
+      void *sendMhandle = nullptr;
+      void *recvMhandle = nullptr;
+
+      // Register memory
+      ncclResult_t sendRegResult = ncclNetSocket.regMr(sendComm, sendBuffer, test.dataSize,
+                                                      NCCL_PTR_HOST, &sendMhandle);
+      ncclResult_t recvRegResult = ncclNetSocket.regMr(recvComm, recvBuffer, test.dataSize,
+                                                      NCCL_PTR_HOST, &recvMhandle);
+
+      EXPECT_EQ(sendRegResult, ncclSuccess) << "Memory registration failed for " << test.name;
+      EXPECT_EQ(recvRegResult, ncclSuccess) << "Memory registration failed for " << test.name;
+
+      if (sendRegResult == ncclSuccess && recvRegResult == ncclSuccess) {
+        // Start operations
+        void *sendRequest = nullptr;
+        void *recvRequest = nullptr;
+
+        ncclResult_t sendResult = ncclNetSocket.isend(sendComm, sendBuffer, test.dataSize, 0,
+                                                     sendMhandle, nullptr, &sendRequest);
+
+        void *recvDataPtr = recvBuffer;
+        size_t recvSize = test.dataSize;
+        int tag = 0;
+        ncclResult_t recvResult = ncclNetSocket.irecv(recvComm, 1, &recvDataPtr, &recvSize, &tag,
+                                                     &recvMhandle, nullptr, &recvRequest);
+
+        if (sendResult == ncclSuccess && recvResult == ncclSuccess) {
+          // Wait for completion with appropriate timeout based on buffer size
+          int maxWaitTime = (test.dataSize > 1024*1024) ? 30000 : 10000; // 30s for large buffers
+          bool operationsCompleted = false;
+          for (int iter = 0; iter < maxWaitTime / 100; iter++) {
+            bool sendDone = false, recvDone = false;
+            if (sendRequest) {
+              int done = 0, size = 0;
+              if (ncclNetSocket.test(sendRequest, &done, &size) == ncclSuccess && done) {
+                sendDone = true;
+                sendRequest = nullptr;
+              }
+            } else {
+              sendDone = true;
+            }
+            if (recvRequest) {
+              int done = 0, size = 0;
+              if (ncclNetSocket.test(recvRequest, &done, &size) == ncclSuccess && done) {
+                recvDone = true;
+                recvRequest = nullptr;
+              }
+            } else {
+              recvDone = true;
+            }
+            if (sendDone && recvDone) {
+              operationsCompleted = true;
+              INFO(NCCL_LOG_INFO, "Extreme case operations completed: %s", test.name);
+              break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          }
+          if (!operationsCompleted) {
+            ADD_FAILURE() << "Extreme case operations timed out: " << test.name;
+          }
+        }
+
+        // Cleanup memory handles
+        if (sendMhandle) {
+          ncclResult_t deregResult = ncclNetSocket.deregMr(sendComm, sendMhandle);
+          EXPECT_EQ(deregResult, ncclSuccess) << "Failed to deregister send memory for " << test.name;
+        }
+        if (recvMhandle) {
+          ncclResult_t deregResult = ncclNetSocket.deregMr(recvComm, recvMhandle);
+          EXPECT_EQ(deregResult, ncclSuccess) << "Failed to deregister receive memory for " << test.name;
+        }
+      }
+    }
+
+    // Cleanup communicators
+    if (sendComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeSend(sendComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close send communicator";
+      sendComm = nullptr;
+    }
+    if (recvComm) {
+      ncclResult_t closeResult = ncclNetSocket.closeRecv(recvComm);
+      EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close receive communicator";
+      recvComm = nullptr;
+    }
+  } else {
+    INFO(NCCL_LOG_INFO, "No connections established - skipping extreme alignment tests");
+  }
+
+  if (listenComm) {
+    ncclResult_t closeResult = ncclNetSocket.closeListen(listenComm);
+    EXPECT_EQ(closeResult, ncclSuccess) << "Failed to close listen communicator";
+    listenComm = nullptr;
+  }
+  INFO(NCCL_LOG_INFO, "TestExtremeBufferAlignments completed successfully");
+}
+
 } // namespace RcclUnitTesting
