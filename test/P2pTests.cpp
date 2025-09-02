@@ -1066,8 +1066,8 @@ TEST_F(P2pTests, IpcRegisterBufferFailures) {
 
   struct ncclReg regRecord;
   memset(&regRecord, 0, sizeof(regRecord));
-  regRecord.addr = (uintptr_t)dptr;
-  regRecord.pages = 1;
+  regRecord.begAddr = (uintptr_t)dptr;
+  regRecord.endAddr = regRecord.begAddr + (32 * sizeof(float)); // Calculate end address based on size
   for (int i = 0; i < 2; ++i)
     regRecord.ipcInfos[i] = nullptr;
 
