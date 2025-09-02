@@ -142,6 +142,21 @@ private:
   };
 
 protected:
+  // Named constants for test parameters
+  static constexpr int DEFAULT_MAX_CONNECTION_ATTEMPTS = 100;
+  static constexpr int DEFAULT_SLEEP_DURATION_MS = 100;
+  static constexpr int DEFAULT_PROGRESS_TEST_ITERATIONS = 10;
+  static constexpr int DEFAULT_OVERALL_TIMEOUT_SECONDS = 1;
+  static constexpr int DEFAULT_PROGRESS_CHECK_INTERVAL_MS = 100;
+  static constexpr int DEFAULT_PROGRESS_SLEEP_MS = 50;
+  static constexpr int MAX_MESSAGE_SIZE_MISMATCH_ITERATIONS = 100;
+  static constexpr size_t DEFAULT_TEST_BUFFER_SIZE = 1024;
+  static constexpr size_t MIN_CHUNKSIZE = 64 * 1024;
+  static constexpr size_t LARGE_BUFFER_SIZE = 1024 * 1024;
+  static constexpr size_t VERY_LARGE_BUFFER_SIZE = 2 * 1024 * 1024;
+  static constexpr size_t MESSAGE_MISMATCH_SEND_SIZE = 2048;
+  static constexpr size_t MESSAGE_MISMATCH_RECV_SIZE = 1024;
+
   void SetUp() override {
     ncclResult_t result = ncclNetSocket.init(nullptr, nullptr);
     ASSERT_EQ(result, ncclSuccess) << "Failed to initialize ncclNetSocket. "
@@ -189,17 +204,17 @@ protected:
   bool EstablishConnectionPair(void *handle, void *listenComm, void *&sendComm,
                                void *&recvComm) {
     // Allow overriding max attempts via environment variable for flexibility
-    int maxAttempts = 100;
+    int maxAttempts = DEFAULT_MAX_CONNECTION_ATTEMPTS;
     const char* maxAttemptsEnv = getenv("RCCL_TEST_NETSOCKET_MAX_ATTEMPTS");
     if (maxAttemptsEnv) {
-      maxAttempts = ParseEnvVar(maxAttemptsEnv, "RCCL_TEST_NETSOCKET_MAX_ATTEMPTS", 100, 1);
+      maxAttempts = ParseEnvVar(maxAttemptsEnv, "RCCL_TEST_NETSOCKET_MAX_ATTEMPTS", DEFAULT_MAX_CONNECTION_ATTEMPTS, 1);
     }
 
     // Allow overriding sleep duration via environment variable for flexibility
-    int sleepMs = 100;
+    int sleepMs = DEFAULT_SLEEP_DURATION_MS;
     const char* sleepMsEnv = getenv("RCCL_TEST_NETSOCKET_SLEEP_MS");
     if (sleepMsEnv) {
-      sleepMs = ParseEnvVar(sleepMsEnv, "RCCL_TEST_NETSOCKET_SLEEP_MS", 100, 1);
+      sleepMs = ParseEnvVar(sleepMsEnv, "RCCL_TEST_NETSOCKET_SLEEP_MS", DEFAULT_SLEEP_DURATION_MS, 1);
     }
 
     // Initialize output parameters
@@ -255,14 +270,14 @@ protected:
         std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
 
         // Increased attempts and longer total timeout for reliability
-        for (int attempt = 0; attempt < 100 && !shouldStop.load(); attempt++) {
+        for (int attempt = 0; attempt < DEFAULT_MAX_CONNECTION_ATTEMPTS && !shouldStop.load(); attempt++) {
           ncclResult_t connectResult = ncclNetSocket.connect(
               0, &config, handle, &tempSendComm, &sendDevComm);
           if (connectResult == ncclSuccess && tempSendComm != nullptr) {
             sendGuard.reset(tempSendComm);
             connectCompleted = true;
             INFO(NCCL_LOG_INFO, "Connect completed successfully on attempt %d",
-                 attempt + 1);
+                attempt + 1);
             break;
           }
 
@@ -271,14 +286,14 @@ protected:
         }
 
         if (!connectCompleted.load()) {
-          INFO(NCCL_LOG_INFO, "Connect thread timed out after %d attempts", maxAttempts);
+          INFO(NCCL_LOG_INFO, "Connect thread timed out after %d attempts", DEFAULT_MAX_CONNECTION_ATTEMPTS);
         }
       });
 
       // Wait for both threads with overall timeout
       auto startTime = std::chrono::steady_clock::now();
       const auto maxWaitTime =
-          std::chrono::seconds(10); // 10 second overall timeout
+          std::chrono::seconds(DEFAULT_OVERALL_TIMEOUT_SECONDS);
 
       while (!acceptCompleted.load() || !connectCompleted.load()) {
         auto currentTime = std::chrono::steady_clock::now();
@@ -290,7 +305,7 @@ protected:
         }
 
         // Check every 100ms
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::milliseconds(DEFAULT_PROGRESS_CHECK_INTERVAL_MS));
       }
 
       acceptThread.join();
@@ -400,7 +415,7 @@ protected:
   // Common function to progress operations and test ncclNetSocketGetTask
   bool ProgressOperations(void *sendRequest, void *recvRequest, size_t testSize,
                           const std::string &testContext = "") {
-    const int maxTestIterations = 10;
+    const int maxTestIterations = DEFAULT_PROGRESS_TEST_ITERATIONS;
     bool taskCreationExercised = false;
 
     INFO(NCCL_LOG_INFO,
@@ -462,7 +477,7 @@ protected:
       }
 
       // Give time between tests
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      std::this_thread::sleep_for(std::chrono::milliseconds(DEFAULT_PROGRESS_SLEEP_MS));
     }
 
     if (taskCreationExercised) {
@@ -553,13 +568,13 @@ protected:
   // Common function to get test buffer sizes
   std::vector<size_t> GetTestSizes() {
     return {
-        1024,           // Small - basic test
-        64 * 1024,      // MIN_CHUNKSIZE - boundary case
-        128 * 1024,     // 2x MIN_CHUNKSIZE - will exercise subdivision
-        256 * 1024,     // 4x MIN_CHUNKSIZE - multiple chunks
-        512 * 1024,     // 8x MIN_CHUNKSIZE - many chunks
-        1024 * 1024,    // Large - stress test
-        2 * 1024 * 1024 // Very large - comprehensive test
+        DEFAULT_TEST_BUFFER_SIZE,    // Small - basic test
+        MIN_CHUNKSIZE,               // MIN_CHUNKSIZE - boundary case
+        MIN_CHUNKSIZE * 2,           // 2x MIN_CHUNKSIZE - will exercise subdivision
+        MIN_CHUNKSIZE * 4,           // 4x MIN_CHUNKSIZE - multiple chunks
+        MIN_CHUNKSIZE * 8,           // 8x MIN_CHUNKSIZE - many chunks
+        LARGE_BUFFER_SIZE,           // Large - stress test
+        VERY_LARGE_BUFFER_SIZE       // Very large - comprehensive test
     };
   }
 
@@ -967,10 +982,10 @@ TEST_F(NetSocketTests, TestInvalidArraySizeIrecv) {
 
     if (connectionSuccess && recvComm) {
       // Test with n != 1 (invalid for socket implementation)
-      std::vector<char> buffer1(1024, 0xAA);
-      std::vector<char> buffer2(1024, 0xBB);
+      std::vector<char> buffer1(DEFAULT_TEST_BUFFER_SIZE, 0xAA);
+      std::vector<char> buffer2(DEFAULT_TEST_BUFFER_SIZE, 0xBB);
       void *data[2] = {buffer1.data(), buffer2.data()};
-      size_t sizes[2] = {1024, 1024};
+      size_t sizes[2] = {DEFAULT_TEST_BUFFER_SIZE, DEFAULT_TEST_BUFFER_SIZE};
       int tags[2] = {0, 1};
       void *mhandles[2] = {nullptr, nullptr};
       void *phandles[2] = {nullptr, nullptr};
@@ -1032,11 +1047,11 @@ TEST_F(NetSocketTests, TestNonHostMemoryRegMr) {
         EstablishConnectionPair(handle, listenComm, sendComm, recvComm);
 
     if (connectionSuccess && sendComm) {
-      std::vector<char> buffer(1024, 0xAA);
+      std::vector<char> buffer(DEFAULT_TEST_BUFFER_SIZE, 0xAA);
       void *mhandle = nullptr;
 
       // Test with NCCL_PTR_CUDA (should fail for socket implementation)
-      result = ncclNetSocket.regMr(sendComm, buffer.data(), 1024, NCCL_PTR_CUDA,
+      result = ncclNetSocket.regMr(sendComm, buffer.data(), DEFAULT_TEST_BUFFER_SIZE, NCCL_PTR_CUDA,
                                    &mhandle);
       INFO(NCCL_LOG_INFO, "RegMr with NCCL_PTR_CUDA returned: %d", result);
       EXPECT_EQ(result, ncclInternalError)
@@ -1045,7 +1060,7 @@ TEST_F(NetSocketTests, TestNonHostMemoryRegMr) {
           << "but returned: " << result << ". Socket implementation only supports NCCL_PTR_HOST.";
 
       // Test with valid NCCL_PTR_HOST (should succeed)
-      result = ncclNetSocket.regMr(sendComm, buffer.data(), 1024, NCCL_PTR_HOST,
+      result = ncclNetSocket.regMr(sendComm, buffer.data(), DEFAULT_TEST_BUFFER_SIZE, NCCL_PTR_HOST,
                                    &mhandle);
       INFO(NCCL_LOG_INFO, "RegMr with NCCL_PTR_HOST returned: %d", result);
       EXPECT_EQ(result, ncclSuccess)
@@ -1354,11 +1369,11 @@ TEST_F(NetSocketTests, TestMessageSizeMismatch) {
 
     if (connectionSuccess && sendComm && recvComm) {
       // Large send buffer
-      const size_t sendSize = 2048;
+      const size_t sendSize = MESSAGE_MISMATCH_SEND_SIZE;
       std::vector<char> sendBuffer(sendSize, 0xAA);
 
       // Small receive buffer (to simulate size mismatch)
-      const size_t recvSize = 1024; // Smaller than send size
+      const size_t recvSize = MESSAGE_MISMATCH_RECV_SIZE; // Smaller than send size
       std::vector<char> recvBuffer(recvSize, 0x00);
 
       void *sendMhandle = nullptr;
@@ -1489,8 +1504,6 @@ TEST_F(NetSocketTests, TestIflushAlwaysFails) {
 
   INFO(NCCL_LOG_INFO, "TestIflushAlwaysFails completed");
 }
-
-
 
 // Test for different buffer alignments
 TEST_F(NetSocketTests, TestBufferAlignments) {
