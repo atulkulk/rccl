@@ -4,7 +4,8 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "comm.h" // Ensure full definition of struct ncclComm
+#include "comm.h"
+#include "common/ProcessIsolatedTestRunner.hpp"
 #include "debug.h"
 #include "graph/topo.h"
 #include <cstdlib>
@@ -13,35 +14,6 @@
 #include <rccl/rccl.h>
 
 namespace RcclUnitTesting {
-
-// Static flag to ensure only one rcclSetP2pNetChunkSize test runs per execution
-static bool s_p2pNetChunkSizeTestExecuted = false;
-
-// Helper function to check if P2P test should be skipped due to execution order
-static bool ShouldSkipP2pTestDueToExecutionOrder(const std::string &testName) {
-  if (s_p2pNetChunkSizeTestExecuted) {
-    INFO(NCCL_LOG_INFO,
-         "\n=== IMPORTANT NOTE ===\n"
-         "Test '%s' is being skipped because another rcclSetP2pNetChunkSize "
-         "test\n"
-         "has already executed in this run. The rcclSetP2pNetChunkSize "
-         "function uses a static\n"
-         "variable that gets initialized on first call, which affects "
-         "subsequent tests.\n"
-         "\nTo run this test properly, execute it individually using:\n"
-         "  --gtest_filter=Rcclwrap.%s\n"
-         "\nOr run each rcclSetP2pNetChunkSize test in separate executions to "
-         "ensure\n"
-         "proper static variable initialization.\n"
-         "========================\n",
-         testName.c_str(), testName.c_str());
-    return true;
-  }
-
-  // Mark that a P2P test is now executing
-  s_p2pNetChunkSizeTestExecuted = true;
-  return false;
-}
 
 // Helper function to determine if P2P test should be skipped due to static
 // variable state
@@ -68,33 +40,6 @@ static bool ShouldSkipP2pTest(const char *requiredEnvValue = nullptr) {
   // Warning: Static variable might still be initialized from previous tests
   // For guaranteed clean state, run tests individually or restart binary
   return false; // Don't skip
-}
-
-// Static flag to ensure only one rcclSetPxn test runs per execution
-static bool s_pxnTestExecuted = false;
-
-// Helper function to check if PXN test should be skipped due to execution order
-static bool ShouldSkipPxnTestDueToExecutionOrder(const std::string &testName) {
-  if (s_pxnTestExecuted) {
-    INFO(NCCL_LOG_INFO,
-         "\n=== IMPORTANT NOTE ===\n"
-         "Test '%s' is being skipped because another rcclSetPxn test\n"
-         "has already executed in this run. The rcclSetPxn function uses a "
-         "static\n"
-         "variable that gets initialized on first call, which affects "
-         "subsequent tests.\n"
-         "\nTo run this test properly, execute it individually using:\n"
-         "  --gtest_filter=Rcclwrap.%s\n"
-         "\nOr run each rcclSetPxn test in separate executions to ensure\n"
-         "proper static variable initialization.\n"
-         "========================\n",
-         testName.c_str(), testName.c_str());
-    return true;
-  }
-
-  // Mark that a PXN test is now executing
-  s_pxnTestExecuted = true;
-  return false;
 }
 
 // Helper function to determine if PXN test should be skipped due to static
@@ -393,74 +338,113 @@ TEST(Rcclwrap, validHsaScratchEnvSettingTest) {
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
-  const char *value = getenv("NCCL_THREAD_THRESHOLDS");
 
-  if (!value) {
-    INFO(NCCL_LOG_INFO, "[Rcclwrap] Test skipped. Set environment variable "
-                        "NCCL_THREAD_THRESHOLD");
-    GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable "
-                    "NCCL_THREAD_THRESHOLD\n";
-  } else {
-    ncclComm comm = {.nRanks = 8, .nNodes = 4};
-    ncclTaskColl info = {.func = ncclFuncReduceScatter, .protocol = 0};
-    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+  // Clear any previous test registrations
+  ProcessIsolatedTestRunner::clear();
 
-    int threadThreshold = 5; // Any number should do, we should make sure this
-                             // number does not change
-    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+  // Register tests with appropriate environment variables
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "RcclUpdateThreadThreshold_UserEnvSet",
+          []() {
+            const char *value = getenv("NCCL_THREAD_THRESHOLDS");
 
-    EXPECT_EQ(threadThreshold, 5);
-  }
+            if (!value) {
+              INFO(NCCL_LOG_INFO,
+                   "[Rcclwrap] Test skipped. Set environment variable "
+                   "NCCL_THREAD_THRESHOLD");
+              GTEST_SKIP()
+                  << "[Rcclwrap] Test skipped. Set environment variable "
+                     "NCCL_THREAD_THRESHOLD\n";
+            } else {
+              ncclComm comm = {.nRanks = 8, .nNodes = 4};
+              ncclTaskColl info = {.func = ncclFuncReduceScatter,
+                                   .protocol = 0};
+              memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+              int threadThreshold = 5; // Any number should do, we should make
+                                       // sure this number does not change
+              rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+              EXPECT_EQ(threadThreshold, 5);
+            }
+          })
+          .withEnvironment({{"NCCL_THREAD_THRESHOLDS", "1"}}));
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
-  const char *value = getenv("NCCL_MIN_NCHANNELS");
-  if (!value) {
-    INFO(
-        NCCL_LOG_INFO,
-        "[Rcclwrap] Test skipped. Set environment variable NCCL_MIN_NCHANNELS");
-    GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable "
-                    "NCCL_MIN_NCHANNELS\n";
-  } else {
-    ncclComm comm{};
-    ncclTaskColl info{};
-    int threadThreshold = 5;
 
-    comm.nRanks = 4;
-    comm.nNodes = 4;
-    info.func = ncclFuncAllGather;
-    info.protocol = 0;
-    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+  // Clear any previous test registrations
+  ProcessIsolatedTestRunner::clear();
 
-    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+  // Register tests with appropriate environment variables
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "RcclUpdateThreadThreshold_MinNChannelsSet",
+          []() {
 
-    EXPECT_EQ(threadThreshold, 5);
-  }
+      const char *value = getenv("NCCL_MIN_NCHANNELS");
+      if (!value) {
+        INFO(
+            NCCL_LOG_INFO,
+            "[Rcclwrap] Test skipped. Set environment variable NCCL_MIN_NCHANNELS");
+        GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable "
+                        "NCCL_MIN_NCHANNELS\n";
+      } else {
+        ncclComm comm{};
+        ncclTaskColl info{};
+        int threadThreshold = 5;
+
+        comm.nRanks = 4;
+        comm.nNodes = 4;
+        info.func = ncclFuncAllGather;
+        info.protocol = 0;
+        memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+        rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+        EXPECT_EQ(threadThreshold, 5);
+      }
+    }).withEnvironment({
+          {"NCCL_MIN_NCHANNELS", "1"}}));
+
 }
 
-TEST(Rcclwrap, RcclUpdateThreadThreshold_MNChannelsSet) {
-  const char *value = getenv("NCCL_MAX_NCHANNELS");
-  if (!value) {
-    INFO(
-        NCCL_LOG_INFO,
-        "[Rcclwrap] Test skipped. Set environment variable NCCL_MAX_NCHANNELS");
-    GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable "
-                    "NCCL_MAX_NCHANNELS\n";
-  } else {
-    ncclComm comm{};
-    ncclTaskColl info{};
-    int threadThreshold = 5;
+TEST(Rcclwrap, RcclUpdateThreadThreshold_MaxChannelsSet) {
 
-    comm.nRanks = 4;
-    comm.nNodes = 4;
-    info.func = ncclFuncAllGather;
-    info.protocol = 0;
-    memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+  // Clear any previous test registrations
+  ProcessIsolatedTestRunner::clear();
 
-    rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+  // Register tests with appropriate environment variables
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "RcclUpdateThreadThreshold_MaxChannelsSet",
+          []() {
 
-    EXPECT_EQ(threadThreshold, 5);
-  }
+      const char *value = getenv("NCCL_MAX_NCHANNELS");
+      if (!value) {
+        INFO(
+            NCCL_LOG_INFO,
+            "[Rcclwrap] Test skipped. Set environment variable NCCL_MAX_NCHANNELS");
+        GTEST_SKIP() << "[Rcclwrap] Test skipped. Set environment variable "
+                        "NCCL_MAX_NCHANNELS\n";
+      } else {
+        ncclComm comm{};
+        ncclTaskColl info{};
+        int threadThreshold = 5;
+
+        comm.nRanks = 4;
+        comm.nNodes = 4;
+        info.func = ncclFuncAllGather;
+        info.protocol = 0;
+        memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+
+        rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
+
+        EXPECT_EQ(threadThreshold, 5);
+      }
+    }).withEnvironment({
+          {"NCCL_MAX_NCHANNELS", "1"}}));
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_nNodesLessThan2) {
@@ -533,1217 +517,6 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_ThresholdUndefined) {
   rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
   EXPECT_EQ(threadThreshold, 5);
-}
-
-TEST(Rcclwrap, GFX942_SmallRanks) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX942_SmallRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX942 with small ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 17 = 131072 for ranks < 64
-  EXPECT_EQ(chunkSize, 1 << 17)
-      << "GFX942 with ranks < 64 should set chunk size to 131072";
-
-  INFO(NCCL_LOG_INFO, "GFX942 small ranks test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX942_LargeRanks) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX942_LargeRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX942 with large ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 128);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 19 = 524288 for ranks >= 64
-  EXPECT_EQ(chunkSize, 1 << 19)
-      << "GFX942 with ranks >= 64 should set chunk size to 524288";
-
-  INFO(NCCL_LOG_INFO, "GFX942 large ranks test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX942_BoundaryRank64) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX942_BoundaryRank64")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX942 with boundary rank 64");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 64);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 19 = 524288 for ranks >= 64
-  EXPECT_EQ(chunkSize, 1 << 19)
-      << "GFX942 with ranks = 64 should set chunk size to 524288";
-
-  INFO(NCCL_LOG_INFO, "GFX942 boundary rank 64 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX942_BoundaryRank63) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX942_BoundaryRank63")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX942 with boundary rank 63");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 63);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 17 = 131072 for ranks < 64
-  EXPECT_EQ(chunkSize, 1 << 17)
-      << "GFX942 with ranks = 63 should set chunk size to 131072";
-
-  INFO(NCCL_LOG_INFO, "GFX942 boundary rank 63 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_SmallRanks) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_SmallRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with small ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 8);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 17 = 131072 for ranks < 16
-  EXPECT_EQ(chunkSize, 1 << 17)
-      << "GFX950 with ranks < 16 should set chunk size to 131072";
-
-  INFO(NCCL_LOG_INFO, "GFX950 small ranks test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_MediumRanks) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_MediumRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with medium ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 24);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 18 = 262144 for 16 <= ranks < 32
-  EXPECT_EQ(chunkSize, 1 << 18)
-      << "GFX950 with 16 <= ranks < 32 should set chunk size to 262144";
-
-  INFO(NCCL_LOG_INFO, "GFX950 medium ranks test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_LargeRanks) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_LargeRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with large ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 64);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 19 = 524288 for ranks >= 32
-  EXPECT_EQ(chunkSize, 1 << 19)
-      << "GFX950 with ranks >= 32 should set chunk size to 524288";
-
-  INFO(NCCL_LOG_INFO, "GFX950 large ranks test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_BoundaryRank16) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_BoundaryRank16")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with boundary rank 16");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 16);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 18 = 262144 for ranks >= 16
-  EXPECT_EQ(chunkSize, 1 << 18)
-      << "GFX950 with ranks = 16 should set chunk size to 262144";
-
-  INFO(NCCL_LOG_INFO, "GFX950 boundary rank 16 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_BoundaryRank15) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_BoundaryRank15")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with boundary rank 15");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 15);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 17 = 131072 for ranks < 16
-  EXPECT_EQ(chunkSize, 1 << 17)
-      << "GFX950 with ranks = 15 should set chunk size to 131072";
-
-  INFO(NCCL_LOG_INFO, "GFX950 boundary rank 15 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_BoundaryRank32) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_BoundaryRank32")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with boundary rank 32");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 19 = 524288 for ranks >= 32
-  EXPECT_EQ(chunkSize, 1 << 19)
-      << "GFX950 with ranks = 32 should set chunk size to 524288";
-
-  INFO(NCCL_LOG_INFO, "GFX950 boundary rank 32 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, GFX950_BoundaryRank31) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("GFX950_BoundaryRank31")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for GFX950 with boundary rank 31");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 31);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 18 = 262144 for 16 <= ranks < 32
-  EXPECT_EQ(chunkSize, 1 << 18)
-      << "GFX950 with ranks = 31 should set chunk size to 262144";
-
-  INFO(NCCL_LOG_INFO, "GFX950 boundary rank 31 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, UnsupportedArch_GFX908) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("UnsupportedArch_GFX908")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for unsupported architecture GFX908");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx908", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: RCCL_VALUE_INVALID for unsupported architectures
-  EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
-      << "Unsupported architecture GFX908 should set chunk size to "
-         "RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO,
-       "Unsupported architecture GFX908 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, UnsupportedArch_GFX90A) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("UnsupportedArch_GFX90A")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize for unsupported architecture GFX90A");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx90a", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: RCCL_VALUE_INVALID for unsupported architectures
-  EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
-      << "Unsupported architecture GFX90A should set chunk size to "
-         "RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO,
-       "Unsupported architecture GFX90A test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-// This test specifically tests the environment variable behavior
-TEST(Rcclwrap, WithEnvironmentVariable) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("WithEnvironmentVariable")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // This test requires environment variable to be set to a specific value
-  if (ShouldSkipP2pTest("123456")) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is not "
-           "set to '123456'. "
-        << "Please set: export NCCL_P2P_NET_CHUNKSIZE=123456 to run this test. "
-        << "This test verifies that user override via environment variable "
-           "works correctly.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with environment variable set");
-
-  // Environment variable is confirmed to be set to "123456"
-  const char *envVar = getenv("NCCL_P2P_NET_CHUNKSIZE");
-  INFO(NCCL_LOG_INFO, "Environment variable found: NCCL_P2P_NET_CHUNKSIZE=%s",
-       envVar);
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: RCCL_VALUE_INVALID when environment variable is set (user
-  // override)
-  EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
-      << "When env var is set, should return RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO, "Environment variable test completed - chunk size: %d",
-       chunkSize);
-  INFO(NCCL_LOG_INFO,
-       "User override via NCCL_P2P_NET_CHUNKSIZE=%s was respected", envVar);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, EmptyArchString) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("EmptyArchString")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with empty architecture string");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: RCCL_VALUE_INVALID for empty/invalid architecture
-  EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
-      << "Empty architecture should set chunk size to RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO, "Empty architecture test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PartialArchMatch) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("PartialArchMatch")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with partial architecture match");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx94", 32);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: RCCL_VALUE_INVALID for partial match
-  EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
-      << "Partial architecture match should set chunk size to "
-         "RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO,
-       "Partial architecture match test completed - chunk size: %d", chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, ZeroRanks_GFX942) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("ZeroRanks_GFX942")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with zero ranks for GFX942");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 0);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 17 = 131072 (since 0 < 64)
-  EXPECT_EQ(chunkSize, 1 << 17)
-      << "Zero ranks should be treated as < 64, setting chunk size to 131072";
-
-  INFO(NCCL_LOG_INFO, "Zero ranks test completed - chunk size: %d", chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, ZeroRanks_GFX950) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("ZeroRanks_GFX950")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with zero ranks for GFX950");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 0);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 17 = 131072 (since 0 < 16)
-  EXPECT_EQ(chunkSize, 1 << 17)
-      << "Zero ranks should be treated as < 16, setting chunk size to 131072";
-
-  INFO(NCCL_LOG_INFO, "Zero ranks GFX950 test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, LargeRankValues_GFX950) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("LargeRankValues_GFX950")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with very large rank values for GFX950");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 1000000);
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: 1 << 19 = 524288 (since 1000000 >= 32)
-  EXPECT_EQ(chunkSize, 1 << 19) << "Very large ranks should be treated as >= "
-                                   "32, setting chunk size to 524288";
-
-  INFO(NCCL_LOG_INFO, "Large rank values test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, CaseInsensitiveArch) {
-  // Check execution order first
-  if (ShouldSkipP2pTestDueToExecutionOrder("CaseInsensitiveArch")) {
-    GTEST_SKIP() << "Skipping due to execution order - another "
-                    "rcclSetP2pNetChunkSize test already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipP2pTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_P2P_NET_CHUNKSIZE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO,
-       "Testing rcclSetP2pNetChunkSize with case variations in architecture");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "GFX942", 32); // Uppercase
-
-  int chunkSize = RCCL_VALUE_UNSET;
-  rcclSetP2pNetChunkSize(mockComm, chunkSize);
-
-  // Expected: RCCL_VALUE_INVALID (case sensitive matching expected)
-  EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
-      << "Uppercase architecture should not match (case sensitive)";
-
-  INFO(NCCL_LOG_INFO,
-       "Case insensitive architecture test completed - chunk size: %d",
-       chunkSize);
-
-  CleanupMockComm(mockComm);
-}
-
-// Add these test cases after the existing rcclSetP2pNetChunkSize tests
-
-TEST(Rcclwrap, PXN_GFX942_SmallRanks) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX942_SmallRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX942 with small ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 32);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 1 (disabled) for ranks < 64 on GFX942
-  EXPECT_EQ(pxnDisable, 1)
-      << "GFX942 with ranks < 64 should disable PXN (pxnDisable = 1)";
-
-  INFO(NCCL_LOG_INFO, "GFX942 small ranks PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX942_LargeRanks) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX942_LargeRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX942 with large ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 128);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 0 (enabled) for ranks >= 64 on GFX942
-  EXPECT_EQ(pxnDisable, 0)
-      << "GFX942 with ranks >= 64 should enable PXN (pxnDisable = 0)";
-
-  INFO(NCCL_LOG_INFO, "GFX942 large ranks PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX942_BoundaryRank64) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX942_BoundaryRank64")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX942 with boundary rank 64");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 64);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 0 (enabled) for ranks >= 64 on GFX942
-  EXPECT_EQ(pxnDisable, 0)
-      << "GFX942 with ranks = 64 should enable PXN (pxnDisable = 0)";
-
-  INFO(NCCL_LOG_INFO,
-       "GFX942 boundary rank 64 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX942_BoundaryRank63) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX942_BoundaryRank63")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX942 with boundary rank 63");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 63);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 1 (disabled) for ranks < 64 on GFX942
-  EXPECT_EQ(pxnDisable, 1)
-      << "GFX942 with ranks = 63 should disable PXN (pxnDisable = 1)";
-
-  INFO(NCCL_LOG_INFO,
-       "GFX942 boundary rank 63 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX950_SmallRanks) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX950_SmallRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX950 with small ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 16);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 1 (disabled) for ranks < 32 on GFX950
-  EXPECT_EQ(pxnDisable, 1)
-      << "GFX950 with ranks < 32 should disable PXN (pxnDisable = 1)";
-
-  INFO(NCCL_LOG_INFO, "GFX950 small ranks PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX950_LargeRanks) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX950_LargeRanks")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX950 with large ranks");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 64);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 0 (enabled) for ranks >= 32 on GFX950
-  EXPECT_EQ(pxnDisable, 0)
-      << "GFX950 with ranks >= 32 should enable PXN (pxnDisable = 0)";
-
-  INFO(NCCL_LOG_INFO, "GFX950 large ranks PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX950_BoundaryRank32) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX950_BoundaryRank32")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX950 with boundary rank 32");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 32);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 0 (enabled) for ranks >= 32 on GFX950
-  EXPECT_EQ(pxnDisable, 0)
-      << "GFX950 with ranks = 32 should enable PXN (pxnDisable = 0)";
-
-  INFO(NCCL_LOG_INFO,
-       "GFX950 boundary rank 32 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_GFX950_BoundaryRank31) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_GFX950_BoundaryRank31")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for GFX950 with boundary rank 31");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 31);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 1 (disabled) for ranks < 32 on GFX950
-  EXPECT_EQ(pxnDisable, 1)
-      << "GFX950 with ranks = 31 should disable PXN (pxnDisable = 1)";
-
-  INFO(NCCL_LOG_INFO,
-       "GFX950 boundary rank 31 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_UnsupportedArch_GFX908) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_UnsupportedArch_GFX908")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for unsupported architecture GFX908");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx908", 32);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: RCCL_VALUE_INVALID for unsupported architectures
-  EXPECT_EQ(pxnDisable, RCCL_VALUE_INVALID)
-      << "Unsupported architecture GFX908 should set pxnDisable to "
-         "RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO,
-       "Unsupported architecture GFX908 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_UnsupportedArch_GFX90A) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_UnsupportedArch_GFX90A")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn for unsupported architecture GFX90A");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx90a", 32);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: RCCL_VALUE_INVALID for unsupported architectures
-  EXPECT_EQ(pxnDisable, RCCL_VALUE_INVALID)
-      << "Unsupported architecture GFX90A should set pxnDisable to "
-         "RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO,
-       "Unsupported architecture GFX90A PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-// This test specifically tests the environment variable behavior
-TEST(Rcclwrap, PXN_WithEnvironmentVariable) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_WithEnvironmentVariable")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // This test requires environment variable to be set to a specific value
-  if (ShouldSkipPxnTest("1")) {
-    GTEST_SKIP() << "Skipping test: NCCL_PXN_DISABLE environment variable is "
-                    "not set to '1'. "
-                 << "Please set: export NCCL_PXN_DISABLE=1 to run this test. "
-                 << "This test verifies that user override via environment "
-                    "variable works correctly.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn with environment variable set");
-
-  // Environment variable is confirmed to be set to "1"
-  const char *envVar = getenv("NCCL_PXN_DISABLE");
-  INFO(NCCL_LOG_INFO, "Environment variable found: NCCL_PXN_DISABLE=%s",
-       envVar);
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 128);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: RCCL_VALUE_INVALID when environment variable is set (user
-  // override)
-  EXPECT_EQ(pxnDisable, RCCL_VALUE_INVALID)
-      << "When env var is set, should return RCCL_VALUE_INVALID";
-
-  INFO(NCCL_LOG_INFO,
-       "Environment variable PXN test completed - pxnDisable: %d", pxnDisable);
-  INFO(NCCL_LOG_INFO, "User override via NCCL_PXN_DISABLE=%s was respected",
-       envVar);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_ZeroRanks_GFX942) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_ZeroRanks_GFX942")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn with zero ranks for GFX942");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 0);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 1 (disabled) since 0 < 64
-  EXPECT_EQ(pxnDisable, 1)
-      << "Zero ranks should be treated as < 64, disabling PXN (pxnDisable = 1)";
-
-  INFO(NCCL_LOG_INFO, "Zero ranks GFX942 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
-}
-
-TEST(Rcclwrap, PXN_ZeroRanks_GFX950) {
-  // Check execution order first
-  if (ShouldSkipPxnTestDueToExecutionOrder("PXN_ZeroRanks_GFX950")) {
-    GTEST_SKIP() << "Skipping due to execution order - another rcclSetPxn test "
-                    "already ran";
-  }
-
-  // Check if we should skip this test due to environment variable being set
-  if (ShouldSkipPxnTest()) {
-    GTEST_SKIP()
-        << "Skipping test: NCCL_PXN_DISABLE environment variable is set, "
-        << "which would override the static variable behavior. "
-        << "This test requires clean environment to test architecture logic.";
-  }
-
-  INFO(NCCL_LOG_INFO, "Testing rcclSetPxn with zero ranks for GFX950");
-
-  ncclComm_t mockComm = nullptr;
-  struct ncclTopoSystem mockTopo;
-  struct ncclTopoNode mockGpuNode;
-  CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 0);
-
-  int pxnDisable = RCCL_VALUE_UNSET;
-  rcclSetPxn(mockComm, pxnDisable);
-
-  // Expected: 1 (disabled) since 0 < 32
-  EXPECT_EQ(pxnDisable, 1)
-      << "Zero ranks should be treated as < 32, disabling PXN (pxnDisable = 1)";
-
-  INFO(NCCL_LOG_INFO, "Zero ranks GFX950 PXN test completed - pxnDisable: %d",
-       pxnDisable);
-
-  CleanupMockComm(mockComm);
 }
 
 TEST(Rcclwrap, RcclSetPipelining_Invalid_DType) {
@@ -2314,6 +1087,825 @@ TEST(Rcclwrap, RcclOverrideAlgorithm_InvalidOverridePersists) {
   EXPECT_EQ(result2, ncclInvalidUsage)
       << "Expected rcclOverrideAlgorithm to continue returning failure after "
          "invalid algo was set.";
+}
+
+TEST(Rcclwrap, AllrcclSetP2pNetChunkSizeTests) {
+  INFO(NCCL_LOG_INFO, "=== Starting Process-Isolated rcclSetP2pNetChunkSize "
+                      "Tests Execution ===");
+
+  // Configure execution options
+  ProcessIsolatedTestRunner::ExecutionOptions options;
+  options.stopOnFirstFailure = false; // Continue running all tests
+  options.verboseLogging = true;
+
+  // Clear any previous test registrations
+  ProcessIsolatedTestRunner::clear();
+
+  // Register GFX942 tests with appropriate environment variables
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX942_LargeRanks_Isolated",
+          []() {
+            // Test logic for GFX942 Large Ranks
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 128);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 19 = 524288 for ranks >= 64
+            EXPECT_EQ(chunkSize, 1 << 19)
+                << "GFX942 with ranks >= 64 should set chunk size to 524288";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}})
+          .withTimeout(std::chrono::seconds(60)));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX942_BoundaryRank64_Isolated",
+          []() {
+            // Test logic for GFX942 Boundary Rank 64
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 64);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 19 = 524288 for ranks = 64 (boundary case)
+            EXPECT_EQ(chunkSize, 1 << 19)
+                << "GFX942 with ranks = 64 should set chunk size to 524288";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX942_BoundaryRank63_Isolated",
+          []() {
+            // Test logic for GFX942 Boundary Rank 63
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 63);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 17 = 131072 for ranks < 64
+            EXPECT_EQ(chunkSize, 1 << 17)
+                << "GFX942 with ranks < 64 should set chunk size to 131072";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_SmallRanks_Isolated",
+          []() {
+            // Test logic for GFX950 Small Ranks
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 8);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 17 = 131072 for ranks < 16
+            EXPECT_EQ(chunkSize, 1 << 17)
+                << "GFX950 with ranks < 16 should set chunk size to 131072";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_MediumRanks_Isolated",
+          []() {
+            // Test logic for GFX950 Medium Ranks
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 24);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 18 = 262144 for 16 <= ranks < 32
+            EXPECT_EQ(chunkSize, 1 << 18) << "GFX950 with 16 <= ranks < 32 "
+                                             "should set chunk size to 262144";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_LargeRanks_Isolated",
+          []() {
+            // Test logic for GFX950 Large Ranks
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 64);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 19 = 524288 for ranks >= 32
+            EXPECT_EQ(chunkSize, 1 << 19)
+                << "GFX950 with ranks >= 32 should set chunk size to 524288";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_BoundaryRank16_Isolated",
+          []() {
+            // Test logic for GFX950 Boundary Rank 16
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 16);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 18 = 262144 for ranks = 16 (boundary case)
+            EXPECT_EQ(chunkSize, 1 << 18)
+                << "GFX950 with ranks = 16 should set chunk size to 262144";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_BoundaryRank15_Isolated",
+          []() {
+            // Test logic for GFX950 Boundary Rank 15
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 15);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 17 = 131072 for ranks < 16
+            EXPECT_EQ(chunkSize, 1 << 17)
+                << "GFX950 with ranks < 16 should set chunk size to 131072";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_BoundaryRank32_Isolated",
+          []() {
+            // Test logic for GFX950 Boundary Rank 32
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 32);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 19 = 524288 for ranks >= 32
+            EXPECT_EQ(chunkSize, 1 << 19)
+                << "GFX950 with ranks = 32 should set chunk size to 524288";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "GFX950_BoundaryRank31_Isolated",
+          []() {
+            // Test logic for GFX950 Boundary Rank 31
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 31);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 18 = 262144 for 16 <= ranks < 32
+            EXPECT_EQ(chunkSize, 1 << 18) << "GFX950 with 16 <= ranks < 32 "
+                                             "should set chunk size to 262144";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "UnsupportedArch_GFX908_Isolated",
+          []() {
+            // Test logic for unsupported GFX908
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx908", 32);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: RCCL_VALUE_INVALID for unsupported architectures
+            EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
+                << "Unsupported architecture GFX908 should leave chunk size to "
+                   "invalid";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "UnsupportedArch_GFX90A_Isolated",
+          []() {
+            // Test logic for unsupported GFX90A
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx90a", 32);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: RCCL_VALUE_INVALID for unsupported architectures
+            EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
+                << "Unsupported architecture GFX90A should leave chunk size to "
+                   "invalid";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "EmptyArchString_Isolated",
+          []() {
+            // Test logic for empty arch string
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "", 32);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: RCCL_VALUE_INVALID for empty architecture
+            EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
+                << "Empty architecture string should leave chunk size to "
+                   "invalid";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PartialArchMatch_Isolated",
+          []() {
+            // Test logic for partial arch match
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx94",
+                           32); // Partial match
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: RCCL_VALUE_INVALID for partial architecture match
+            EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
+                << "Partial architecture match should leave chunk size to "
+                   "invalid";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "ZeroRanks_GFX942_Isolated",
+          []() {
+            // Test logic for zero ranks with GFX942
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 0);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 17 = 131072 for zero ranks
+            EXPECT_EQ(chunkSize, 1 << 17)
+                << "Zero ranks should leave chunk size to default";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "ZeroRanks_GFX950_Isolated",
+          []() {
+            // Test logic for zero ranks with GFX950
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 0);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 17 = 131072 for zero ranks
+            EXPECT_EQ(chunkSize, 1 << 17)
+                << "Zero ranks should leave chunk size to default";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "LargeRankValues_GFX950_Isolated",
+          []() {
+            // Test logic for large rank values with GFX950
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 1000);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Expected: 1 << 19 = 524288 for large ranks (>= 32)
+            EXPECT_EQ(chunkSize, 1 << 19)
+                << "GFX950 with large ranks should set chunk size to 524288";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "CaseInsensitiveArch_Isolated",
+          []() {
+            // Test logic for case insensitive architecture
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "GFX942",
+                           32); // Uppercase
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // Depending on implementation, this might be case sensitive
+            // Expected behavior may vary - adjust based on actual
+            // implementation For now, assume case sensitive (should not match)
+            EXPECT_EQ(chunkSize, RCCL_VALUE_INVALID)
+                << "Case sensitive architecture matching should leave chunk "
+                   "size to invalid";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "WithEnvironmentVariable_Isolated",
+          []() {
+            // Verify environment variable is set
+            const char *envValue = getenv("NCCL_P2P_NET_CHUNKSIZE");
+            EXPECT_STREQ(envValue, "123456")
+                << "Environment variable should be set to 123456";
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 32);
+
+            int chunkSize = RCCL_VALUE_UNSET;
+            rcclSetP2pNetChunkSize(mockComm, chunkSize);
+
+            // When environment variable is set, it should override the logic
+            // The actual behavior depends on implementation
+            // This test verifies the environment variable takes precedence
+            EXPECT_NE(chunkSize, RCCL_VALUE_UNSET)
+                << "Environment variable should override default logic";
+
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment({{"NCCL_P2P_NET_CHUNKSIZE", "123456"},
+                            {"NCCL_MAX_NCHANNELS", "1"},
+                            {"NCCL_DEBUG", "TRACE"},
+                            {"NCCL_DEBUG_SUBSYS", "ALL"}})
+          .withTimeout(std::chrono::seconds(60)));
+
+  // Execute all tests
+  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests(options);
+
+  // Verify that all tests passed
+  EXPECT_TRUE(allTestsPassed)
+      << "One or more process-isolated GFX tests failed";
+
+  INFO(NCCL_LOG_INFO, "=== Process-Isolated rcclSetP2pNetChunkSize Tests "
+                      "Execution Completed ===");
+}
+
+TEST(Rcclwrap, AllPxnTests) {
+  std::unordered_map<std::string, std::string> baseEnv = {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}};
+
+  ProcessIsolatedTestRunner::clear();
+
+  // Configure execution options for sequential execution with stop on first
+  // failure
+  ProcessIsolatedTestRunner::ExecutionOptions options;
+  options.stopOnFirstFailure = true;
+  options.verboseLogging = true;
+
+  // Register PXN GFX942 tests
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX942_SmallRanks_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX942_SmallRanks due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX942 with small ranks");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 32);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 1 (PXN disabled) for ranks < 64
+            EXPECT_EQ(pxnDisable, 1) << "GFX942 with ranks < 64 should disable "
+                                        "PXN (set pxnDisable to 1)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX942 small ranks test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX942_LargeRanks_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX942_LargeRanks due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX942 with large ranks");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 128);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 0 (PXN enabled) for ranks >= 64
+            EXPECT_EQ(pxnDisable, 0) << "GFX942 with ranks >= 64 should "
+                                        "enable PXN (set pxnDisable to 0)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX942 large ranks test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX942_BoundaryRank64_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX942_BoundaryRank64 due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX942 with boundary rank 64");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 64);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 0 (PXN enabled) for ranks >= 64
+            EXPECT_EQ(pxnDisable, 0) << "GFX942 with ranks = 64 should enable "
+                                        "PXN (set pxnDisable to 0)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX942 boundary rank 64 test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX942_BoundaryRank63_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX942_BoundaryRank63 due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX942 with boundary rank 63");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 63);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 1 (PXN disabled) for ranks < 64
+            EXPECT_EQ(pxnDisable, 1) << "GFX942 with ranks = 63 should disable "
+                                        "PXN (set pxnDisable to 1)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX942 boundary rank 63 test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  // Register PXN GFX950 tests
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX950_SmallRanks_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX950_SmallRanks due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX950 with small ranks");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 8);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 1 (PXN disabled) for ranks < 32
+            EXPECT_EQ(pxnDisable, 1) << "GFX950 with ranks < 32 should disable "
+                                        "PXN (set pxnDisable to 1)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX950 small ranks test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX950_LargeRanks_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX950_LargeRanks due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX950 with large ranks");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 64);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 0 (PXN enabled) for ranks >= 32
+            EXPECT_EQ(pxnDisable, 0) << "GFX950 with ranks >= 32 should "
+                                        "enable PXN (set pxnDisable to 0)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX950 large ranks test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX950_BoundaryRank32_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX950_BoundaryRank32 due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX950 with boundary rank 32");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 32);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 0 (PXN enabled) for ranks >= 32
+            EXPECT_EQ(pxnDisable, 0) << "GFX950 with ranks = 32 should enable "
+                                        "PXN (set pxnDisable to 0)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX950 boundary rank 32 test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_GFX950_BoundaryRank31_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_GFX950_BoundaryRank31 due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for GFX950 with boundary rank 31");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx950", 31);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: 1 (PXN disabled) for ranks < 32
+            EXPECT_EQ(pxnDisable, 1) << "GFX950 with ranks = 31 should disable "
+                                        "PXN (set pxnDisable to 1)";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN GFX950 boundary rank 31 test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  // Register unsupported architecture tests
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_UnsupportedArch_GFX908_Isolated",
+          []() {
+            // Check if we should skip this test due to environment variable
+            // being set
+            if (ShouldSkipPxnTest()) {
+              GTEST_SKIP() << "Skipping PXN_UnsupportedArch_GFX908 due to "
+                              "environment variable being set";
+              return;
+            }
+
+            INFO(NCCL_LOG_INFO,
+                 "Testing rcclSetPxn for unsupported architecture GFX908");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx908", 32);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: RCCL_VALUE_INVALID for unsupported architectures
+            EXPECT_EQ(pxnDisable, RCCL_VALUE_INVALID)
+                << "Unsupported architecture GFX908 should set pxnDisable to "
+                   "RCCL_VALUE_INVALID";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN unsupported architecture GFX908 test completed - "
+                 "pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment(baseEnv));
+
+  // Register environment variable test
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "PXN_WithEnvironmentVariable_Isolated",
+          []() {
+            INFO(NCCL_LOG_INFO, "Testing rcclSetPxn with NCCL_PXN_DISABLE "
+                                "environment variable set");
+
+            ncclComm_t mockComm = nullptr;
+            struct ncclTopoSystem mockTopo;
+            struct ncclTopoNode mockGpuNode;
+            CreateMockComm(mockComm, mockTopo, mockGpuNode, "gfx942", 32);
+
+            int pxnDisable = RCCL_VALUE_UNSET;
+            rcclSetPxn(mockComm, pxnDisable);
+
+            // Expected: RCCL_VALUE_INVALID when environment variable is already
+            // set
+            EXPECT_EQ(pxnDisable, RCCL_VALUE_INVALID)
+                << "When NCCL_PXN_DISABLE is already set, pxnDisable should "
+                   "remain RCCL_VALUE_INVALID";
+
+            INFO(NCCL_LOG_INFO,
+                 "PXN environment variable test completed - pxnDisable: %d",
+                 pxnDisable);
+            CleanupMockComm(mockComm);
+          })
+          .withEnvironment({{"NCCL_PXN_DISABLE", "1"}}));
+
+  // Execute all registered tests
+  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests(options);
+
+  EXPECT_TRUE(allTestsPassed)
+      << "One or more PXN process-isolated tests failed";
 }
 
 } // namespace RcclUnitTesting

@@ -156,6 +156,7 @@ if(BUILD_TESTS)
       TransportTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
+      common/ProcessIsolatedTestRunner.cpp
       graph/XmlTests.cpp
     )
 
