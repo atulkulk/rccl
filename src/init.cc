@@ -2043,10 +2043,10 @@ static ncclResult_t ncclCommInitRankFunc(struct ncclAsyncJob* job_) {
       comm->mscclppCompatible = true;
       comm->mscclpp_threshold = job->parent->mscclpp_threshold;
       comm->mscclpp_comm = job->parent->mscclpp_comm;
-      auto& mscclppUniqueId = mscclpp_uniqueIdMap[*job->commId];
-      mscclpp_uniqueIdMap[*job->commId] = mscclppUniqueId;
-      mscclpp_uniqueIdReverseMap[mscclppUniqueId].insert(*job->commId);
-      ncclCommToUniqueIdMap[comm] = *job->commId;
+      const ncclUniqueId& parentUniqueId = ncclCommToUniqueIdMap[job->parent];
+      auto& mscclppUniqueId = mscclpp_uniqueIdMap[parentUniqueId];
+      mscclpp_uniqueIdReverseMap[mscclppUniqueId].insert(parentUniqueId);
+      ncclCommToUniqueIdMap[comm] = parentUniqueId;
     }
   }
   else
