@@ -760,8 +760,6 @@ add_custom_target(hipify_all DEPENDS ${HIP_SOURCES})
 
 if (BUILD_TESTS)
   if (ROCM_VERSION VERSION_GREATER_EQUAL "60400" AND CMAKE_BUILD_TYPE MATCHES "Debug")
-    ## Set definition for exposing rccl static function
-    add_definitions(-DRCCL_EXPOSE_STATIC)
 
     set(HIPIFY_SRC_DIR "${PROJECT_BINARY_DIR}/hipify/src")
     set(REPLACE_SCRIPT "${CMAKE_SOURCE_DIR}/tools/scripts/replace_static.sh")
