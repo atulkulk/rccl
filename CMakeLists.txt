@@ -775,8 +775,6 @@ if (BUILD_TESTS)
     set(TEST_NONSTATIC_SOURCE_FILES
       ${HIPIFY_SRC_DIR}/misc/alt_rsmi.cc
       ${HIPIFY_SRC_DIR}/register/coll_reg.cc
-      ${HIPIFY_SRC_DIR}/transport/shm.cc
-      ${HIPIFY_SRC_DIR}/transport/p2p.cc
     )
 
     set(EXCLUDE_STATIC_FILE "${CMAKE_SOURCE_DIR}/tools/scripts/exclude_static_list.txt")
