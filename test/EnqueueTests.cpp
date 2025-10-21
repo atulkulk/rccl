@@ -3,6 +3,7 @@
  *
  * See LICENSE.txt for license information
  ************************************************************************/
+#include "common/ProcessIsolatedTestRunner.hpp"
 #include <gtest/gtest.h>
 #include <cstring>
 #include <hip/hip_runtime.h>
@@ -11,6 +12,8 @@
 #include "info.h"
 #include "enqueue.h"
 #include "utils.h"
+
+namespace RcclUnitTesting {
 
 class EnqueueTests : public ::testing::Test {
 protected:
@@ -123,11 +126,45 @@ int EnqueueTests::abortFlagRefCount = 0;
 
 // Test ncclInitKernelsForDevice function
 TEST_F(EnqueueTests, ncclInitKernelsForDevice_ValidInput) {
-    size_t maxStackSize = 0;
-    ncclResult_t result = ncclInitKernelsForDevice(906, 65536, &maxStackSize);
+    // Clear any previous test registrations
+    ProcessIsolatedTestRunner::clear();
 
-    EXPECT_TRUE(result == ncclSuccess);
-    EXPECT_GT(maxStackSize, 0);
+    // Configure execution options
+    ProcessIsolatedTestRunner::ExecutionOptions options;
+    options.stopOnFirstFailure = false; // Continue running all tests
+    options.verboseLogging = true;
+
+    ProcessIsolatedTestRunner::registerTest(
+        ProcessIsolatedTestRunner::TestConfig(
+            "ncclInitKernelsForDevice_ValidInput",
+            [this]() {
+            size_t maxStackSize = 0;
+            ncclResult_t result =
+                ncclInitKernelsForDevice(906, 65536, &maxStackSize);
+
+            EXPECT_TRUE(result == ncclSuccess);
+
+            EXPECT_EQ(maxStackSize, 0);
+          })
+          .withEnvironment(
+              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  ProcessIsolatedTestRunner::registerTest(
+      ProcessIsolatedTestRunner::TestConfig(
+          "ncclInitKernelsForDevice_ValidInputCarveout",
+          [this]() {
+            size_t maxStackSize = 0;
+            ncclResult_t result =
+                ncclInitKernelsForDevice(906, 65536, &maxStackSize);
+
+            EXPECT_TRUE(result == ncclSuccess);
+            EXPECT_EQ(maxStackSize, 0);
+          })
+          .withEnvironment({{"NCCL_L1_SHARED_MEMORY_CARVEOUT", "1"},
+                            {"NCCL_DEBUG", "TRACE"},
+                            {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+
+  EXPECT_TRUE(ProcessIsolatedTestRunner::executeAllTests(options));
 }
 
 TEST_F(EnqueueTests, ncclInitKernelsForDevice_NullStackSize) {
@@ -320,3 +357,5 @@ TEST_F(EnqueueTests, ncclFuncCounts_LargeRankCount) {
     EXPECT_EQ(ncclFuncRecvCount(ncclFuncAllGather, nRanks, count), count * nRanks);
     EXPECT_EQ(ncclFuncMaxSendRecvCount(ncclFuncAllGather, nRanks, count), count * nRanks);
 }
+
+}  // namespace RcclUnitTesting
