@@ -1,0 +1,304 @@
+# RCCL Complete Test Configuration
+# ==================================
+# This file contains ALL tests from run_unit_tests() and run_mpi_tests() methods
+# Many tests are commented out by default - uncomment to enable
+#
+# Format: TEST_NAME  |  ENV_VARS  |  BINARY  |  GTEST_FILTER  |  NUM_NODES  |  NUM_RANKS  |  TIMEOUT
+#
+# NUM_NODES, NUM_RANKS, and TIMEOUT default to 1, 1, and 0 respectively if not specified
+#
+# ENV_VARS Field:
+#   - Use comma (,) to separate multiple environment variables: VAR1=val1,VAR2=val2
+#   - Use semicolon (;) when values contain commas: VAR1=val1;NCCL_SOCKET_IFNAME=eth0,eth1;VAR3=val3
+#   - Examples:
+#       NCCL_DEBUG=INFO,HSA_NO_SCRATCH_RECLAIM=1             (comma-separated)
+#       NCCL_SOCKET_IFNAME=eth0:eth1,eth2;NCCL_DEBUG=INFO    (semicolon for comma in value)
+#
+# Default Environment Variables (automatically set by script):
+#   LD_LIBRARY_PATH, HIP_VISIBLE_DEVICES
+#   NCCL_LAUNCH_MODE=GROUP
+#   NCCL_SOCKET_IFNAME=eth0,eth1
+#   NCCL_DMABUF_ENABLE=1
+#   HSA_NO_SCRATCH_RECLAIM=1
+#   NCCL_P2P_DISABLE=0
+#   NCCL_CUMEM_ENABLE=0
+#   NCCL_PXN_DISABLE=1
+
+## =============================================================================
+## MPI TESTS - SHM (Shared Memory Transport)
+## =============================================================================
+
+## SHM comprehensive workflow test (2 ranks, same host required)
+SHM_ComprehensiveWorkflow | NCCL_LAUNCH_MODE=GROUP,NCCL_SHM_DISABLE=0 | rccl-UnitTestsMPI | ShmMPITest.ShmWorkflow | 1 | 2 | 120
+
+## SHM with CE (Copy Engine) memcpy mode - sender-side
+SHM_CEMemcpy_SendSide | NCCL_DEBUG=INFO,NCCL_LAUNCH_MODE=GROUP,NCCL_SHM_DISABLE=0,NCCL_P2P_DISABLE=1,NCCL_SHM_USE_CUDA_MEMCPY=1,NCCL_SHM_MEMCPY_MODE=1,NCCL_SHM_LOCALITY=1 | rccl-UnitTestsMPI | ShmMPITest.ShmWithMemcpyTest | 1 | 2 | 180
+
+## SHM with CE memcpy mode - receiver-side
+SHM_CEMemcpy_RecvSide | NCCL_LAUNCH_MODE=GROUP,NCCL_SHM_DISABLE=0,NCCL_SHM_USE_CUDA_MEMCPY=1,NCCL_SHM_MEMCPY_MODE=2,NCCL_SHM_LOCALITY=2 | rccl-UnitTestsMPI | ShmMPITest.ShmWithMemcpyTest | 1 | 2 | 120
+
+## SHM with CE memcpy mode - both sides
+SHM_CEMemcpy_BothSides | RCCL_P2P_DIRECT_DISABLE=1;NCCL_P2P_DISABLE=1;NCCL_PROTO=SIMPLE;NCCL_LAUNCH_MODE=GROUP;NCCL_SHM_DISABLE=0;NCCL_SHM_USE_CUDA_MEMCPY=1;NCCL_SHM_MEMCPY_MODE=3;NCCL_SHM_LOCALITY=1 | rccl-UnitTestsMPI | ShmMPITest.ShmWithMemcpyTest | 1 | 2 | 120
+
+## SHM with CE memcpy mode - invalid locality
+SHM_CEMemcpy_BothSides | NCCL_LAUNCH_MODE=GROUP,NCCL_SHM_DISABLE=0,NCCL_SHM_USE_CUDA_MEMCPY=1,NCCL_SHM_MEMCPY_MODE=3,NCCL_SHM_LOCALITY=3 | rccl-UnitTestsMPI | ShmMPITest.ShmWithMemcpyTest | 1 | 2 | 120
+
+## SHM complete test suite
+SHM_CompleteTestSuite | NCCL_LAUNCH_MODE=GROUP,NCCL_SHM_DISABLE=0 | rccl-UnitTestsMPI | ShmMPITest.* | 1 | 2 | 300
+
+# NCCL_DEBUG_SUBSYS=INIT,SHM,PROXY;
+
+## =============================================================================
+## MPI TESTS - P2P (Peer-to-Peer Transport)
+## =============================================================================
+
+## P2P Basic Workflow Tests
+P2P_Workflow | NCCL_LAUNCH_MODE=GROUP,NCCL_P2P_DISABLE=0 | rccl-UnitTestsMPI | P2pMPITest.P2pWorkflow | 1 | 2 | 120
+P2P_WithMemcpy | NCCL_LAUNCH_MODE=GROUP,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pWithMemcpyTest | 1 | 2 | 120
+
+## P2P Registration Tests
+P2P_SendRecvRegistration | NCCL_LAUNCH_MODE=GROUP,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pSendRecvRegistrationTest | 1 | 2 | 120
+P2P_RegistrationBasicBuffers | NCCL_LAUNCH_MODE=GROUP,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pRegistrationBasicBuffersTest | 1 | 2 | 120
+
+## P2P IPC Buffer Registration - Edge Cases
+P2P_IpcReg_NullBuffer | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_NullBufferPointer | 1 | 2 | 120
+P2P_IpcReg_ZeroSize | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_ZeroSize | 1 | 2 | 120
+P2P_IpcReg_VerySmallBuffer | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_VerySmallBuffer | 1 | 2 | 120
+P2P_IpcReg_LargeBuffer | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_LargeBuffer | 1 | 2 | 120
+P2P_IpcReg_InvalidPeerRank | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_InvalidPeerRank | 1 | 2 | 120
+P2P_IpcReg_NegativePeerRank | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_NegativePeerRank | 1 | 2 | 120
+P2P_IpcReg_SameBufferMultipleTimes | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_SameBufferMultipleTimes | 1 | 2 | 120
+P2P_IpcReg_SelfPeerRank | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_SelfPeerRank | 1 | 2 | 120
+P2P_IpcReg_UnalignedBufferAddress | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_UnalignedBufferAddress | 1 | 2 | 120
+P2P_IpcReg_NonPowerOfTwoSize | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_NonPowerOfTwoSize | 1 | 2 | 120
+
+## P2P IPC Registration - All Edge Cases (Single Run)
+P2P_IpcReg_AllEdgeCases | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SHM_DISABLE=1,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LOCAL_REGISTER=1,NCCL_GRAPH_REGISTER=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.P2pIpcBufferRegistration_* | 1 | 2 | 180
+
+## P2P IPC Graph Register Buffer Test
+P2P_IpcGraphRegisterBuffer | NCCL_LAUNCH_MODE=GROUP,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.IpcGraphRegisterBufferTest | 1 | 2 | 120
+
+## P2P All Tests (Complete Test Suite)
+P2P_AllTests | NCCL_LAUNCH_MODE=GROUP,NCCL_P2P_USE_CUDA_MEMCPY=1,NCCL_LEGACY_CUDA_REGISTER=1 | rccl-UnitTestsMPI | P2pMPITest.* | 1 | 2 | 300
+
+# ## Basic MPI AllReduce tests (2 ranks)
+# MPI_AllReduce_2Ranks | NCCL_LAUNCH_MODE=GROUP,NCCL_SOCKET_IFNAME=eth0,eth1,NCCL_DMABUF_ENABLE=1,HSA_NO_SCRATCH_RECLAIM=1 | rccl-UnitTestsMPI | *AllReduce* | 1 | 2 | 120
+
+## =============================================================================
+## MPI TESTS - NET (Network Transport)
+## =============================================================================
+
+## Network registration tests (2 ranks)
+NetGraphRegisterBuffer_2Ranks | NCCL_LAUNCH_MODE=GROUP,NCCL_GRAPH_REGISTER=1 | rccl-UnitTestsMPI | NetTransportMPITest.NetGraphRegisterBufferTest | 1 | 2 | 120
+RegisterP2pNetBuffer_2Ranks | NCCL_LAUNCH_MODE=GROUP,NCCL_GRAPH_REGISTER=1 | rccl-UnitTestsMPI | NetTransportMPITest.RegisterP2pNetBufferTest | 1 | 2 | 120
+
+## =============================================================================
+## UNIT TESTS - Network IB
+## =============================================================================
+
+## Network IB tests with debug
+NetIb_Debug | NCCL_SOCKET_IFNAME=eth1,NCCL_DEBUG=INFO,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | NetIbTests.* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Rcclwrap
+## =============================================================================
+
+## Rcclwrap tests with debug
+Rcclwrap_Debug | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | Rcclwrap.* | 1 | 1 | 0
+
+## Rcclwrap tests with thread thresholds
+Rcclwrap_ThreadThreshold_UserEnv | NCCL_THREAD_THRESHOLDS=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | Rcclwrap.RcclUpdateThreadThreshold_UserEnvSet | 1 | 1 | 0
+Rcclwrap_ThreadThreshold_MinChannels | NCCL_MIN_NCHANNELS=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | Rcclwrap.RcclUpdateThreadThreshold_MinNChannelsSet | 1 | 1 | 0
+Rcclwrap_ThreadThreshold_MaxChannels | NCCL_MAX_NCHANNELS=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | Rcclwrap.RcclUpdateThreadThreshold_MNChannelsSet | 1 | 1 | 0
+
+## Rcclwrap tests
+Rcclwrap_All | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | Rcclwrap.* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Enqueue
+## =============================================================================
+
+## Enqueue tests
+Enqueue_L1SharedMemory | HSA_NO_SCRATCH_RECLAIM=1,NCCL_L1_SHARED_MEMORY_CARVEOUT=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | EnqueueTests.ncclInitKernelsForDevice_ValidInput | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Net Socket
+## =============================================================================
+
+## Net socket tests
+NetSocket_Concurrent_1T2S | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SOCKET_NTHREADS=1,NCCL_NSOCKS_PERTHREAD=2,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | NetSocketTests.TestConcurrentOperationsTaskCreation | 1 | 1 | 0
+NetSocket_ExcessiveThread_20T | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SOCKET_NTHREADS=20,NCCL_NSOCKS_PERTHREAD=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | NetSocketTests.TestExcessiveThreadConfig | 1 | 1 | 0
+NetSocket_ExcessiveSocket_8T10S | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SOCKET_NTHREADS=8,NCCL_NSOCKS_PERTHREAD=10,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | NetSocketTests.TestExcessiveSocketConfig | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - IB
+## =============================================================================
+
+## IB address range tests - REMOVE
+IB_AddrRange_IPv4 | HSA_NO_SCRATCH_RECLAIM=1,NCCL_IB_ADDR_RANGE=192.168.1.1/24,NCCL_DEBUG=INFO,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | IbTests.AddrRangeIPV4 | 1 | 1 | 0
+IB_AddrRange_IPv6 | HSA_NO_SCRATCH_RECLAIM=1,NCCL_IB_ADDR_RANGE=2001:0db8:85a3::/64,NCCL_DEBUG=INFO,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTestsFixtures | IbTests.AddrRangeIPV6 | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Broadcast
+## =============================================================================
+
+## Broadcast with topology dump - FAILS
+Broadcast_InPlace | HSA_NO_SCRATCH_RECLAIM=1,NCCL_TOPO_DUMP_FILE=topo.xml,UT_MIN_GPUS=8,UT_PROCESS_MASK=2 | rccl-UnitTests | Broadcast.InPlace | 1 | 1 | 0
+
+# =============================================================================
+# UNIT TESTS - Debug/Logging
+# =============================================================================
+
+## Debug tests with thread name
+Debug_ThreadName | HSA_NO_SCRATCH_RECLAIM=1,NCCL_SET_THREAD_NAME=1,NCCL_DEBUG=INFO,NCCL_DEBUG_SUBSYS=ALL,NCCL_DEBUG_FILE=cdcvg.dbg.%%.%+.%h.%p | rccl-UnitTests | AllToAll.OutOfPlaceGraph* | 1 | 1 | 0
+
+## Debug with specific subsystems
+Debug_AllSubsystems | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_FILE=cdcvg.dbg,NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,SHM,NET,GRAPH,TUNING,ENV,ALLOC,CALL,PROXY,NVLS,BOOTSTRAP,REG,PROFILE,RAS,VERBS | rccl-UnitTests | AllToAll.OutOfPlaceGraph* | 1 | 1 | 0
+
+## Debug excluding subsystems
+Debug_ExcludeSubsystems | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=WARN,NCCL_DEBUG_SUBSYS=^INIT,COLL | rccl-UnitTests | AllReduce.InPlaceGraph | 1 | 1 | 0
+
+## Debug VERSION level
+Debug_Version | HSA_NO_SCRATCH_RECLAIM=1,USE_ROCM_SMI_LIB=1,NCCL_DEBUG=VERSION,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTests | AllReduce.InPlaceGraph | 1 | 1 | 0
+
+## Debug ABORT level
+Debug_Abort | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=ABORT,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTests | AllReduce.InPlaceGraph | 1 | 1 | 0
+
+## Debug with extremely long filename (tests truncation)
+Debug_LongFilename | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG_FILE=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.%h.%=.dbg,NCCL_DEBUG=WARN,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTests | Standalone.SplitComms_RankCheck | 1 | 1 | 0
+
+## Debug WARN with split comms
+Debug_WarnSplitComms | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=WARN,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTests | Standalone.SplitComms_RankCheck | 1 | 1 | 0
+
+## Debug with warn enable debug info
+Debug_WarnEnableDebugInfo | HSA_NO_SCRATCH_RECLAIM=1,NCCL_WARN_ENABLE_DEBUG_INFO=1,NCCL_DEBUG=WARN,NCCL_DEBUG_SUBSYS=ALL | rccl-UnitTests | AllToAll.OutOfPlaceGraph* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Comm Launch Mode
+## =============================================================================
+
+## Test GROUP launch mode
+Comm_GroupLaunchMode | HSA_NO_SCRATCH_RECLAIM=1,NCCL_LAUNCH_MODE=GROUP | rccl-UnitTests | AllReduce.OutOfPlace* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - IPC Socket
+## =============================================================================
+
+## IPC socket tests
+Ipcsocket_All | HSA_NO_SCRATCH_RECLAIM=1,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS=ALL,RCCL_ENABLE_INTRANET=1,NCCL_DMABUF_ENABLE=1,RCCL_GDR_FLUSH_GPU_MEM_NO_RELAXED_ORDERING=0 | rccl-UnitTestsFixtures | Ipcsocket.SendAndReceiveFd:Ipcsocket.SocketInitNullHandle:Ipcsocket.SocketGetFdNullHandle:Ipcsocket.SocketCloseNullHandle:Ipcsocket.SocketCloseNegativeHandle | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Param
+## =============================================================================
+
+## Param tests
+Param_ConfigFile | HSA_NO_SCRATCH_RECLAIM=1,NCCL_CONF_FILE=${WORKDIR}/rccl/test/ParamTestsConfFile.txt | rccl-UnitTestsFixtures | ParamTests.* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Error/Timeout
+## =============================================================================
+
+## Timeout test
+Error_Timeout | HSA_NO_SCRATCH_RECLAIM=1,UT_TIMEOUT_US=1 | rccl-UnitTests | AllReduce.OutOfPlace* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - ROCTX
+## =============================================================================
+
+## ROCTX logging tests
+Roctx_UserBufferRegistration | HSA_NO_SCRATCH_RECLAIM=1,RCCL_LOG_ROCTX=1 | rccl-UnitTests | AllReduce.UserBufferRegistration:AllReduce.ManagedMemUserBufferRegistration:AllGather.UserBufferRegistration:AllGather.ManagedMemUserBufferRegistration | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - ArchInfo
+## =============================================================================
+
+## Kernel trace tests - FAILS
+ArchInfo_KernelTrace | HSA_NO_SCRATCH_RECLAIM=1,RCCL_KERNEL_COLL_TRACE_ENABLE=1,NCCL_DEBUG=INFO | rccl-UnitTests | AllGather.OutOfPlace* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Bootstrap
+## =============================================================================
+
+## OOB NET tests
+Bootstrap_OOB_NET | HSA_NO_SCRATCH_RECLAIM=1,NCCL_OOB_NET_ENABLE=1 | rccl-UnitTests | AllReduce.OutOfPlace* | 1 | 1 | 0
+
+## MSCCLPP tests
+Bootstrap_MSCCLPP | HSA_NO_SCRATCH_RECLAIM=1,RCCL_MSCCLPP_ENABLE=1 | rccl-UnitTests | AllReduce.OutOfPlace* | 1 | 1 | 0
+Bootstrap_MSCCLPP_CommId_Valid | HSA_NO_SCRATCH_RECLAIM=1,,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS,RCCL_MSCCLPP_ENABLE=1,NCCL_COMM_ID=192.168.0.10:51234 | rccl-UnitTests | Standalone.SplitComms_RankCheck* | 1 | 1 | 0
+Bootstrap_MSCCLPP_CommId_Invalid | HSA_NO_SCRATCH_RECLAIM=1,,NCCL_DEBUG=TRACE,NCCL_DEBUG_SUBSYS,RCCL_MSCCLPP_ENABLE=1,NCCL_COMM_ID=192.168.0.10.0 | rccl-UnitTests | Standalone.SplitComms_RankCheck* | 1 | 1 | 0
+Bootstrap_MSCCLPP_OOB | HSA_NO_SCRATCH_RECLAIM=1,RCCL_MSCCLPP_ENABLE=1,NCCL_OOB_NET_ENABLE=1 | rccl-UnitTests | Standalone.SplitComms_RankCheck* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Algorithms
+## =============================================================================
+
+## Tree algorithm with intranet
+Algo_Tree_Intranet | HSA_NO_SCRATCH_RECLAIM=1,NCCL_ALGO=Tree,RCCL_ENABLE_INTRANET=1 | rccl-UnitTests | AllReduce.* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Topology
+## =============================================================================
+
+## Topology dump
+Topo_Dump | HSA_NO_SCRATCH_RECLAIM=1,NCCL_TOPO_DUMP_FILE=topo.xml,UT_MIN_GPUS=8,UT_PROCESS_MASK=2 | rccl-UnitTests | Broadcast.InPlace | 1 | 1 | 0
+
+## Topology read
+Topo_Read | HSA_NO_SCRATCH_RECLAIM=1,NCCL_TOPO_FILE=topo.xml,UT_MIN_GPUS=8,UT_PROCESS_MASK=2 | rccl-UnitTests | AllToAll.OutOfPlaceGraph | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - MSCCLPP AllReduce/AllGather
+## =============================================================================
+
+## MSCCLPP force enable
+MSCCLPP_AllReduceAllGather | HSA_NO_SCRATCH_RECLAIM=1,RCCL_MSCCLPP_ENABLE=1,RCCL_MSCCLPP_FORCE_ENABLE=1,UT_MIN_GPUS=8,UT_PROCESS_MASK=2 | rccl-UnitTests | AllReduce.*:AllGather.* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Model Matching
+## =============================================================================
+
+## Disable model matching
+ModelMatching_Disable | HSA_NO_SCRATCH_RECLAIM=1,RCCL_MODEL_MATCHING_DISABLE=1 | rccl-UnitTests | GroupCall.Different | 1 | 1 | 0
+
+## Disable model matching with intranet
+ModelMatching_Disable_Intranet | HSA_NO_SCRATCH_RECLAIM=1,RCCL_MODEL_MATCHING_DISABLE=1,RCCL_ENABLE_INTRANET=1 | rccl-UnitTests | GroupCall.Different | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Signal Handler
+## =============================================================================
+
+## Signal handler with GDRCOPY
+SignalHandler_GDRCOPY | HSA_NO_SCRATCH_RECLAIM=1,RCCL_ENABLE_SIGNALHANDLER=1,NCCL_GDRCOPY_ENABLE=1 | rccl-UnitTests | Scatter.* | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - P2P Level and CPU Affinity
+## =============================================================================
+
+## P2P LOC level with CPU affinity ignore
+P2P_LOC_IgnoreAffinity | HSA_NO_SCRATCH_RECLAIM=1,NCCL_P2P_LEVEL=LOC,NCCL_IGNORE_CPU_AFFINITY=1 | rccl-UnitTests | AllToAll.OutOfPlace | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - P2P Disable and LL128
+## =============================================================================
+
+## P2P disable with LL128 protocol
+P2P_Disable_LL128 | HSA_NO_SCRATCH_RECLAIM=1,NCCL_P2P_DISABLE=1,NCCL_ALGO=Ring,NCCL_PROTO=LL128,RCCL_LL128_FORCE_ENABLE=1 | rccl-UnitTests | ReduceScatter.OutOfPlace | 1 | 1 | 0
+
+## =============================================================================
+## UNIT TESTS - Intranet + Sockets
+## =============================================================================
+
+## Intranet with sockets SendRecv
+Intranet_Sockets_SendRecv | HSA_NO_SCRATCH_RECLAIM=1,RCCL_ENABLE_INTRANET=1,NCCL_IB_DISABLE=1,UT_MIN_GPUS=8,UT_PROCESS_MASK=2 | rccl-UnitTests | SendRecv.* | 1 | 1 | 0
+
+## =============================================================================
+## COMPREHENSIVE UNIT TEST SUITES
+## =============================================================================
+
+## Run all unit tests
+UnitTests_All | NONE | rccl-UnitTests | ALL | 1 | 1 | 0
+
+# ## Run all fixture tests
+UnitTestsFixtures_All | NONE | rccl-UnitTestsFixtures | ALL | 1 | 1 | 0
+
+## Specific suite tests
+UnitTests_Suite_ScatterBroadcastAllGather | NONE | rccl-UnitTests | Scatter.OutOfPlaceGraph:Broadcast.OutOfPlace:AllGather.OutOfPlace | 1 | 1 | 0
