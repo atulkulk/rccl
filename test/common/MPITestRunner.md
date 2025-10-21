@@ -7,6 +7,7 @@ A C++ testing framework for multi-process RCCL tests using MPI (Message Passing 
 - [Why Use MPI Testing?](#why-use-mpi-testing)
 - [Quick Start](#quick-start)
 - [Core Concepts](#core-concepts)
+- [Per-Rank Logging](#per-rank-logging)
 - [API Reference](#api-reference)
 - [Examples](#examples)
 - [Best Practices](#best-practices)
@@ -273,6 +274,144 @@ MPI_Barrier(MPI_COMM_WORLD);
 // - cleanupTestCommunicator() (before and after)
 ```
 
+---
+
+## Per-Rank Logging
+
+### Overview
+
+By default, only **rank 0** output is displayed to the terminal to avoid cluttered logs from multiple processes. However, for debugging and detailed analysis, you can enable **per-rank logging** to capture output from all ranks into separate log files.
+
+### Enabling Per-Rank Logging
+
+Set the environment variable before running tests:
+
+```bash
+export RCCL_MPI_LOG_ALL_RANKS=1
+mpirun -np 4 ./rccl-UnitTestsMPI --gtest_filter="MyTest.*"
+```
+
+Or in a single command:
+
+```bash
+RCCL_MPI_LOG_ALL_RANKS=1 mpirun -np 4 ./rccl-UnitTestsMPI
+```
+
+### Log Files
+
+When enabled, log files are created for all ranks in the **current working directory**:
+
+```
+rccl_test_rank_0.log  (contains rank 0 output - also displayed on console)
+rccl_test_rank_1.log  (contains all rank 1 output)
+rccl_test_rank_2.log  (contains all rank 2 output)
+rccl_test_rank_3.log  (contains all rank 3 output)
+```
+
+**Important Notes:**
+- **Rank 0**: Output goes to BOTH console (for interactive monitoring) AND log file (for later analysis)
+- **Rank 1-N**: Output goes only to log files
+- **Location**: Log files are created in the directory where you execute the test command
+- For multi-node runs, each node creates logs in its local working directory
+- Ensure you have write permissions in the execution directory
+
+### What Gets Logged
+
+**For non-zero ranks (Ranks 1-N):**
+All output is redirected to log files, including:
+- Test progress and results (Google Test output)
+- `printf()` and `std::cout` statements
+- Error messages from NCCLCHECK, HIPCHECK, MPICHECK macros
+- Debug output from RCCL internals
+- Warnings and error messages
+
+**For rank 0:**
+- Output goes to BOTH console and log file (`rccl_test_rank_0.log`)
+  - **Console**: For real-time interactive monitoring
+  - **Log file**: For post-run analysis and comparison with other ranks
+- Best of both worlds: watch progress live AND have complete logs for debugging
+
+### Implementation Details
+
+**How It Works:**
+1. At startup, the framework checks `RCCL_MPI_LOG_ALL_RANKS` environment variable
+2. If set to `1`, creates `rccl_test_rank_<N>.log` for each rank
+3. **For Rank 0**: Uses "tee" functionality via pipe and background thread
+   - Creates a pipe
+   - Redirects stdout/stderr to pipe write end
+   - Background thread reads from pipe and writes to BOTH original console and log file
+4. **For Ranks 1-N**: Redirects stdout/stderr directly to log file
+5. Disables buffering for immediate output
+6. Restores original output streams on exit
+
+**Output Behavior:**
+- **Without per-rank logging** (default): Only rank 0 output shown on terminal
+- **With per-rank logging**:
+  - **Rank 0**: Output goes to BOTH console AND `rccl_test_rank_0.log`
+    - Watch test progress in real-time on console
+    - Complete log saved to file for later analysis
+  - **Ranks 1-N**: Output redirected to `rccl_test_rank_<N>.log` files only
+  - A clear banner message indicates per-rank logging is enabled
+
+### Usage Examples
+
+#### Example 1: Debugging a Specific Test
+
+```bash
+# Enable per-rank logging for a specific test
+export RCCL_MPI_LOG_ALL_RANKS=1
+mpirun -np 2 ./rccl-UnitTestsMPI --gtest_filter="P2PTest.DataTransfer"
+
+# You'll see a banner message at startup:
+# ========================================================================
+#   Per-Rank Logging ENABLED (RCCL_MPI_LOG_ALL_RANKS=1)
+# ========================================================================
+#   Rank 0     : Output to BOTH console AND rccl_test_rank_0.log
+#   Ranks 1-N  : Output redirected to rccl_test_rank_<N>.log
+#   Location   : Log files created in current working directory
+# ========================================================================
+```
+
+### Best Practices
+
+**When to Enable:**
+- ✅ Debugging test failures on non-zero ranks
+- ✅ Investigating rank-specific behavior differences
+- ✅ Analyzing communication patterns across ranks
+- ✅ Capturing detailed RCCL internal logs from all processes
+- ✅ Troubleshooting deadlocks or hangs
+
+**When to Disable:**
+- ✅ Normal test runs (cleaner output)
+- ✅ CI/CD pipelines (unless debugging)
+- ✅ Large-scale runs (many ranks generate many files)
+
+### Adding Debug Output in Tests
+
+Use rank-aware logging in your tests:
+
+```cpp
+TEST_F(MyMPITest, DebugExample) {
+  validateTestPrerequisites(2);
+  ASSERT_EQ(ncclSuccess, createTestCommunicator());
+
+  int rank = RCCLMPIEnvironment::world_rank;
+
+  // This will appear in the rank's log file
+  printf("Rank %d: Starting test with buffer size %zu\n", rank, buffer_size);
+
+  // Perform operation
+  NCCLCHECK(ncclAllReduce(...));
+
+  // More debug output
+  printf("Rank %d: AllReduce completed, result=%f\n", rank, result);
+
+  // Only rank 0 prints summary (appears in all modes)
+  if (rank == 0) {
+    printf("Summary: All ranks completed successfully\n");
+  }
+}
+```
 ---
 
 ## API Reference
@@ -844,6 +983,16 @@ rocm-smi --showid
 
 **Symptom:** Test never completes, all ranks waiting.
 
+**Debugging:** Enable per-rank logging to see where each rank gets stuck:
+```bash
+# Run with per-rank logging
+export RCCL_MPI_LOG_ALL_RANKS=1
+mpirun -np 4 ./rccl-UnitTestsMPI --gtest_filter="HangingTest.*" &
+
+# Monitor logs in real-time to see where each rank stops
+tail -f rccl_test_rank_*.log
+```
+
 **Common Causes:**
 
 1. **Mismatched Collectives:**
@@ -872,6 +1021,8 @@ ASSERT_EQ(ncclSuccess, createTestCommunicator());
 HIPCHECK(hipStreamSynchronize(getActiveStream()));
 MPI_Barrier(MPI_COMM_WORLD);
 ```
+
+**See:** [Per-Rank Logging](#per-rank-logging) for detailed debugging techniques
 
 ### Rank Mismatch in ncclCommInitRank
 
@@ -924,6 +1075,17 @@ grep validateTestPrerequisites test_file.cpp
 
 **Symptom:** Different ranks get different results.
 
+**Solution:** Enable per-rank logging to see output from all ranks:
+```bash
+# Enable per-rank logging for detailed debugging
+export RCCL_MPI_LOG_ALL_RANKS=1
+mpirun -np 4 ./rccl-UnitTestsMPI --gtest_filter="FailingTest.*"
+
+# Check logs from each rank
+cat rccl_test_rank_0.log
+cat rccl_test_rank_1.log
+```
+
 **Debugging:**
 ```cpp
 // Print from all ranks to debug
@@ -938,6 +1100,8 @@ MPI_Allreduce(&local_result, &global_result, 1, MPI_FLOAT,
               MPI_MAX, MPI_COMM_WORLD);
 EXPECT_FLOAT_EQ(local_result, global_result);
 ```
+
+**See:** [Per-Rank Logging](#per-rank-logging) for more details
 
 ---
 
@@ -1055,18 +1219,25 @@ A: Yes, if you have:
 
 A:
 ```bash
-# GDB with MPI
+# Method 1: Use per-rank logging (easiest)
+export RCCL_MPI_LOG_ALL_RANKS=1
+mpirun -np 4 ./test_executable
+# Check rccl_test_rank_2.log for rank 2 output
+
+# Method 2: GDB with MPI
 mpirun -np 2 xterm -e gdb ./test_executable
 
-# Or attach to specific rank PID
+# Method 3: Attach to specific rank PID
 mpirun -np 4 ./test_executable &
 gdb -p <rank_pid>
 
-# Print debugging from specific rank
-if (RCCLMPIEnvironment::world_rank == 0) {
-  printf("Debug info...\n");
+# Method 4: Print debugging from specific rank
+if (RCCLMPIEnvironment::world_rank == 2) {
+  printf("Debug info from rank 2...\n");
 }
 ```
+
+**See:** [Per-Rank Logging](#per-rank-logging) for comprehensive debugging guide
 
 ## See Also
 
