@@ -224,6 +224,7 @@ if(BUILD_TESTS)
         transport/P2pMPITests.cpp
         transport/NetMPITests.cpp
         transport/ShmMPITests.cpp
+        transport/NetIbMPITests.cpp
       )
 
       # Create the MPI test executable
