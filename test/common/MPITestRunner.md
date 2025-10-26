@@ -935,10 +935,10 @@ TEST_F(NetMPITest, NetWorkflow) {
 }
 ```
 
-### Example 8: Custom Test Class with Helpers
+### Example 8: Custom Test Class with RAII Resource Guards
 
 ```cpp
-class MyTransportTest : public MPITestBase {
+class MyTransportTest : public TransportTestBase {
 protected:
   void* send_buffer = nullptr;
   void* recv_buffer = nullptr;
@@ -948,19 +948,13 @@ protected:
     ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI));
     ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
-    // Allocate buffers
-    HIPCHECK(hipMalloc(&send_buffer, buffer_size));
-    HIPCHECK(hipMalloc(&recv_buffer, buffer_size));
+    // Allocate buffers with automatic RAII guards
+    // Guards stored in base class, cleanup automatic at test end
+    allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, buffer_size, buffer_size);
   }
 
-  void TearDown() override {
-    // Cleanup buffers
-    if (send_buffer) hipFree(send_buffer);
-    if (recv_buffer) hipFree(recv_buffer);
-
-    // Base class cleanup (communicator)
-    MPITestBase::TearDown();
-  }
+  // No need for manual cleanup in TearDown()
+  // Base class automatically cleans up guarded resources
 
   void initializeBuffer(void* buffer, uint8_t value) {
     HIPCHECK(hipMemset(buffer, value, buffer_size));
@@ -982,14 +976,107 @@ TEST_F(MyTransportTest, DataTransfer) {
   for (size_t i = 0; i < buffer_size; i++) {
     EXPECT_EQ(result[i], 0xAB);
   }
+
+  // Resources automatically cleaned up at test end
 }
 ```
+
+### Example 9: Loop with Per-Iteration Cleanup
+
+For tests that allocate resources in loops, use `store_in_base=false` to get local guards:
+
+```cpp
+TEST_F(MyTransportTest, TestMultipleSizes) {
+  ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI));
+  ASSERT_EQ(ncclSuccess, createTestCommunicator());
+
+  const std::vector<size_t> test_sizes = {1024, 4096, 16384, 65536};
+
+  for(const auto size : test_sizes) {
+    void* send_buff = nullptr;
+    void* recv_buff = nullptr;
+
+    // Get local guards - cleanup at end of each iteration
+    auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(
+        &send_buff, &recv_buff, size, size, false);  // false = local guards
+
+    // Test with this buffer size
+    testTransfer(send_buff, recv_buff, size);
+
+    // Buffers automatically freed here at end of iteration
+  }
+
+  // All buffers already cleaned up, minimal memory footprint maintained
+}
 
 ---
 
 ## Best Practices
 
-### 1. Always Validate Prerequisites
+### 1. Use RAII Guards for Automatic Resource Cleanup
+
+**TransportTestBase** provides RAII-based resource management to prevent leaks:
+
+```cpp
+// ✅ GOOD: Use guarded allocation (default - cleanup at test end)
+TEST_F(MyTransportTest, Example) {
+  void* send_buffer = nullptr;
+  void* recv_buffer = nullptr;
+
+  // Allocate with automatic guards
+  allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, size, size);
+
+  // Use buffers...
+
+  // Automatic cleanup even if assertions fail!
+}
+
+// ✅ GOOD: Loop with per-iteration cleanup
+TEST_F(MyTransportTest, LoopExample) {
+  for(const auto size : test_sizes) {
+    void* send_buff = nullptr;
+    void* recv_buff = nullptr;
+
+    // Local guards - cleanup per iteration
+    auto [sg, rg] = allocateAndInitBuffersGuarded(&send_buff, &recv_buff, size, size, false);
+
+    // Test logic...
+    // Cleanup happens here automatically
+  }
+}
+
+// ❌ BAD: Manual cleanup can leak on assertion failure
+TEST_F(MyTransportTest, Example) {
+  void* send_buffer = nullptr;
+  hipMalloc(&send_buffer, size);
+
+  ASSERT_TRUE(condition);  // If this fails, send_buffer leaks!
+
+  hipFree(send_buffer);  // Never reached if assertion fails
+}
+```
+
+**RAII Guard Benefits:**
+- ✅ Resources cleaned up even if `ASSERT_*` or `EXPECT_*` fails
+- ✅ Exception-safe cleanup
+- ✅ No manual cleanup code needed
+- ✅ Prevents memory leaks in test failures
+- ✅ Supports both test-scoped and loop-scoped cleanup
+
+**API:**
+```cpp
+// Store guards in base class (cleanup at test end) - DEFAULT
+allocateAndInitBuffersGuarded(&send, &recv, size, size);
+
+// Get local guards (cleanup at scope exit) - FOR LOOPS
+auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(&send, &recv, size, size, false);
+
+// Registration with guards
+preRegisterBuffersGuarded(send, recv, size, size, &send_handle, &recv_handle);
+auto [sendRegGuard, recvRegGuard] = preRegisterBuffersGuarded(..., false);
+```
+
+### 2. Always Validate Prerequisites
 
 ```cpp
 TEST_F(MyTest, SomeTest) {
@@ -1007,7 +1094,7 @@ TEST_F(MyTest, SomeTest) {
 }
 ```
 
-### 2. Create Test-Specific Communicators
+### 3. Create Test-Specific Communicators
 
 ```cpp
 // ✅ GOOD: Isolated communicator per test
@@ -1024,7 +1111,75 @@ TEST_F(MyTest, Test2) {
 
 **Why?** Avoids shared memory conflicts and ensures clean state.
 
-### 3. Use Rank-Specific Logic When Needed
+### 4. Use RAII Guards for Resource Management
+
+**TransportTestBase** provides RAII-based automatic resource cleanup:
+
+```cpp
+// ✅ GOOD: Automatic cleanup even on test failure
+TEST_F(MyTransportTest, Example) {
+  void* send_buffer = nullptr;
+  void* recv_buffer = nullptr;
+
+  // Allocate with automatic guards (default: cleanup at test end)
+  allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, size, size);
+
+  ASSERT_TRUE(condition);  // Even if this fails, buffers cleaned up!
+
+  // Use buffers...
+  // Automatic cleanup at test end
+}
+
+// ✅ GOOD: Loop with per-iteration cleanup
+TEST_F(MyTransportTest, LoopTest) {
+  for(const auto size : test_sizes) {
+    void* send_buff = nullptr;
+    void* recv_buff = nullptr;
+
+    // Get local guards (store_in_base=false for per-iteration cleanup)
+    auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(
+        &send_buff, &recv_buff, size, size, false);
+
+    // Test logic...
+    // Cleanup happens here automatically at end of iteration
+  }
+}
+
+// ❌ BAD: Manual cleanup leaks on assertion failure
+TEST_F(MyTest, Example) {
+  void* buffer = nullptr;
+  hipMalloc(&buffer, size);
+
+  ASSERT_TRUE(condition);  // If fails, buffer leaks!
+
+  hipFree(buffer);  // Never reached
+}
+```
+
+**RAII Guard API:**
+```cpp
+// Allocate with guards (cleanup at test end) - DEFAULT
+allocateAndInitBuffersGuarded(&send, &recv, size, size);
+
+// Allocate with local guards (cleanup at scope exit) - FOR LOOPS
+auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(&send, &recv, size, size, false);
+
+// Register buffers with guards
+preRegisterBuffersGuarded(send, recv, size, size, &send_handle, &recv_handle);
+
+// Register with local guards (for loops)
+auto [sRegGuard, rRegGuard] = preRegisterBuffersGuarded(send, recv, size, size,
+                                                         &send_handle, &recv_handle, false);
+```
+
+**Benefits:**
+- ✅ Resources cleaned up even if `ASSERT_*` or `EXPECT_*` fails
+- ✅ Exception-safe cleanup
+- ✅ No manual cleanup code needed
+- ✅ Prevents memory leaks in test failures
+- ✅ Supports both test-scoped and loop-scoped cleanup
+
+### 5. Use Rank-Specific Logic When Needed
 
 ```cpp
 TEST_F(MyTest, Example) {
@@ -1049,27 +1204,7 @@ TEST_F(MyTest, Example) {
 }
 ```
 
-### 4. Clean Up Resources Properly
-
-```cpp
-TEST_F(MyTest, Example) {
-  float* d_buffer = nullptr;
-
-  try {
-    HIPCHECK(hipMalloc(&d_buffer, 1024 * sizeof(float)));
-
-    // Test logic...
-
-    HIPCHECK(hipFree(d_buffer));
-    d_buffer = nullptr;
-  } catch (...) {
-    if (d_buffer) hipFree(d_buffer);
-    throw;
-  }
-}
-```
-
-### 5. Use Descriptive Test Names
+### 6. Use Descriptive Test Names
 
 ```cpp
 // ✅ GOOD: Clear what's being tested
@@ -1082,7 +1217,7 @@ TEST_F(MyMPITest, Test1)
 TEST_F(MyMPITest, TestAllReduce)
 ```
 
-### 6. Check Return Codes
+### 7. Check Return Codes
 
 ```cpp
 // ✅ GOOD: Check all return codes
@@ -1096,7 +1231,7 @@ ncclAllReduce(...);         // Could return error
 hipMalloc(&ptr, size);      // Allocation might fail
 ```
 
-### 7. Synchronize Appropriately
+### 8. Synchronize Appropriately
 
 ```cpp
 // ✅ GOOD: Synchronize before checking results
@@ -1109,7 +1244,7 @@ NCCLCHECK(ncclAllReduce(...));
 EXPECT_EQ(result, expected);  // Operation might not be done!
 ```
 
-### 8. Consider Process Count in Expectations
+### 9. Consider Process Count in Expectations
 
 ```cpp
 TEST_F(MyTest, AllReduceSum) {
