@@ -18,6 +18,7 @@
 #ifdef MPI_TESTS_ENABLED
     #include "MPITestBase.hpp"
     #include "RCCLMPIEnvironment.hpp"
+    #include "RCCLTestResourceGuards.hpp"
     #include "comm.h"
     #include "core.h"
     #include "device.h"
@@ -25,6 +26,8 @@
     #include "graph/topo.h"
     #include "nccl_common.h"
     #include "transport.h"
+
+using namespace RCCLTestGuards;
 
 extern struct ncclTransport p2pTransport;
 extern struct ncclTransport netTransport;
@@ -65,6 +68,11 @@ protected:
     ncclPeerInfo*    remote_peer_info = nullptr;
     ncclTopoGraph*   topology_graph   = nullptr;
 
+    // RAII guards for automatic resource cleanup
+    // These are managed by helper methods and cleaned up automatically
+    std::vector<BufferGuard>         buffer_guards_;
+    std::vector<NcclRegHandleGuard> reg_handle_guards_;
+
     // Setup and teardown
     void SetUp() override;
     void TearDown() override;
@@ -75,20 +83,42 @@ protected:
     // Common helper methods
     void initializeP2PTransport();
     void initializeNETTransport();
+
+    // Buffer allocation (unguarded - for manual management)
     void allocateAndInitBuffers(void** send_buffer,
                                 void** recv_buffer,
                                 size_t send_bytes,
                                 size_t recv_bytes);
+
+    // Buffer allocation with automatic RAII guards
+    // store_in_base=true: Guards stored in base class, cleanup at test end
+    // store_in_base=false: Guards returned, caller controls cleanup scope
+    std::pair<BufferGuard, BufferGuard> allocateAndInitBuffersGuarded(
+        void** send_buffer,
+        void** recv_buffer,
+        size_t send_bytes,
+        size_t recv_bytes,
+        bool   store_in_base = true);
+
+    // Buffer registration (unguarded - for manual management)
     void preRegisterBuffers(void*  send_buffer,
                             void*  recv_buffer,
                             size_t send_bytes,
                             size_t recv_bytes,
                             void** send_reg_handle,
                             void** recv_reg_handle);
-    void cleanupBuffers(void* send_buffer,
-                        void* recv_buffer,
-                        void* send_reg_handle,
-                        void* recv_reg_handle);
+
+    // Buffer registration with automatic RAII guards
+    // store_in_base=true: Guards stored in base class, cleanup at test end
+    // store_in_base=false: Guards returned, caller controls cleanup scope
+    std::pair<NcclRegHandleGuard, NcclRegHandleGuard> preRegisterBuffersGuarded(
+        void*  send_buffer,
+        void*  recv_buffer,
+        size_t send_bytes,
+        size_t recv_bytes,
+        void** send_reg_handle,
+        void** recv_reg_handle,
+        bool   store_in_base = true);
 };
 
 #endif // MPI_TESTS_ENABLED

@@ -293,34 +293,68 @@ void TransportTestBase::preRegisterBuffers(void*  send_buffer,
     }
 }
 
-// Cleanup buffers and registration handles
-void TransportTestBase::cleanupBuffers(void* send_buffer,
-                                       void* recv_buffer,
-                                       void* send_reg_handle,
-                                       void* recv_reg_handle)
+// Buffer allocation with automatic RAII guards
+std::pair<BufferGuard, BufferGuard> TransportTestBase::allocateAndInitBuffersGuarded(
+    void** send_buffer,
+    void** recv_buffer,
+    size_t send_bytes,
+    size_t recv_bytes,
+    bool   store_in_base)
 {
-    // Deregister buffers if registered
-    if(send_reg_handle)
-    {
-        EXPECT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), send_reg_handle))
-            << "Rank " << config.world_rank << ": Failed to deregister send buffer";
-    }
-    if(recv_reg_handle)
-    {
-        EXPECT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), recv_reg_handle))
-            << "Rank " << config.world_rank << ": Failed to deregister recv buffer";
-    }
+    // Allocate buffers using existing method
+    allocateAndInitBuffers(send_buffer, recv_buffer, send_bytes, recv_bytes);
 
-    // Free GPU buffers
-    if(send_buffer)
+    // Create guards
+    BufferGuard sendGuard(*send_buffer, false); // Device memory
+    BufferGuard recvGuard(*recv_buffer, false); // Device memory
+
+    if(store_in_base)
     {
-        EXPECT_EQ(hipSuccess, hipFree(send_buffer))
-            << "Rank " << config.world_rank << ": Failed to free send buffer";
+        // Store guards in base class for cleanup at test end
+        buffer_guards_.push_back(std::move(sendGuard));
+        buffer_guards_.push_back(std::move(recvGuard));
+
+        // Return empty guards (resources now managed by base class)
+        return {BufferGuard(nullptr, false), BufferGuard(nullptr, false)};
     }
-    if(recv_buffer)
+    else
     {
-        EXPECT_EQ(hipSuccess, hipFree(recv_buffer))
-            << "Rank " << config.world_rank << ": Failed to free recv buffer";
+        // Return guards for caller to manage (cleanup at caller's scope exit)
+        return {std::move(sendGuard), std::move(recvGuard)};
+    }
+}
+
+// Buffer registration with automatic RAII guards
+std::pair<NcclRegHandleGuard, NcclRegHandleGuard> TransportTestBase::preRegisterBuffersGuarded(
+    void*  send_buffer,
+    void*  recv_buffer,
+    size_t send_bytes,
+    size_t recv_bytes,
+    void** send_reg_handle,
+    void** recv_reg_handle,
+    bool   store_in_base)
+{
+    // Register buffers using existing method
+    preRegisterBuffers(send_buffer, recv_buffer, send_bytes, recv_bytes, send_reg_handle, recv_reg_handle);
+
+    // Create guards
+    NcclRegHandleGuard sendGuard(*send_reg_handle, NcclRegHandleDeleter(getActiveCommunicator()));
+    NcclRegHandleGuard recvGuard(*recv_reg_handle, NcclRegHandleDeleter(getActiveCommunicator()));
+
+    if(store_in_base)
+    {
+        // Store guards in base class for cleanup at test end
+        reg_handle_guards_.push_back(std::move(sendGuard));
+        reg_handle_guards_.push_back(std::move(recvGuard));
+
+        // Return empty guards (resources now managed by base class)
+        return {NcclRegHandleGuard(nullptr, NcclRegHandleDeleter(nullptr)),
+                NcclRegHandleGuard(nullptr, NcclRegHandleDeleter(nullptr))};
+    }
+    else
+    {
+        // Return guards for caller to manage (cleanup at caller's scope exit)
+        return {std::move(sendGuard), std::move(recvGuard)};
     }
 }
 
