@@ -5,6 +5,7 @@
  ************************************************************************/
 
 #include "TransportMPIBase.hpp"
+#include "RCCLTestResourceGuards.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,8 +13,9 @@
 
 #ifdef MPI_TESTS_ENABLED
 
-// Import MPI test constants for convenience
+// Import MPI test constants
 using namespace MPITestConstants;
+using namespace RCCLTestGuards;
 
 // External reference to SHM transport
 extern struct ncclTransport shmTransport;
@@ -527,10 +529,12 @@ public:
         hipError_t hip_result = hipMalloc(&send_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate send buffer";
+        BufferGuard sendBufferGuard(send_buffer, false); // Device memory
 
         hip_result = hipMalloc(&recv_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate recv buffer";
+        BufferGuard recvBufferGuard(recv_buffer, false); // Device memory
 
         // Initialize send buffer with unique pattern
         std::vector<float> host_send_data(num_elements);
@@ -628,18 +632,6 @@ public:
                                  << " samples";
         }
 
-        // Cleanup buffers
-        if(send_buffer)
-        {
-            EXPECT_EQ(hipSuccess, hipFree(send_buffer))
-                << "Rank " << config.world_rank << ": Failed to free send buffer";
-        }
-        if(recv_buffer)
-        {
-            EXPECT_EQ(hipSuccess, hipFree(recv_buffer))
-                << "Rank " << config.world_rank << ": Failed to free recv buffer";
-        }
-
         MPI_Barrier(MPI_COMM_WORLD);
     }
 
@@ -655,14 +647,14 @@ public:
             void* send_buff = nullptr;
             void* recv_buff = nullptr;
 
-            allocateAndInitBuffers(&send_buff, &recv_buff, size, size);
+            // Allocate with local guards (store_in_base=false)
+            // Guards will cleanup at end of loop iteration
+            auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(
+                &send_buff, &recv_buff, size, size, false);
 
             // Verify buffers are accessible
             EXPECT_NE(send_buff, nullptr) << "Rank " << config.world_rank << ": send_buff is null";
             EXPECT_NE(recv_buff, nullptr) << "Rank " << config.world_rank << ": recv_buff is null";
-
-            // Cleanup
-            cleanupBuffers(send_buff, recv_buff, nullptr, nullptr);
         }
     }
 };
@@ -741,6 +733,7 @@ TEST_F(ShmMPITest, ShmTransfer_ZeroSizeBuffer)
     // Allocate minimal buffer
     void* buffer = nullptr;
     HIPCHECK(hipMalloc(&buffer, 1)); // Allocate 1 byte
+    BufferGuard bufferGuard(buffer, false); // Device memory
 
     const bool is_sender = (config.world_rank == 0);
     const int  peer      = is_sender ? 1 : 0;
@@ -757,7 +750,6 @@ TEST_F(ShmMPITest, ShmTransfer_ZeroSizeBuffer)
     MPI_Barrier(MPI_COMM_WORLD);
 
     HIPCHECK(hipStreamSynchronize(config.stream));
-    HIPCHECK(hipFree(buffer));
 }
 
 TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
@@ -777,8 +769,10 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
     void*        recv_buffer = nullptr;
 
     hipError_t hip_result = hipMalloc(&send_buffer, large_size);
+    BufferGuard sendBufferGuard(send_buffer, false); // Device memory
 
     hip_result = hipMalloc(&recv_buffer, large_size);
+    BufferGuard recvBufferGuard(recv_buffer, false); // Device memory
 
     // Initialize buffer
     HIPCHECK(hipMemset(send_buffer, 0x42, large_size));
@@ -801,9 +795,6 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
 
     HIPCHECK(hipStreamSynchronize(config.stream));
 
-    // Cleanup
-    HIPCHECK(hipFree(send_buffer));
-    HIPCHECK(hipFree(recv_buffer));
 
     MPI_Barrier(MPI_COMM_WORLD);
 }
@@ -823,6 +814,7 @@ TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
     const size_t buffer_size    = 4096;
     void*        aligned_buffer = nullptr;
     HIPCHECK(hipMalloc(&aligned_buffer, buffer_size));
+    BufferGuard bufferGuard(aligned_buffer, false); // Device memory
 
     // Create unaligned pointer (offset by 1 byte)
     void* unaligned_buffer = static_cast<char*>(aligned_buffer) + 1;
@@ -840,7 +832,6 @@ TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
 
     // Don't fail the test - just report the result
     HIPCHECK(hipStreamSynchronize(config.stream));
-    HIPCHECK(hipFree(aligned_buffer));
 }
 
 TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
@@ -859,7 +850,11 @@ TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
     void*        recv_buffer = nullptr;
 
     HIPCHECK(hipMalloc(&send_buffer, buffer_size));
+    BufferGuard sendBufferGuard(send_buffer, false); // Device memory
+
     HIPCHECK(hipMalloc(&recv_buffer, buffer_size));
+    BufferGuard recvBufferGuard(recv_buffer, false); // Device memory
+
     HIPCHECK(hipMemset(send_buffer, 0xAB, buffer_size));
 
     const bool   is_sender = (config.world_rank == 0);
@@ -882,8 +877,6 @@ TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
         HIPCHECK(hipStreamSynchronize(config.stream));
     }
 
-    HIPCHECK(hipFree(send_buffer));
-    HIPCHECK(hipFree(recv_buffer));
 
     MPI_Barrier(MPI_COMM_WORLD);
 }

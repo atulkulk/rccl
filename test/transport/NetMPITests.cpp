@@ -8,7 +8,7 @@
 
 #ifdef MPI_TESTS_ENABLED
 
-// Import MPI test constants for convenience
+// Import MPI test constants
 using namespace MPITestConstants;
 
 namespace
@@ -38,29 +38,6 @@ protected:
         TransportTestBase::TearDown();
     }
 
-private:
-    // Helper to setup buffers for tests
-    void setupTestBuffers(void** send_buffer,
-                          void** recv_buffer,
-                          void** send_reg_handle,
-                          void** recv_reg_handle)
-    {
-        // Initialize NET transport for multi-node capable testing
-        // NET transport works across multiple nodes using network communication (IB/Ethernet)
-        initializeNETTransport();
-
-        // Allocate and initialize buffers
-        allocateAndInitBuffers(send_buffer, recv_buffer, kTestBufferSize, kTestBufferSize);
-
-        // Pre-register buffers
-        preRegisterBuffers(*send_buffer,
-                           *recv_buffer,
-                           kTestBufferSize,
-                           kTestBufferSize,
-                           send_reg_handle,
-                           recv_reg_handle);
-    }
-
 public:
     // Test ncclNetGraphRegisterBuffer
     void testNetGraphRegisterBuffer()
@@ -70,13 +47,19 @@ public:
             printf("Rank %d: Testing ncclNetGraphRegisterBuffer...\n", config.world_rank);
         }
 
-        // Setup test buffers
-        void* send_buffer     = nullptr;
-        void* recv_buffer     = nullptr;
+        // Initialize NET transport
+        initializeNETTransport();
+
+        // Allocate and automatically guard buffers
+        void* send_buffer = nullptr;
+        void* recv_buffer = nullptr;
+        allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, kTestBufferSize, kTestBufferSize);
+
+        // Register and automatically guard handles
         void* send_reg_handle = nullptr;
         void* recv_reg_handle = nullptr;
-
-        setupTestBuffers(&send_buffer, &recv_buffer, &send_reg_handle, &recv_reg_handle);
+        preRegisterBuffersGuarded(send_buffer, recv_buffer, kTestBufferSize, kTestBufferSize,
+                                  &send_reg_handle, &recv_reg_handle);
 
         // Test ncclNetGraphRegisterBuffer
         if(send_connector.transportResources)
@@ -132,9 +115,6 @@ public:
             }
         }
 
-        // Cleanup
-        cleanupBuffers(send_buffer, recv_buffer, send_reg_handle, recv_reg_handle);
-
         if(config.world_rank == 0)
         {
             printf("Rank %d: ncclNetGraphRegisterBuffer test completed\n", config.world_rank);
@@ -153,13 +133,19 @@ public:
                    config.world_rank);
         }
 
-        // Setup test buffers
-        void* send_buffer     = nullptr;
-        void* recv_buffer     = nullptr;
+        // Initialize NET transport
+        initializeNETTransport();
+
+        // Allocate and automatically guard buffers
+        void* send_buffer = nullptr;
+        void* recv_buffer = nullptr;
+        allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, kTestBufferSize, kTestBufferSize);
+
+        // Register and automatically guard handles
         void* send_reg_handle = nullptr;
         void* recv_reg_handle = nullptr;
-
-        setupTestBuffers(&send_buffer, &recv_buffer, &send_reg_handle, &recv_reg_handle);
+        preRegisterBuffersGuarded(send_buffer, recv_buffer, kTestBufferSize, kTestBufferSize,
+                                  &send_reg_handle, &recv_reg_handle);
 
         // Test ncclRegisterP2pNetBuffer
         if(send_connector.transportResources)
@@ -207,9 +193,6 @@ public:
                 }
             }
         }
-
-        // Cleanup
-        cleanupBuffers(send_buffer, recv_buffer, send_reg_handle, recv_reg_handle);
 
         if(config.world_rank == 0)
         {
