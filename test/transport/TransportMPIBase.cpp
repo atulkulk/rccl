@@ -134,108 +134,6 @@ void TransportTestBase::TearDown()
     MPITestBase::TearDown();
 }
 
-// Initialize P2P transport components
-void TransportTestBase::initializeP2PTransport()
-{
-    if(send_connector.transportResources || recv_connector.transportResources)
-    {
-        return; // Already initialized
-    }
-
-    // Test P2P capability
-    int  can_connect{};
-    auto result = p2pTransport.canConnect(&can_connect,
-                                          comm_handle,
-                                          topology_graph,
-                                          local_peer_info,
-                                          remote_peer_info);
-    ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": P2P canConnect failed";
-    ASSERT_NE(0, can_connect) << "Rank " << config.world_rank << ": P2P not available";
-
-    // Setup send and recv connectors
-    ncclConnect send_connect_info{};
-    ncclConnect recv_connect_info{};
-
-    result = p2pTransport.send.setup(comm_handle,
-                                     topology_graph,
-                                     local_peer_info,
-                                     remote_peer_info,
-                                     &send_connect_info,
-                                     &send_connector,
-                                     0,
-                                     0);
-    ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": P2P send setup failed";
-
-    result = p2pTransport.recv.setup(comm_handle,
-                                     topology_graph,
-                                     local_peer_info,
-                                     remote_peer_info,
-                                     &recv_connect_info,
-                                     &recv_connector,
-                                     0,
-                                     0);
-    ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": P2P recv setup failed";
-
-    // Mark transport as initialized
-    initialized_transport = TransportType::P2P;
-
-    if(config.world_rank == 0)
-    {
-        printf("Rank %d: P2P transport initialized\n", config.world_rank);
-    }
-}
-
-// Initialize NET transport components
-void TransportTestBase::initializeNETTransport()
-{
-    if(send_connector.transportResources || recv_connector.transportResources)
-    {
-        return; // Already initialized
-    }
-
-    // Test NET capability
-    int  can_connect{};
-    auto result = netTransport.canConnect(&can_connect,
-                                          comm_handle,
-                                          topology_graph,
-                                          local_peer_info,
-                                          remote_peer_info);
-    ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": NET canConnect failed";
-    ASSERT_NE(0, can_connect) << "Rank " << config.world_rank << ": NET transport not available";
-
-    // Setup send and recv connectors for NET
-    ncclConnect send_connect_info{};
-    ncclConnect recv_connect_info{};
-
-    result = netTransport.send.setup(comm_handle,
-                                     topology_graph,
-                                     local_peer_info,
-                                     remote_peer_info,
-                                     &send_connect_info,
-                                     &send_connector,
-                                     0,
-                                     0);
-    ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": NET send setup failed";
-
-    result = netTransport.recv.setup(comm_handle,
-                                     topology_graph,
-                                     local_peer_info,
-                                     remote_peer_info,
-                                     &recv_connect_info,
-                                     &recv_connector,
-                                     0,
-                                     0);
-    ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank << ": NET recv setup failed";
-
-    // Mark transport as initialized
-    initialized_transport = TransportType::Network;
-
-    if(config.world_rank == 0)
-    {
-        printf("Rank %d: NET transport initialized (multi-node capable)\n", config.world_rank);
-    }
-}
-
 // Allocate and initialize test buffers
 void TransportTestBase::allocateAndInitBuffers(void** send_buffer,
                                                void** recv_buffer,
@@ -250,11 +148,10 @@ void TransportTestBase::allocateAndInitBuffers(void** send_buffer,
     ASSERT_EQ(hipSuccess, hipMalloc(recv_buffer, recv_bytes))
         << "Rank " << config.world_rank << ": Failed to allocate recv buffer";
 
-    // Initialize send buffer with test pattern
-    std::vector<float> host_data(send_bytes / sizeof(float));
+    std::vector<uint8_t> host_data(send_bytes);
     for(size_t i = 0; i < host_data.size(); i++)
     {
-        host_data[i] = static_cast<float>(config.world_rank * 1000 + i);
+        host_data[i] = static_cast<uint8_t>((config.world_rank * 100 + i) % 256);
     }
 
     ASSERT_EQ(hipSuccess,
@@ -277,29 +174,28 @@ void TransportTestBase::preRegisterBuffers(void*  send_buffer,
                                            void** send_reg_handle,
                                            void** recv_reg_handle)
 {
+    ncclComm_t comm = getActiveCommunicator();
+
     // Register send buffer
-    ASSERT_EQ(ncclSuccess,
-              ncclCommRegister(getActiveCommunicator(), send_buffer, send_bytes, send_reg_handle))
-        << "Rank " << config.world_rank << ": Failed to pre-register send buffer";
+    ncclResult_t result = ncclCommRegister(comm, send_buffer, send_bytes, send_reg_handle);
+    ASSERT_EQ(ncclSuccess, result)
+        << "Rank " << config.world_rank
+        << ": Failed to pre-register send buffer: " << ncclGetErrorString(result);
 
     // Register recv buffer
-    ASSERT_EQ(ncclSuccess,
-              ncclCommRegister(getActiveCommunicator(), recv_buffer, recv_bytes, recv_reg_handle))
-        << "Rank " << config.world_rank << ": Failed to pre-register recv buffer";
-
-    if(config.world_rank == 0)
-    {
-        printf("Rank %d: Pre-registered buffers with ncclCommRegister\n", config.world_rank);
-    }
+    result = ncclCommRegister(comm, recv_buffer, recv_bytes, recv_reg_handle);
+    ASSERT_EQ(ncclSuccess, result)
+        << "Rank " << config.world_rank
+        << ": Failed to pre-register recv buffer: " << ncclGetErrorString(result);
 }
 
 // Buffer allocation with automatic RAII guards
-std::pair<BufferGuard, BufferGuard> TransportTestBase::allocateAndInitBuffersGuarded(
-    void** send_buffer,
-    void** recv_buffer,
-    size_t send_bytes,
-    size_t recv_bytes,
-    bool   store_in_base)
+std::pair<BufferGuard, BufferGuard>
+    TransportTestBase::allocateAndInitBuffersGuarded(void** send_buffer,
+                                                     void** recv_buffer,
+                                                     size_t send_bytes,
+                                                     size_t recv_bytes,
+                                                     bool   store_in_base)
 {
     // Allocate buffers using existing method
     allocateAndInitBuffers(send_buffer, recv_buffer, send_bytes, recv_bytes);
@@ -325,19 +221,24 @@ std::pair<BufferGuard, BufferGuard> TransportTestBase::allocateAndInitBuffersGua
 }
 
 // Buffer registration with automatic RAII guards
-std::pair<NcclRegHandleGuard, NcclRegHandleGuard> TransportTestBase::preRegisterBuffersGuarded(
-    void*  send_buffer,
-    void*  recv_buffer,
-    size_t send_bytes,
-    size_t recv_bytes,
-    void** send_reg_handle,
-    void** recv_reg_handle,
-    bool   store_in_base)
+std::pair<NcclRegHandleGuard, NcclRegHandleGuard>
+    TransportTestBase::preRegisterBuffersGuarded(void*  send_buffer,
+                                                 void*  recv_buffer,
+                                                 size_t send_bytes,
+                                                 size_t recv_bytes,
+                                                 void** send_reg_handle,
+                                                 void** recv_reg_handle,
+                                                 bool   store_in_base)
 {
     // Register buffers using existing method
-    preRegisterBuffers(send_buffer, recv_buffer, send_bytes, recv_bytes, send_reg_handle, recv_reg_handle);
+    preRegisterBuffers(send_buffer,
+                       recv_buffer,
+                       send_bytes,
+                       recv_bytes,
+                       send_reg_handle,
+                       recv_reg_handle);
 
-    // Create guards
+    // Create guards (handles may be nullptr if registration is not needed)
     NcclRegHandleGuard sendGuard(*send_reg_handle, NcclRegHandleDeleter(getActiveCommunicator()));
     NcclRegHandleGuard recvGuard(*recv_reg_handle, NcclRegHandleDeleter(getActiveCommunicator()));
 
