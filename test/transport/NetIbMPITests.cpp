@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 #include "MPITestBase.hpp"
-#include "TestResourceGuards.hpp"
+#include "RCCLTestResourceGuards.hpp"
 #include "nccl.h"
 #include "net.h"
 #include <vector>
@@ -356,14 +356,21 @@ TEST_F(NetIbMPITest, ListenAndConnect) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     if (rank == 0) {
         EXPECT_NE(pair.recvComm, nullptr) << "Recv comm should be established";
         EXPECT_NE(pair.listenComm, nullptr) << "Listen comm should exist";
     } else {
         EXPECT_NE(pair.sendComm, nullptr) << "Send comm should be established";
     }
-
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, ConnectWithInvalidHandle) {
@@ -406,20 +413,28 @@ TEST_F(NetIbMPITest, RegisterHostMemory) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 4096;
     void* buffer = AllocateHostMemory(bufferSize);
     ASSERT_NE(buffer, nullptr);
+    BufferGuard bufferGuard(buffer, true);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
 
     EXPECT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
     EXPECT_NE(mhandle, nullptr);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     EXPECT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-
-    FreeHostMemory(buffer);
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, RegisterGpuMemory) {
@@ -438,20 +453,28 @@ TEST_F(NetIbMPITest, RegisterGpuMemory) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 4096;
     void* buffer = AllocateGpuMemory(bufferSize);
     ASSERT_NE(buffer, nullptr);
+    BufferGuard bufferGuard(buffer, false);  // false = device memory
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
 
     EXPECT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_CUDA, &mhandle), ncclSuccess);
     EXPECT_NE(mhandle, nullptr);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     EXPECT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-
-    FreeGpuMemory(buffer);
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, RegisterMemoryNullPointer) {
@@ -470,14 +493,21 @@ TEST_F(NetIbMPITest, RegisterMemoryNullPointer) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
 
     // Negative test: NULL buffer pointer
     ncclResult_t result = RegisterMemory(comm, nullptr, 4096, NCCL_PTR_HOST, &mhandle);
     EXPECT_NE(result, ncclSuccess) << "Should fail with NULL buffer";
-
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, DeregisterNullHandle) {
@@ -496,12 +526,19 @@ TEST_F(NetIbMPITest, DeregisterNullHandle) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
 
     // Edge case: Deregister NULL handle (should be no-op)
     EXPECT_EQ(DeregisterMemory(comm, nullptr), ncclSuccess);
-
-    CleanupConnection(pair, rank);
 }
 
 // ============================================================================
@@ -524,15 +561,26 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 4096;
     const int tag = 42;
 
     void* buffer = AllocateHostMemory(bufferSize);
     ASSERT_NE(buffer, nullptr);
+    BufferGuard bufferGuard(buffer, true);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
     ASSERT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     void* request = nullptr;
 
@@ -563,8 +611,6 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
     }
 
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-    FreeHostMemory(buffer);
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
@@ -583,6 +629,15 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
     int peerRank = (rank + 1) % 2;
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     // Test various sizes
     std::vector<size_t> testSizes = {1, 64, 256, 1024, 4096, 16384, 65536};
 
@@ -592,10 +647,12 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
 
         void* buffer = AllocateHostMemory(size);
         ASSERT_NE(buffer, nullptr);
+        BufferGuard bufferGuard(buffer, true);  // Local guard for loop iteration
 
         void* mhandle = nullptr;
         void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
         ASSERT_EQ(RegisterMemory(comm, buffer, size, NCCL_PTR_HOST, &mhandle), ncclSuccess);
+        NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
         void* request = nullptr;
 
@@ -654,10 +711,7 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
         }
 
         ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-        FreeHostMemory(buffer);
     }
-
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, SendRecvZeroSize) {
@@ -676,15 +730,26 @@ TEST_F(NetIbMPITest, SendRecvZeroSize) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 4096;
     const int tag = 50;
 
     void* buffer = AllocateHostMemory(bufferSize);
     ASSERT_NE(buffer, nullptr);
+    BufferGuard bufferGuard(buffer, true);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
     ASSERT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     void* request = nullptr;
 
@@ -713,8 +778,6 @@ TEST_F(NetIbMPITest, SendRecvZeroSize) {
     }
 
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-    FreeHostMemory(buffer);
-    CleanupConnection(pair, rank);
 }
 
 // ============================================================================
@@ -745,15 +808,26 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 4096;
     const int tag = 200;
 
     void* buffer = AllocateGpuMemory(bufferSize);
     ASSERT_NE(buffer, nullptr);
+    BufferGuard bufferGuard(buffer, false);  // false = device memory
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
     ASSERT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_CUDA, &mhandle), ncclSuccess);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     void* request = nullptr;
 
@@ -769,9 +843,11 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
     } else {
         // Sender
         void* hostBuffer = AllocateHostMemory(bufferSize);
+        ASSERT_NE(hostBuffer, nullptr);
+        BufferGuard hostBufferGuard(hostBuffer, true);
+
         InitializeBuffer(hostBuffer, bufferSize, rank);
         hipMemcpy(buffer, hostBuffer, bufferSize, hipMemcpyHostToDevice);
-        FreeHostMemory(hostBuffer);
 
         ASSERT_EQ(PostSend(pair.sendComm, buffer, bufferSize, tag, mhandle, &request), ncclSuccess);
     }
@@ -799,8 +875,6 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
     }
 
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-    FreeGpuMemory(buffer);
-    CleanupConnection(pair, rank);
 }
 
 // ============================================================================
@@ -901,24 +975,38 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
     int peerRank = (rank + 1) % 2;
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 4096;
     const int numTransfers = 100;
 
     void* sendBuffer = nullptr;
     void* recvBuffer = nullptr;
+    BufferGuard sendBufferGuard(nullptr, true);
+    BufferGuard recvBufferGuard(nullptr, true);
 
     if (rank == 0) {
         recvBuffer = AllocateHostMemory(bufferSize);
         ASSERT_NE(recvBuffer, nullptr);
+        recvBufferGuard.reset(recvBuffer);
     } else {
         sendBuffer = AllocateHostMemory(bufferSize);
         ASSERT_NE(sendBuffer, nullptr);
+        sendBufferGuard.reset(sendBuffer);
     }
 
     void* mhandle = nullptr;
     void* buffer = (rank == 0) ? recvBuffer : sendBuffer;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
     ASSERT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     for (int i = 0; i < numTransfers; i++) {
         const int tag = 300 + i;
@@ -1000,14 +1088,6 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
     }
 
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-
-    if (rank == 0) {
-        FreeHostMemory(recvBuffer);
-    } else {
-        FreeHostMemory(sendBuffer);
-    }
-
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, LargeTransfer) {
@@ -1026,15 +1106,26 @@ TEST_F(NetIbMPITest, LargeTransfer) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
+
     const size_t bufferSize = 16 * 1024 * 1024; // 16 MB
     const int tag = 400;
 
     void* buffer = AllocateHostMemory(bufferSize);
     ASSERT_NE(buffer, nullptr);
+    BufferGuard bufferGuard(buffer, true);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
     ASSERT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     void* request = nullptr;
 
@@ -1065,8 +1156,6 @@ TEST_F(NetIbMPITest, LargeTransfer) {
     }
 
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
-    FreeHostMemory(buffer);
-    CleanupConnection(pair, rank);
 }
 
 TEST_F(NetIbMPITest, CloseWithoutWaitingForCompletion) {
@@ -1085,6 +1174,12 @@ TEST_F(NetIbMPITest, CloseWithoutWaitingForCompletion) {
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
 
-    // Immediately close without any operations
-    CleanupConnection(pair, rank);
+    // Guard connections for automatic cleanup
+    NetConnectionGuard connGuard(net_);
+    if (rank == 0) {
+        connGuard.setRecvComm(pair.recvComm);
+        connGuard.setListenComm(pair.listenComm);
+    } else {
+        connGuard.setSendComm(pair.sendComm);
+    }
 }
