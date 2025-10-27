@@ -156,7 +156,7 @@ struct HostMemoryDeleter {
  */
 struct DeviceMemoryDeleter {
     void operator()(void* ptr) const {
-        if (ptr) hipFree(ptr);
+        if (ptr) (void)hipFree(ptr);
     }
 };
 
@@ -165,7 +165,7 @@ struct DeviceMemoryDeleter {
  */
 struct HipStreamDeleter {
     void operator()(hipStream_t stream) const {
-        if (stream) hipStreamDestroy(stream);
+        if (stream) (void)hipStreamDestroy(stream);
     }
 };
 
@@ -174,7 +174,7 @@ struct HipStreamDeleter {
  */
 struct HipEventDeleter {
     void operator()(hipEvent_t event) const {
-        if (event) hipEventDestroy(event);
+        if (event) (void)hipEventDestroy(event);
     }
 };
 
@@ -358,7 +358,7 @@ public:
             if (is_host_) {
                 free(buffer_);
             } else {
-                hipFree(buffer_);
+                (void)hipFree(buffer_);
             }
         }
     }
@@ -371,7 +371,7 @@ public:
             if (is_host_) {
                 free(buffer_);
             } else {
-                hipFree(buffer_);
+                (void)hipFree(buffer_);
             }
         }
         buffer_ = new_buffer;
@@ -395,7 +395,7 @@ public:
     BufferGuard& operator=(BufferGuard&& other) noexcept {
         if (this != &other) {
             if (owns_ && buffer_) {
-                if (is_host_) free(buffer_); else hipFree(buffer_);
+                if (is_host_) free(buffer_); else (void)hipFree(buffer_);
             }
             buffer_ = other.buffer_;
             is_host_ = other.is_host_;
