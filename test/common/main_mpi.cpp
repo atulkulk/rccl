@@ -10,17 +10,18 @@
 
 #ifdef MPI_TESTS_ENABLED
 
-#include "RCCLMPIEnvironment.hpp"
-#include <array>
-#include <atomic>
-#include <fcntl.h>
-#include <memory>
-#include <mpi.h>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <unistd.h>
+    #include "MPITestBase.hpp" // For TEST_INIT macro
+    #include "RCCLMPIEnvironment.hpp"
+    #include <array>
+    #include <atomic>
+    #include <fcntl.h>
+    #include <memory>
+    #include <mpi.h>
+    #include <optional>
+    #include <string>
+    #include <string_view>
+    #include <thread>
+    #include <unistd.h>
 
 namespace
 {
@@ -246,16 +247,10 @@ struct RankLogConfig
 
     // Rank 0 with per-rank logging: Output to BOTH console AND log file (tee behavior)
     // Print banner before redirection
-    std::printf("\n");
-    std::printf("========================================================================\n");
-    std::printf("  Per-Rank Logging ENABLED (RCCL_MPI_LOG_ALL_RANKS=1)\n");
-    std::printf("========================================================================\n");
-    std::printf("  Rank 0     : Output to BOTH console AND %s\n", log_filename.c_str());
-    std::printf("  Ranks 1-N  : Output redirected to rccl_test_rank_<N>.log\n");
-    std::printf("  Location   : Log files created in current working directory\n");
-    std::printf("========================================================================\n");
-    std::printf("\n");
-    std::fflush(stdout);
+    TEST_INFO("Per-Rank Logging ENABLED (RCCL_MPI_LOG_ALL_RANKS=1)");
+    TEST_INFO("Rank 0     : Output to BOTH console AND %s", log_filename.c_str());
+    TEST_INFO("Ranks 1-N  : Output redirected to rccl_test_rank_<N>.log");
+    TEST_INFO("Location   : Log files created in current working directory");
 
     // Save original stdout/stderr for tee thread
     config.saved_stdout = FileDescriptor{::dup(STDOUT_FILENO)};
@@ -368,10 +363,7 @@ int main(int argc, char* argv[])
     // Print initialization message (banner already printed by setup_rank_logging for rank 0)
     if(world_rank == 0 && !per_rank_logging_enabled)
     {
-        std::printf("Rank %d: MPI initialized - World size: %d, Thread support: %d\n",
-                    world_rank,
-                    world_size,
-                    provided);
+        TEST_INFO("MPI initialized - World size: %d, Thread support: %d", world_size, provided);
     }
 
     // Initialize Google Test
