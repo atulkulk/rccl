@@ -24,9 +24,231 @@
 #ifdef MPI_TESTS_ENABLED
     #include "RCCLMPIEnvironment.hpp"
     #include "rccl/rccl.h"
+    #include "utils.h" // For getHostName() from RCCL
     #include <cstdio>
+    #include <cstdlib>
+    #include <cstring>
     #include <hip/hip_runtime.h>
     #include <mpi.h>
+    #include <string>
+
+/**
+ * @brief Test logging macros that respect NCCL_DEBUG environment variable
+ *
+ * These macros mirror NCCL's debug levels and provide conditional logging for MPI tests:
+ * - TEST_NONE: No logging (always disabled)
+ * - TEST_VERSION: Version information (enabled when NCCL_DEBUG=VERSION or higher)
+ * - TEST_WARN: Warning messages (enabled when NCCL_DEBUG=WARN or higher)
+ * - TEST_INFO: Informational messages (enabled when NCCL_DEBUG=INFO or higher)
+ * - TEST_ABORT: Abort-level messages (enabled when NCCL_DEBUG=ABORT or higher)
+ * - TEST_TRACE: Trace-level messages (enabled when NCCL_DEBUG=TRACE)
+ *
+ * Debug levels (from least to most verbose):
+ *   NONE < VERSION < WARN < INFO < ABORT < TRACE
+ *
+ * Usage (hostname and rank are added automatically):
+ *   TEST_VERSION("Test suite version: %s", version);
+ *   TEST_WARN("Unexpected condition detected");
+ *   TEST_INFO("Starting test with buffer size %zu", size);
+ *   TEST_TRACE("Entering function %s", __func__);
+ */
+
+// Forward declaration of NCCL's global debug level
+extern int ncclDebugLevel;
+
+// Helper function to get numeric debug level from RCCL's internal variable
+// Uses RCCL's ncclDebugLevel which is set during RCCL initialization from NCCL_DEBUG env var
+// This ensures consistency with RCCL library's own logging
+inline int getTestDebugLevel()
+{
+    // ncclDebugLevel values (from NCCL's ncclDebugLogLevel enum):
+    // NCCL_LOG_NONE = 0, NCCL_LOG_VERSION = 1, NCCL_LOG_WARN = 2,
+    // NCCL_LOG_INFO = 3, NCCL_LOG_ABORT = 4, NCCL_LOG_TRACE = 5
+    return ncclDebugLevel;
+}
+
+// Helper function to get MPI rank for logging
+inline int getTestMpiRank()
+{
+    int rank = -1;
+    #ifdef MPI_TESTS_ENABLED
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    #endif
+    return rank;
+}
+
+// Helper function to get hostname for logging (uses RCCL's getHostName)
+inline const char* getTestHostname()
+{
+    static char hostname[256] = {0};
+    static bool initialized   = false;
+
+    if(!initialized)
+    {
+        // Use RCCL's getHostName() which handles hostname retrieval and uses '.' as delimiter
+        // This matches how RCCL's debug.cc initializes its hostname
+        if(getHostName(hostname, sizeof(hostname), '.') != ncclSuccess)
+        {
+            strncpy(hostname, "unknown", sizeof(hostname) - 1);
+        }
+        initialized = true;
+    }
+    return hostname;
+}
+
+// Helper function to check if running in multi-node configuration
+inline bool isMultiNodeTest()
+{
+    static int cached_result = -1; // -1 = not computed, 0 = single node, 1 = multi-node
+
+    if(cached_result != -1)
+    {
+        return cached_result == 1;
+    }
+
+    #ifdef MPI_TESTS_ENABLED
+    int world_size = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    if(world_size <= 1)
+    {
+        cached_result = 0; // Single process = single node
+        return false;
+    }
+
+    // Split by shared memory to detect nodes
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &node_comm);
+
+    int node_size = 0;
+    MPI_Comm_size(node_comm, &node_size);
+    MPI_Comm_free(&node_comm);
+
+    // If node_size < world_size, we have multiple nodes
+    cached_result = (node_size < world_size) ? 1 : 0;
+    return cached_result == 1;
+    #else
+    cached_result = 0;
+    return false;
+    #endif
+}
+
+    // TEST_NONE: Never logs
+    #define TEST_NONE(...) \
+        do                 \
+        {                  \
+        }                  \
+        while(0)
+
+    // TEST_VERSION: Logs when NCCL_DEBUG=VERSION or higher
+    #define TEST_VERSION(...)                                                 \
+        do                                                                    \
+        {                                                                     \
+            if(getTestDebugLevel() >= 1)                                      \
+            {                                                                 \
+                int rank = getTestMpiRank();                                  \
+                if(isMultiNodeTest())                                         \
+                {                                                             \
+                    printf("%s:[%d] TEST VERSION ", getTestHostname(), rank); \
+                }                                                             \
+                else                                                          \
+                {                                                             \
+                    printf("[%d] TEST VERSION ", rank);                       \
+                }                                                             \
+                printf(__VA_ARGS__);                                          \
+                printf("\n");                                                 \
+                fflush(stdout);                                               \
+            }                                                                 \
+        }                                                                     \
+        while(0)
+
+    // TEST_WARN: Logs when NCCL_DEBUG=WARN or higher
+    #define TEST_WARN(...)                                                 \
+        do                                                                 \
+        {                                                                  \
+            if(getTestDebugLevel() >= 2)                                   \
+            {                                                              \
+                int rank = getTestMpiRank();                               \
+                if(isMultiNodeTest())                                      \
+                {                                                          \
+                    printf("%s:[%d] TEST WARN ", getTestHostname(), rank); \
+                }                                                          \
+                else                                                       \
+                {                                                          \
+                    printf("[%d] TEST WARN ", rank);                       \
+                }                                                          \
+                printf(__VA_ARGS__);                                       \
+                printf("\n");                                              \
+                fflush(stdout);                                            \
+            }                                                              \
+        }                                                                  \
+        while(0)
+
+    // TEST_INFO: Logs when NCCL_DEBUG=INFO or higher
+    #define TEST_INFO(...)                                                 \
+        do                                                                 \
+        {                                                                  \
+            if(getTestDebugLevel() >= 3)                                   \
+            {                                                              \
+                int rank = getTestMpiRank();                               \
+                if(isMultiNodeTest())                                      \
+                {                                                          \
+                    printf("%s:[%d] TEST INFO ", getTestHostname(), rank); \
+                }                                                          \
+                else                                                       \
+                {                                                          \
+                    printf("[%d] TEST INFO ", rank);                       \
+                }                                                          \
+                printf(__VA_ARGS__);                                       \
+                printf("\n");                                              \
+                fflush(stdout);                                            \
+            }                                                              \
+        }                                                                  \
+        while(0)
+
+    // TEST_ABORT: Logs when NCCL_DEBUG=ABORT or higher
+    #define TEST_ABORT(...)                                                 \
+        do                                                                  \
+        {                                                                   \
+            if(getTestDebugLevel() >= 4)                                    \
+            {                                                               \
+                int rank = getTestMpiRank();                                \
+                if(isMultiNodeTest())                                       \
+                {                                                           \
+                    printf("%s:[%d] TEST ABORT ", getTestHostname(), rank); \
+                }                                                           \
+                else                                                        \
+                {                                                           \
+                    printf("[%d] TEST ABORT ", rank);                       \
+                }                                                           \
+                printf(__VA_ARGS__);                                        \
+                printf("\n");                                               \
+                fflush(stdout);                                             \
+            }                                                               \
+        }                                                                   \
+        while(0)
+
+    // TEST_TRACE: Logs when NCCL_DEBUG=TRACE
+    #define TEST_TRACE(...)                                                 \
+        do                                                                  \
+        {                                                                   \
+            if(getTestDebugLevel() >= 5)                                    \
+            {                                                               \
+                int rank = getTestMpiRank();                                \
+                if(isMultiNodeTest())                                       \
+                {                                                           \
+                    printf("%s:[%d] TEST TRACE ", getTestHostname(), rank); \
+                }                                                           \
+                else                                                        \
+                {                                                           \
+                    printf("[%d] TEST TRACE ", rank);                       \
+                }                                                           \
+                printf(__VA_ARGS__);                                        \
+                printf("\n");                                               \
+                fflush(stdout);                                             \
+            }                                                               \
+        }                                                                   \
+        while(0)
 
 /**
  * @namespace MPITestConstants

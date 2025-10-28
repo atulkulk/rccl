@@ -4,8 +4,8 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "TransportMPIBase.hpp"
 #include "RCCLTestResourceGuards.hpp"
+#include "TransportMPIBase.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -105,7 +105,7 @@ protected:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: P2P buffers allocated successfully\n", config.world_rank);
+            TEST_INFO("P2P buffers allocated successfully");
         }
     }
 
@@ -133,7 +133,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing p2pCanConnect...\n", config.world_rank);
+            TEST_INFO("Testing p2pCanConnect");
         }
 
         // Validate preconditions
@@ -156,7 +156,7 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: p2pCanConnect result: %d\n", config.world_rank, can_connect);
+            TEST_INFO("p2pCanConnect result: %d", can_connect);
         }
 
         // Synchronize the stream to ensure all operations complete
@@ -169,7 +169,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing P2P setup...\n", config.world_rank);
+            TEST_INFO("Testing P2P setup");
         }
 
         ncclConnect peer_connect_info{};
@@ -200,8 +200,7 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Waiting for proxy threads to complete initialization...\n",
-                   config.world_rank);
+            TEST_INFO("Waiting for proxy threads to complete initialization");
         }
 
         // Second barrier to ensure all proxy threads are ready
@@ -209,7 +208,7 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Proxy threads ready, proceeding with tests\n", config.world_rank);
+            TEST_INFO("Proxy threads ready, proceeding with tests");
         }
     }
 
@@ -218,7 +217,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing P2P connect...\n", config.world_rank);
+            TEST_INFO("Testing P2P connect");
         }
 
         // Validate preconditions
@@ -334,7 +333,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing P2P data transfer...\n", config.world_rank);
+            TEST_INFO("Testing P2P data transfer...");
         }
 
         // Initialize host data vectors
@@ -363,11 +362,10 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Successfully %s data %s rank %d\n",
-                   config.world_rank,
-                   p2p_config.is_sender ? "sent" : "received",
-                   p2p_config.is_sender ? "to" : "from",
-                   config.peer_rank);
+            TEST_INFO("Successfully %s data %s rank %d",
+                      p2p_config.is_sender ? "sent" : "received",
+                      p2p_config.is_sender ? "to" : "from",
+                      config.peer_rank);
         }
 
         ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
@@ -401,15 +399,14 @@ public:
 
             if(config.world_rank == 0)
             {
-                printf("Rank %d: P2P data transfer validation successful - "
-                       "received correct data from rank %d\n",
-                       config.world_rank,
-                       config.peer_rank);
+                TEST_INFO(
+                    "P2P data transfer validation successful - received correct data from rank %d",
+                    config.peer_rank);
             }
         }
         else if(config.world_rank == 0)
         {
-            printf("Rank %d: Send operation completed successfully\n", config.world_rank);
+            TEST_INFO("Send operation completed successfully");
         }
     }
 
@@ -418,15 +415,13 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing P2P cleanup...\n", config.world_rank);
+            TEST_INFO("Testing P2P cleanup");
         }
 
         // Ensure all stream operations complete before cleanup
         if(auto err = syncStream(config.stream, config.world_rank); err != hipSuccess)
         {
-            printf("Rank %d: Warning - Stream sync failed during cleanup: %s\n",
-                   config.world_rank,
-                   hipGetErrorString(err));
+            TEST_WARN("Stream sync failed during cleanup: %s", hipGetErrorString(err));
             // Don't return error - continue with cleanup
         }
 
@@ -450,9 +445,7 @@ public:
     {
         if(RCCLMPIEnvironment::world_rank == 0)
         {
-            printf("Rank %d: Testing proxyConnect and proxyProgress with CE memcpy "
-                   "support...\n",
-                   RCCLMPIEnvironment::world_rank);
+            TEST_INFO("Testing proxyConnect and proxyProgress with CE memcpy support...");
         }
 
         // Check if NCCL_P2P_USE_CUDA_MEMCPY is set externally - skip test if not
@@ -461,20 +454,14 @@ public:
         {
             if(RCCLMPIEnvironment::world_rank == 0)
             {
-                printf("Rank %d: Skipping CE memcpy test - NCCL_P2P_USE_CUDA_MEMCPY "
-                       "not set to '1'\n",
-                       RCCLMPIEnvironment::world_rank);
-                printf("Rank %d: To enable this test, set: export "
-                       "NCCL_P2P_USE_CUDA_MEMCPY=1\n",
-                       RCCLMPIEnvironment::world_rank);
+                TEST_INFO("Skipping CE memcpy test - NCCL_P2P_USE_CUDA_MEMCPY not set to '1'");
+                TEST_INFO("To enable this test, set: export NCCL_P2P_USE_CUDA_MEMCPY=1");
             } // Skip test gracefully
         }
 
         if(RCCLMPIEnvironment::world_rank == 0)
         {
-            printf("Rank %d: Found NCCL_P2P_USE_CUDA_MEMCPY=1 - CE memcpy mode "
-                   "enabled\n",
-                   RCCLMPIEnvironment::world_rank);
+            TEST_INFO("Found NCCL_P2P_USE_CUDA_MEMCPY=1 - CE memcpy mode enabled");
         }
 
         // Create a separate NCCL communicator with memcpy mode enabled
@@ -511,9 +498,7 @@ public:
 
         if(RCCLMPIEnvironment::world_rank == 0)
         {
-            printf("Rank %d: Initialized communicator with CE memcpy mode (enables "
-                   "proxyConnect)\n",
-                   RCCLMPIEnvironment::world_rank);
+            TEST_INFO("Initialized communicator with CE memcpy mode (enables proxyConnect)");
         }
 
         // Test with a smaller buffer size to ensure successful operations
@@ -550,8 +535,7 @@ public:
 
         if(RCCLMPIEnvironment::world_rank == 0)
         {
-            printf("Rank %d: Allocated buffers for CE memcpy testing\n",
-                   RCCLMPIEnvironment::world_rank);
+            TEST_INFO("Allocated buffers for CE memcpy testing");
         }
 
         // Test: AllReduce operation - this triggers proxyConnect and proxyProgress
@@ -570,9 +554,7 @@ public:
             << ncclGetErrorString(allreduce_result) << ")";
         if(allreduce_result == ncclSuccess && RCCLMPIEnvironment::world_rank == 0)
         {
-            printf("Rank %d: AllReduce with CE memcpy successful (exercises "
-                   "proxyProgress)\n",
-                   RCCLMPIEnvironment::world_rank);
+            TEST_INFO("AllReduce with CE memcpy successful (exercises proxyProgress)");
         }
 
         // Synchronize stream using getActiveStream()
@@ -584,22 +566,12 @@ public:
 
         if(RCCLMPIEnvironment::world_rank == 0)
         {
-            printf("Rank %d: CE memcpy proxy test completed successfully\n",
-                   RCCLMPIEnvironment::world_rank);
-            printf("Rank %d: Summary of CE memcpy proxy functions exercised:\n",
-                   RCCLMPIEnvironment::world_rank);
-            printf("Rank %d:   - proxyConnect: Called with CE memcpy setup "
-                   "(p2pSendProxyConnect)\n",
-                   RCCLMPIEnvironment::world_rank);
-            printf("Rank %d:   - proxyProgress: Called during operations "
-                   "(p2pSendProxyProgress)\n",
-                   RCCLMPIEnvironment::world_rank);
-            printf("Rank %d:   - CE memcpy features: CUDA streams, events, shared "
-                   "memory\n",
-                   RCCLMPIEnvironment::world_rank);
-            printf("Rank %d:   - Proxy resource management: Buffer allocation and "
-                   "cleanup\n",
-                   RCCLMPIEnvironment::world_rank);
+            TEST_INFO("CE memcpy proxy test completed successfully");
+            TEST_INFO("Summary of CE memcpy proxy functions exercised:");
+            TEST_INFO("  - proxyConnect: Called with CE memcpy setup (p2pSendProxyConnect)");
+            TEST_INFO("  - proxyProgress: Called during operations (p2pSendProxyProgress)");
+            TEST_INFO("  - CE memcpy features: CUDA streams, events, shared memory");
+            TEST_INFO("  - Proxy resource management: Buffer allocation and cleanup");
         }
     }
 
@@ -608,8 +580,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing P2P IPC buffer registration via ncclSend/ncclRecv...\n",
-                   config.world_rank);
+            TEST_INFO("Testing P2P IPC buffer registration via ncclSend/ncclRecv...");
         }
 
         // Step 1: Allocate and initialize test buffers
@@ -631,13 +602,13 @@ public:
 
         // Guard registration handles for automatic cleanup
         NcclRegHandleGuard sendRegGuard(send_reg_handle,
-                                         NcclRegHandleDeleter(getActiveCommunicator()));
+                                        NcclRegHandleDeleter(getActiveCommunicator()));
         NcclRegHandleGuard recvRegGuard(recv_reg_handle,
-                                         NcclRegHandleDeleter(getActiveCommunicator()));
+                                        NcclRegHandleDeleter(getActiveCommunicator()));
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Pre-registered buffers with ncclCommRegister\n", config.world_rank);
+            TEST_INFO("Pre-registered buffers with ncclCommRegister");
         }
 
         // Step 3: Initialize send buffer with test pattern
@@ -663,10 +634,9 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Using ring topology - recv from rank %d, send to rank %d\n",
-                   config.world_rank,
-                   recv_peer,
-                   send_peer);
+            TEST_INFO("Using ring topology - recv from rank %d, send to rank %d",
+                      recv_peer,
+                      send_peer);
         }
 
         // Step 5: Perform ncclSend/ncclRecv which internally triggers ncclRegisterP2pIpcBuffer
@@ -710,8 +680,7 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: ncclSend/ncclRecv operations completed successfully\n",
-                   config.world_rank);
+            TEST_INFO("ncclSend/ncclRecv operations completed successfully");
         }
 
         // Step 7: Verify received data correctness
@@ -731,11 +700,10 @@ public:
             if(std::abs(host_recv_data[i] - expected) > 1e-5)
             {
                 data_correct = false;
-                printf("Rank %d: Data mismatch at index %zu: expected %f, got %f\n",
-                       config.world_rank,
-                       i,
-                       expected,
-                       host_recv_data[i]);
+                TEST_INFO("Data mismatch at index %zu: expected %f, got %f",
+                          i,
+                          expected,
+                          host_recv_data[i]);
                 break;
             }
         }
@@ -744,15 +712,12 @@ public:
 
         if(data_correct && config.world_rank == 0)
         {
-            printf("Rank %d: Data verification passed - received correct data from rank %d\n",
-                   config.world_rank,
-                   recv_peer);
+            TEST_INFO("Data verification passed - received correct data from rank %d", recv_peer);
         }
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: P2P Send/Recv test with IPC registration completed successfully\n",
-                   config.world_rank);
+            TEST_INFO("P2P Send/Recv test with IPC registration completed successfully");
         }
     }
 
@@ -781,9 +746,9 @@ public:
 
         // Guard registration handles for automatic cleanup
         NcclRegHandleGuard sendRegGuard(send_reg_handle,
-                                         NcclRegHandleDeleter(getActiveCommunicator()));
+                                        NcclRegHandleDeleter(getActiveCommunicator()));
         NcclRegHandleGuard recvRegGuard(recv_reg_handle,
-                                         NcclRegHandleDeleter(getActiveCommunicator()));
+                                        NcclRegHandleDeleter(getActiveCommunicator()));
 
         // Execute ncclSend/ncclRecv
         const size_t count = kLargeBufferSize / sizeof(float);
@@ -816,8 +781,7 @@ public:
 
         // Synchronize stream (GPU memory access via IPC happens here)
         ASSERT_EQ(hipSuccess, syncStream(getActiveStream(), config.world_rank))
-            << "Rank " << config.world_rank
-            << ": Stream sync failed - try NCCL_P2P_DISABLE=1";
+            << "Rank " << config.world_rank << ": Stream sync failed - try NCCL_P2P_DISABLE=1";
 
         // Verify data correctness
         std::vector<float> host_recv_data(count);
@@ -834,7 +798,6 @@ public:
             const float expected = static_cast<float>(peer_rank_verify * 1000 + i);
             EXPECT_FLOAT_EQ(expected, host_recv_data[i]) << "Data mismatch at index " << i;
         }
-
     }
 
     // Test ncclIpcGraphRegisterBuffer API with multiple peers
@@ -842,7 +805,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing ncclIpcGraphRegisterBuffer API...\n", config.world_rank);
+            TEST_INFO("Testing ncclIpcGraphRegisterBuffer API...");
         }
 
         // Allocate and initialize test buffer using helper
@@ -864,15 +827,13 @@ public:
 
         // Guard registration handles for automatic cleanup
         NcclRegHandleGuard sendRegGuard(send_reg_handle,
-                                         NcclRegHandleDeleter(getActiveCommunicator()));
+                                        NcclRegHandleDeleter(getActiveCommunicator()));
         NcclRegHandleGuard recvRegGuard(recv_reg_handle,
-                                         NcclRegHandleDeleter(getActiveCommunicator()));
+                                        NcclRegHandleDeleter(getActiveCommunicator()));
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Pre-registered buffers (size: %zu bytes)\n",
-                   config.world_rank,
-                   kLargeBufferSize);
+            TEST_INFO("Pre-registered buffers (size: %zu bytes)", kLargeBufferSize);
         }
 
         // Set up peer ranks array for IPC registration
@@ -907,17 +868,12 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: ncclIpcGraphRegisterBuffer completed successfully\n",
-                   config.world_rank);
-            printf("Rank %d:   Registration flag: %d\n", config.world_rank, reg_buf_flag);
-            printf("Rank %d:   Buffer offset: %lu\n", config.world_rank, offset);
-            printf("Rank %d:   Number of peers: %d\n", config.world_rank, n_peers);
-            printf("Rank %d:   Cleanup queue elements: %d\n",
-                   config.world_rank,
-                   n_cleanup_queue_elts);
-            printf("Rank %d:   Remote addresses pointer: %p\n",
-                   config.world_rank,
-                   static_cast<void*>(peer_rmt_addrs));
+            TEST_INFO("ncclIpcGraphRegisterBuffer completed successfully");
+            TEST_INFO("  Registration flag: %d", reg_buf_flag);
+            TEST_INFO("  Buffer offset: %lu", offset);
+            TEST_INFO("  Number of peers: %d", n_peers);
+            TEST_INFO("  Cleanup queue elements: %d", n_cleanup_queue_elts);
+            TEST_INFO("  Remote addresses pointer: %p", static_cast<void*>(peer_rmt_addrs));
         }
 
         // Synchronize all ranks after registration
@@ -960,8 +916,7 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Communication with IPC-registered buffer completed\n",
-                   config.world_rank);
+            TEST_INFO("Communication with IPC-registered buffer completed");
         }
 
         // Verify received data
@@ -979,11 +934,10 @@ public:
             if(std::abs(host_recv_data[i] - expected) > 1e-5)
             {
                 data_correct = false;
-                printf("Rank %d: Data mismatch at index %zu: expected %f, got %f\n",
-                       config.world_rank,
-                       i,
-                       expected,
-                       host_recv_data[i]);
+                TEST_INFO("Data mismatch at index %zu: expected %f, got %f",
+                          i,
+                          expected,
+                          host_recv_data[i]);
                 break;
             }
         }
@@ -993,13 +947,12 @@ public:
 
         if(data_correct && config.world_rank == 0)
         {
-            printf("Rank %d: IPC graph buffer data verification passed\n", config.world_rank);
+            TEST_INFO("IPC graph buffer data verification passed");
         }
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: ncclIpcGraphRegisterBuffer test completed successfully\n",
-                   config.world_rank);
+            TEST_INFO("ncclIpcGraphRegisterBuffer test completed successfully");
         }
 
         // Synchronize before returning
@@ -1025,9 +978,7 @@ TEST_F(P2pMPITest, P2pWorkflow)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting comprehensive P2P workflow test with %d processes\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Starting comprehensive P2P workflow test with %d processes", config.world_size);
     }
 
     testP2PCanConnect();
@@ -1060,10 +1011,8 @@ TEST_F(P2pMPITest, P2pWithMemcpyTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting proxy connect/progress test with memcpy enabled "
-               "(%d processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Starting proxy connect/progress test with memcpy enabled (%d processes)",
+                  config.world_size);
     }
 
     // This test specifically exercises proxyConnect and proxyProgress when
@@ -1073,8 +1022,7 @@ TEST_F(P2pMPITest, P2pWithMemcpyTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Proxy connect/progress memcpy test completed successfully\n",
-               config.world_rank);
+        TEST_INFO("Proxy connect/progress memcpy test completed successfully");
     }
 }
 
@@ -1095,21 +1043,17 @@ TEST_F(P2pMPITest, P2pSendRecvRegistrationTest)
     // expected
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Skipping P2P Send/Recv with IPC registration test\n"
-               "Rank %d: This test will be enabled once IPC buffer registration "
-               "feature works as expected\n",
-               config.world_rank,
-               config.world_rank);
+        TEST_INFO("Skipping P2P Send/Recv with IPC registration test");
+        TEST_INFO(
+            "This test will be enabled once IPC buffer registration feature works as expected");
     }
     GTEST_SKIP() << "Test disabled - enable once IPC buffer registration feature "
                     "works as expected";
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting P2P Send/Recv with IPC registration test (%d "
-               "processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Starting P2P Send/Recv with IPC registration test (%d processes)",
+                  config.world_size);
     }
 
     // Synchronize all ranks before starting test
@@ -1121,9 +1065,7 @@ TEST_F(P2pMPITest, P2pSendRecvRegistrationTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: P2P Send/Recv with IPC registration test completed "
-               "successfully\n",
-               config.world_rank);
+        TEST_INFO("P2P Send/Recv with IPC registration test completed successfully");
     }
 }
 
@@ -1145,10 +1087,8 @@ TEST_F(P2pMPITest, P2pRegistrationBasicBuffersTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting basic P2P IPC buffer registration test (%d "
-               "processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Starting basic P2P IPC buffer registration test (%d processes)",
+                  config.world_size);
     }
 
     // Synchronize all ranks before starting test
@@ -1158,9 +1098,7 @@ TEST_F(P2pMPITest, P2pRegistrationBasicBuffersTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Basic P2P IPC buffer registration test completed "
-               "successfully\n",
-               config.world_rank);
+        TEST_INFO("Basic P2P IPC buffer registration test completed successfully");
     }
 }
 
@@ -1180,10 +1118,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NullBufferPointer)
 
     if(config.world_rank == 0)
     {
-        printf(
-            "Rank %d: Testing ncclRegisterP2pIpcBuffer with null buffer pointer (%d processes)\n",
-            config.world_rank,
-            config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with null buffer pointer (%d processes)",
+                  config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1205,10 +1141,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NullBufferPointer)
     // Expected behavior: Should handle gracefully (likely return error or skip registration)
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Null buffer test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Null buffer test - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that null buffer doesn't crash and flag is appropriately set
@@ -1236,9 +1171,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_ZeroSize)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with zero size buffer (%d processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with zero size buffer (%d processes)",
+                  config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1269,10 +1203,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_ZeroSize)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Zero size buffer test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Zero size buffer test - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that zero size is handled appropriately (should not succeed in registration)
@@ -1305,10 +1238,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_VerySmallBuffer)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with very small buffer (64 bytes) (%d "
-               "processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO(
+            "Testing ncclRegisterP2pIpcBuffer with very small buffer (64 bytes) (%d processes)",
+            config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1340,10 +1272,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_VerySmallBuffer)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Small buffer (64B) test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Small buffer (64B) test - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that small buffer registration succeeds
@@ -1377,10 +1308,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_LargeBuffer)
 
     if(config.world_rank == 0)
     {
-        printf(
-            "Rank %d: Testing ncclRegisterP2pIpcBuffer with large buffer (256 MB) (%d processes)\n",
-            config.world_rank,
-            config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with large buffer (256 MB) (%d processes)",
+                  config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1415,10 +1344,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_LargeBuffer)
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Large buffer (256MB) test - Result: %s (regFlag=%d)\n",
-                   config.world_rank,
-                   ncclGetErrorString(result),
-                   ipc_reg_flag);
+            TEST_INFO("Large buffer (256MB) test - Result: %s (regFlag=%d)",
+                      ncclGetErrorString(result),
+                      ipc_reg_flag);
         }
 
         // Validate that large buffer registration succeeds (since allocation succeeded)
@@ -1437,9 +1365,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_LargeBuffer)
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Large buffer (256MB) test - Skipped (allocation failed: %s)\n",
-                   config.world_rank,
-                   hipGetErrorString(hip_result));
+            TEST_INFO("Large buffer (256MB) test - Skipped (allocation failed: %s)",
+                      hipGetErrorString(hip_result));
         }
         GTEST_SKIP() << "Large buffer allocation failed";
     }
@@ -1463,15 +1390,12 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_InvalidPeerRank)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with boundary peer rank (%d processes)\n",
-               config.world_rank,
-               config.world_size);
-        printf("Rank %d: NOTE: Testing with last valid peer rank (world_size - 1) instead of "
-               "invalid rank\n",
-               config.world_rank);
-        printf("Rank %d:       Out-of-bounds peer ranks cause segfault - implementation should "
-               "validate inputs\n",
-               config.world_rank);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with boundary peer rank (%d processes)",
+                  config.world_size);
+        TEST_INFO(
+            "NOTE: Testing with last valid peer rank (world_size - 1) instead of invalid rank");
+        TEST_INFO("      Out-of-bounds peer ranks cause segfault - implementation should validate "
+                  "inputs");
     }
 
     auto* comm = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1502,11 +1426,10 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_InvalidPeerRank)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Boundary peer rank (%d) test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               boundary_peer,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Boundary peer rank (%d) test - Result: %s (regFlag=%d)",
+                  boundary_peer,
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that boundary peer rank is handled correctly
@@ -1540,14 +1463,11 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NegativePeerRank)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with peer rank 0 (%d processes)\n",
-               config.world_rank,
-               config.world_size);
-        printf("Rank %d: NOTE: Testing with peer rank 0 instead of negative rank\n",
-               config.world_rank);
-        printf("Rank %d:       Negative peer ranks cause segfault - implementation should validate "
-               "inputs\n",
-               config.world_rank);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with peer rank 0 (%d processes)",
+                  config.world_size);
+        TEST_INFO("NOTE: Testing with peer rank 0 instead of negative rank");
+        TEST_INFO(
+            "      Negative peer ranks cause segfault - implementation should validate inputs");
     }
 
     auto* comm = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1578,11 +1498,10 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NegativePeerRank)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Lower boundary peer rank (%d) test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               lower_boundary_peer,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Lower boundary peer rank (%d) test - Result: %s (regFlag=%d)",
+                  lower_boundary_peer,
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that peer rank 0 (lower boundary) is handled correctly
@@ -1616,10 +1535,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with same buffer multiple times (%d "
-               "processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with same buffer multiple times (%d processes)",
+                  config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1649,10 +1566,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: First registration - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result1),
-               ipc_reg_flag_1);
+        TEST_INFO("First registration - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result1),
+                  ipc_reg_flag_1);
     }
 
     // Second registration of same buffer
@@ -1668,10 +1584,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Second registration (same buffer) - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result2),
-               ipc_reg_flag_2);
+        TEST_INFO("Second registration (same buffer) - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result2),
+                  ipc_reg_flag_2);
     }
 
     // Validate both registrations - API should handle duplicate registration gracefully
@@ -1706,9 +1621,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SelfPeerRank)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with self peer rank (%d processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with self peer rank (%d processes)",
+                  config.world_size);
     }
 
     auto* comm = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1737,10 +1651,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SelfPeerRank)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Self peer rank test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Self peer rank test - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate self peer rank handling - should handle gracefully
@@ -1773,10 +1686,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_UnalignedBufferAddress)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with unaligned buffer address (%d "
-               "processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with unaligned buffer address (%d processes)",
+                  config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1810,10 +1721,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_UnalignedBufferAddress)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Unaligned buffer test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Unaligned buffer test - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that ncclRegFind can locate the registered buffer even with unaligned pointer
@@ -1847,10 +1757,8 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NonPowerOfTwoSize)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Testing ncclRegisterP2pIpcBuffer with non-power-of-2 buffer size (%d "
-               "processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Testing ncclRegisterP2pIpcBuffer with non-power-of-2 buffer size (%d processes)",
+                  config.world_size);
     }
 
     auto*     comm      = reinterpret_cast<ncclComm*>(getActiveCommunicator());
@@ -1881,10 +1789,9 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NonPowerOfTwoSize)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Non-power-of-2 size (12345 bytes) test - Result: %s (regFlag=%d)\n",
-               config.world_rank,
-               ncclGetErrorString(result),
-               ipc_reg_flag);
+        TEST_INFO("Non-power-of-2 size (12345 bytes) test - Result: %s (regFlag=%d)",
+                  ncclGetErrorString(result),
+                  ipc_reg_flag);
     }
 
     // Validate that non-power-of-2 sizes are supported
@@ -1920,28 +1827,23 @@ TEST_F(P2pMPITest, IpcGraphRegisterBufferTest)
     // expected
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Skipping P2P Send/Recv with IPC registration test\n"
-               "Rank %d: This test will be enabled once IPC buffer registration "
-               "feature works as expected\n",
-               config.world_rank,
-               config.world_rank);
+        TEST_INFO("Skipping P2P Send/Recv with IPC registration test");
+        TEST_INFO(
+            "This test will be enabled once IPC buffer registration feature works as expected");
     }
     GTEST_SKIP() << "Test disabled - enable once IPC buffer registration feature "
                     "works as expected";
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting ncclIpcGraphRegisterBuffer test (%d processes)\n",
-               config.world_rank,
-               config.world_size);
+        TEST_INFO("Starting ncclIpcGraphRegisterBuffer test (%d processes)", config.world_size);
     }
 
     testIpcGraphRegisterBuffer();
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: ncclIpcGraphRegisterBuffer test completed successfully\n",
-               config.world_rank);
+        TEST_INFO("ncclIpcGraphRegisterBuffer test completed successfully");
     }
 }
 

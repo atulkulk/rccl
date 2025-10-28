@@ -4,8 +4,8 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "TransportMPIBase.hpp"
 #include "RCCLTestResourceGuards.hpp"
+#include "TransportMPIBase.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -392,9 +392,8 @@ public:
         {
             if(RCCLMPIEnvironment::world_rank == 0)
             {
-                std::fprintf(stdout,
-                             "Skipping CE memcpy test - NCCL_SHM_USE_CUDA_MEMCPY not set to '1'\n"
-                             "To enable this test, set: export NCCL_SHM_USE_CUDA_MEMCPY=1\n");
+                TEST_INFO("Skipping CE memcpy test - NCCL_SHM_USE_CUDA_MEMCPY not set to '1'");
+                TEST_INFO("To enable this test, set: export NCCL_SHM_USE_CUDA_MEMCPY=1");
             } // Skip test gracefully
         }
 
@@ -616,13 +615,10 @@ public:
                     errors++;
                     if(errors <= 10)
                     { // Print first 10 errors
-                        std::fprintf(stdout,
-                                     "Rank %d: Validation error at index %zu: expected=%.0f, "
-                                     "received=%.0f\n",
-                                     config.world_rank,
-                                     i,
-                                     expected,
-                                     received);
+                        TEST_WARN("Validation error at index %zu: expected=%.0f, received=%.0f",
+                                  i,
+                                  expected,
+                                  received);
                     }
                 }
             }
@@ -649,8 +645,8 @@ public:
 
             // Allocate with local guards (store_in_base=false)
             // Guards will cleanup at end of loop iteration
-            auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(
-                &send_buff, &recv_buff, size, size, false);
+            auto [sendGuard, recvGuard]
+                = allocateAndInitBuffersGuarded(&send_buff, &recv_buff, size, size, false);
 
             // Verify buffers are accessible
             EXPECT_NE(send_buff, nullptr) << "Rank " << config.world_rank << ": send_buff is null";
@@ -768,7 +764,7 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
     void*        send_buffer = nullptr;
     void*        recv_buffer = nullptr;
 
-    hipError_t hip_result = hipMalloc(&send_buffer, large_size);
+    hipError_t  hip_result = hipMalloc(&send_buffer, large_size);
     BufferGuard sendBufferGuard(send_buffer, false); // Device memory
 
     hip_result = hipMalloc(&recv_buffer, large_size);
@@ -794,7 +790,6 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
     MPI_Barrier(MPI_COMM_WORLD);
 
     HIPCHECK(hipStreamSynchronize(config.stream));
-
 
     MPI_Barrier(MPI_COMM_WORLD);
 }
@@ -877,7 +872,6 @@ TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
         HIPCHECK(hipStreamSynchronize(config.stream));
     }
 
-
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
@@ -949,9 +943,7 @@ TEST_F(ShmMPITest, ShmConnect_WithoutSetup)
 
     if(config.world_rank == 0)
     {
-        std::fprintf(stdout,
-                     "Testing SHM connect without prior setup (%d processes)\n",
-                     config.world_size);
+        TEST_INFO("Testing SHM connect without prior setup (%d processes)", config.world_size);
     }
 
     const bool is_sender = (config.world_rank == 0);
@@ -975,10 +967,8 @@ TEST_F(ShmMPITest, ShmConnect_WithoutSetup)
 
     if(config.world_rank == 0)
     {
-        std::fprintf(stdout,
-                     "Connect without setup result: %s\n"
-                     "Note: This tests invalid state handling\n",
-                     ncclGetErrorString(result));
+        TEST_INFO("Connect without setup result: %s", ncclGetErrorString(result));
+        TEST_INFO("Note: This tests invalid state handling");
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -997,9 +987,8 @@ TEST_F(ShmMPITest, ShmConnect_CorruptedConnectInfo)
 
     if(config.world_rank == 0)
     {
-        std::fprintf(stdout,
-                     "Testing SHM connect with corrupted connect info (%d processes)\n",
-                     config.world_size);
+        TEST_INFO("Testing SHM connect with corrupted connect info (%d processes)",
+                  config.world_size);
     }
 
     const bool is_sender = (config.world_rank == 0);
@@ -1047,10 +1036,8 @@ TEST_F(ShmMPITest, ShmConnect_CorruptedConnectInfo)
 
     if(config.world_rank == 0)
     {
-        std::fprintf(stdout,
-                     "Connect with corrupted info result: %s\n"
-                     "Note: Tests connect info validation similar to proxy function validation\n",
-                     ncclGetErrorString(result));
+        TEST_INFO("Connect with corrupted info result: %s", ncclGetErrorString(result));
+        TEST_INFO("Note: Tests connect info validation similar to proxy function validation");
     }
 
     // Cleanup properly allocated resources

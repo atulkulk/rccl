@@ -387,6 +387,12 @@ rccl_test_rank_3.log  (contains all rank 3 output)
 - For multi-node runs, each node creates logs in its local working directory
 - Ensure you have write permissions in the execution directory
 
+**Banner Display:**
+The per-rank logging banner is displayed using `TEST_INFO` macros, which means:
+- **With `NCCL_DEBUG=INFO`**: Full banner with details shown
+- **Without `NCCL_DEBUG`**: Banner content not shown (minimal output)
+- This allows clean output in production while providing detailed info during debugging
+
 ### What Gets Logged
 
 **For non-zero ranks (Ranks 1-N):**
@@ -408,13 +414,14 @@ All output is redirected to log files, including:
 **How It Works:**
 1. At startup, the framework checks `RCCL_MPI_LOG_ALL_RANKS` environment variable
 2. If set to `1`, creates `rccl_test_rank_<N>.log` for each rank
-3. **For Rank 0**: Uses "tee" functionality via pipe and background thread
+3. Displays a banner using `TEST_INFO` macros (visible with `NCCL_DEBUG=INFO`)
+4. **For Rank 0**: Uses "tee" functionality via pipe and background thread
    - Creates a pipe
    - Redirects stdout/stderr to pipe write end
    - Background thread reads from pipe and writes to BOTH original console and log file
-4. **For Ranks 1-N**: Redirects stdout/stderr directly to log file
-5. Disables buffering for immediate output
-6. Restores original output streams on exit
+5. **For Ranks 1-N**: Redirects stdout/stderr directly to log file
+6. Disables buffering for immediate output
+7. Restores original output streams on exit
 
 **Output Behavior:**
 - **Without per-rank logging** (default): Only rank 0 output shown on terminal
@@ -423,25 +430,28 @@ All output is redirected to log files, including:
     - Watch test progress in real-time on console
     - Complete log saved to file for later analysis
   - **Ranks 1-N**: Output redirected to `rccl_test_rank_<N>.log` files only
-  - A clear banner message indicates per-rank logging is enabled
+  - Banner visible when `NCCL_DEBUG=INFO` is set (TEST_INFO macros)
+  - Without `NCCL_DEBUG`, logging works silently with no banner clutter
 
 ### Usage Examples
 
 #### Example 1: Debugging a Specific Test
 
 ```bash
-# Enable per-rank logging for a specific test
+# Enable per-rank logging with NCCL_DEBUG for full banner
+export RCCL_MPI_LOG_ALL_RANKS=1
+NCCL_DEBUG=INFO mpirun -np 2 ./rccl-UnitTestsMPI --gtest_filter="P2PTest.DataTransfer"
+
+# You'll see a banner message at startup (with NCCL_DEBUG=INFO):
+# [0] TEST INFO Per-Rank Logging ENABLED (RCCL_MPI_LOG_ALL_RANKS=1)
+# [0] TEST INFO Rank 0     : Output to BOTH console AND rccl_test_rank_0.log
+# [0] TEST INFO Ranks 1-N  : Output redirected to rccl_test_rank_<N>.log
+# [0] TEST INFO Location   : Log files created in current working directory
+
+# Without NCCL_DEBUG (minimal output):
 export RCCL_MPI_LOG_ALL_RANKS=1
 mpirun -np 2 ./rccl-UnitTestsMPI --gtest_filter="P2PTest.DataTransfer"
-
-# You'll see a banner message at startup:
-# ========================================================================
-#   Per-Rank Logging ENABLED (RCCL_MPI_LOG_ALL_RANKS=1)
-# ========================================================================
-#   Rank 0     : Output to BOTH console AND rccl_test_rank_0.log
-#   Ranks 1-N  : Output redirected to rccl_test_rank_<N>.log
-#   Location   : Log files created in current working directory
-# ========================================================================
+# (banner content not shown, but logging still enabled)
 ```
 
 ### Best Practices
@@ -460,30 +470,54 @@ mpirun -np 2 ./rccl-UnitTestsMPI --gtest_filter="P2PTest.DataTransfer"
 
 ### Adding Debug Output in Tests
 
-Use rank-aware logging in your tests:
+Use `TEST_*` macros for conditional, rank-aware logging that respects `NCCL_DEBUG`:
 
 ```cpp
 TEST_F(MyMPITest, DebugExample) {
   validateTestPrerequisites(2);
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
-  int rank = RCCLMPIEnvironment::world_rank;
-
-  // This will appear in the rank's log file
-  printf("Rank %d: Starting test with buffer size %zu\n", rank, buffer_size);
+  // TEST_INFO respects NCCL_DEBUG=INFO setting
+  // Automatically includes rank (and hostname for multi-node)
+  TEST_INFO("Starting test with buffer size %zu", buffer_size);
 
   // Perform operation
   NCCLCHECK(ncclAllReduce(...));
 
-  // More debug output
-  printf("Rank %d: AllReduce completed, result=%f\n", rank, result);
+  // More debug output with automatic rank prefix
+  TEST_INFO("AllReduce completed, result=%f", result);
 
-  // Only rank 0 prints summary (appears in all modes)
-  if (rank == 0) {
-    printf("Summary: All ranks completed successfully\n");
+  // Only rank 0 prints summary
+  if (RCCLMPIEnvironment::world_rank == 0) {
+    TEST_INFO("Summary: All ranks completed successfully");
   }
 }
 ```
+
+**Available TEST_* Macros:**
+```cpp
+TEST_VERSION("Version info");    // NCCL_DEBUG=VERSION or higher
+TEST_WARN("Warning message");    // NCCL_DEBUG=WARN or higher
+TEST_INFO("Info message");       // NCCL_DEBUG=INFO or higher
+TEST_ABORT("Abort message");     // NCCL_DEBUG=ABORT or higher
+TEST_TRACE("Trace message");     // NCCL_DEBUG=TRACE
+```
+
+**Output Format:**
+- Single-node: `[rank] TEST INFO <message>`
+- Multi-node: `hostname:[rank] TEST INFO <message>`
+
+**Example Output:**
+```bash
+# Single-node with NCCL_DEBUG=INFO
+[0] TEST INFO Starting test with buffer size 1024
+[1] TEST INFO Starting test with buffer size 1024
+
+# Multi-node with NCCL_DEBUG=INFO
+mi300x-3:[0] TEST INFO Starting test with buffer size 1024
+mi300x-4:[1] TEST INFO Starting test with buffer size 1024
+```
+
 ---
 
 ## API Reference
@@ -1113,7 +1147,7 @@ TEST_F(MyTest, Test2) {
 
 ### 4. Use RAII Guards for Resource Management
 
-**TransportTestBase** provides RAII-based automatic resource cleanup:
+**TransportTestBase** provides RAII-based automatic resource cleanup with proper ordering:
 
 ```cpp
 // ✅ GOOD: Automatic cleanup even on test failure
@@ -1128,6 +1162,22 @@ TEST_F(MyTransportTest, Example) {
 
   // Use buffers...
   // Automatic cleanup at test end
+}
+
+// ✅ GOOD: Registration handles with guards
+TEST_F(MyTransportTest, RegistrationExample) {
+  void* send_buffer = nullptr;
+  void* recv_buffer = nullptr;
+  allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, size, size);
+
+  // Pre-register with guards - handles deregistered before comm destroyed
+  void* send_handle = nullptr;
+  void* recv_handle = nullptr;
+  preRegisterBuffersGuarded(send_buffer, recv_buffer, size, size,
+                           &send_handle, &recv_handle);
+
+  // Use registered buffers...
+  // Cleanup order: handles deregistered → buffers freed → comm destroyed
 }
 
 // ✅ GOOD: Loop with per-iteration cleanup
@@ -1164,7 +1214,7 @@ allocateAndInitBuffersGuarded(&send, &recv, size, size);
 // Allocate with local guards (cleanup at scope exit) - FOR LOOPS
 auto [sendGuard, recvGuard] = allocateAndInitBuffersGuarded(&send, &recv, size, size, false);
 
-// Register buffers with guards
+// Register buffers with guards (cleanup at test end) - DEFAULT
 preRegisterBuffersGuarded(send, recv, size, size, &send_handle, &recv_handle);
 
 // Register with local guards (for loops)
@@ -1174,10 +1224,24 @@ auto [sRegGuard, rRegGuard] = preRegisterBuffersGuarded(send, recv, size, size,
 
 **Benefits:**
 - ✅ Resources cleaned up even if `ASSERT_*` or `EXPECT_*` fails
+- ✅ **Correct cleanup order**: Guards destroyed before communicator
 - ✅ Exception-safe cleanup
 - ✅ No manual cleanup code needed
 - ✅ Prevents memory leaks in test failures
+- ✅ Prevents "corrupted comm object" errors
 - ✅ Supports both test-scoped and loop-scoped cleanup
+
+**Critical: Cleanup Order**
+The framework ensures proper cleanup order to prevent "corrupted comm object" errors:
+```
+1. Registration handles deregistered (ncclCommDeregister with valid comm)
+2. Buffers freed (hipFree)
+3. Transport resources cleaned up
+4. Communicator destroyed (ncclCommDestroy)
+```
+
+This is handled automatically by `TransportTestBase::TearDown()` which explicitly clears
+guard vectors before destroying the communicator.
 
 ### 5. Use Rank-Specific Logic When Needed
 
@@ -1189,9 +1253,8 @@ TEST_F(MyTest, Example) {
   int rank = RCCLMPIEnvironment::world_rank;
 
   if (rank == 0) {
-    // Only rank 0 prints summary
-    printf("Starting test with %d processes\n",
-           RCCLMPIEnvironment::world_size);
+    // Only rank 0 prints summary (TEST_INFO automatically adds rank prefix)
+    TEST_INFO("Starting test with %d processes", RCCLMPIEnvironment::world_size);
   }
 
   // All ranks execute this
@@ -1200,6 +1263,7 @@ TEST_F(MyTest, Example) {
   if (rank == 0) {
     // Only rank 0 does final verification
     verifyGlobalState();
+    TEST_INFO("Test completed successfully");
   }
 }
 ```
@@ -1427,11 +1491,18 @@ ncclCommInitRank(&comm, size, id, wrong_rank);
 **Solutions:**
 1. Reduce buffer sizes
 2. Ensure proper cleanup of previous allocations
-3. Check for memory leaks
+3. Use RAII guards to prevent leaks on test failure
 4. Run tests sequentially instead of in parallel
 
 ```cpp
-// Clean up in TearDown
+// ✅ GOOD: Use RAII guards (automatic cleanup even on failure)
+TEST_F(MyTest, Example) {
+  void* buffer = nullptr;
+  allocateAndInitBuffersGuarded(&buffer, nullptr, size, 0);
+  // Automatic cleanup even if test fails
+}
+
+// ❌ BAD: Manual cleanup in TearDown (leaks if test fails)
 void TearDown() override {
   if (buffer) {
     hipFree(buffer);
@@ -1440,6 +1511,46 @@ void TearDown() override {
   MPITestBase::TearDown();
 }
 ```
+
+### Corrupted Comm Object Error
+
+**Symptom:** Test passes but logs "corrupted comm object detected" errors during cleanup:
+```
+NCCL WARN Error: corrupted comm object detected
+/home/.../src/register/register.cc:171 -> 4
+```
+
+**Cause:** Registration handles being deregistered after communicator was destroyed.
+
+**Solution:** Use `preRegisterBuffersGuarded()` instead of manual registration:
+
+```cpp
+// ✅ GOOD: Guards ensure proper cleanup order
+TEST_F(MyTransportTest, Example) {
+  void* send_buffer = nullptr;
+  void* recv_buffer = nullptr;
+  allocateAndInitBuffersGuarded(&send_buffer, &recv_buffer, size, size);
+
+  void* send_handle = nullptr;
+  void* recv_handle = nullptr;
+  preRegisterBuffersGuarded(send_buffer, recv_buffer, size, size,
+                           &send_handle, &recv_handle);
+
+  // Guards automatically deregister handles BEFORE comm is destroyed
+}
+
+// ❌ BAD: Manual deregistration may happen after comm destroyed
+TEST_F(MyTest, Example) {
+  void* handle = nullptr;
+  ncclCommRegister(comm, buffer, size, &handle);
+  // ... test logic ...
+  ncclCommDeregister(comm, handle);  // May fail if comm destroyed first!
+}
+```
+
+**Why it works:** `TransportTestBase::TearDown()` explicitly clears guard vectors before
+destroying the communicator, ensuring handles are deregistered while the communicator is
+still valid.
 
 ### Test Skipped: Not Enough Processes
 
@@ -1539,9 +1650,8 @@ cat rccl_test_rank_1.log
 
 **Debugging:**
 ```cpp
-// Print from all ranks to debug
-printf("Rank %d: result[0] = %f\n",
-       RCCLMPIEnvironment::world_rank, result[0]);
+// Use TEST_INFO for debug output (respects NCCL_DEBUG=INFO)
+TEST_INFO("result[0] = %f", result[0]);
 MPI_Barrier(MPI_COMM_WORLD);
 
 // Verify all ranks agree
@@ -1550,6 +1660,17 @@ float global_result;
 MPI_Allreduce(&local_result, &global_result, 1, MPI_FLOAT,
               MPI_MAX, MPI_COMM_WORLD);
 EXPECT_FLOAT_EQ(local_result, global_result);
+```
+
+**Debug with NCCL_DEBUG:**
+```bash
+# Enable detailed logging from tests and library
+NCCL_DEBUG=INFO RCCL_MPI_LOG_ALL_RANKS=1 mpirun -np 4 ./test_executable
+
+# Output shows rank/hostname automatically:
+# [0] TEST INFO result[0] = 1.000000
+# [1] TEST INFO result[0] = 2.000000
+# [2] TEST INFO result[0] = 3.000000
 ```
 
 **See:** [Per-Rank Logging](#per-rank-logging) for more details
@@ -1739,10 +1860,10 @@ A: Yes, if you have:
 
 A:
 ```bash
-# Method 1: Use per-rank logging (easiest)
-export RCCL_MPI_LOG_ALL_RANKS=1
-mpirun -np 4 ./test_executable
+# Method 1: Use per-rank logging with NCCL_DEBUG (easiest)
+NCCL_DEBUG=INFO RCCL_MPI_LOG_ALL_RANKS=1 mpirun -np 4 ./test_executable
 # Check rccl_test_rank_2.log for rank 2 output
+# TEST_INFO messages will appear automatically
 
 # Method 2: GDB with MPI
 mpirun -np 2 xterm -e gdb ./test_executable
@@ -1751,11 +1872,40 @@ mpirun -np 2 xterm -e gdb ./test_executable
 mpirun -np 4 ./test_executable &
 gdb -p <rank_pid>
 
-# Method 4: Print debugging from specific rank
+# Method 4: Use TEST_INFO for conditional debugging
 if (RCCLMPIEnvironment::world_rank == 2) {
-  printf("Debug info from rank 2...\n");
+  TEST_INFO("Debug info from rank 2...");
+  // Only appears when NCCL_DEBUG=INFO
 }
 ```
+
+**Q: How do TEST_* macros work with NCCL_DEBUG?**
+
+A: TEST_* macros respect the `NCCL_DEBUG` environment variable:
+```bash
+# No output from TEST_* macros (clean)
+mpirun -np 2 ./test_executable
+
+# TEST_INFO and higher appear
+NCCL_DEBUG=INFO mpirun -np 2 ./test_executable
+
+# All TEST_* macros appear
+NCCL_DEBUG=TRACE mpirun -np 2 ./test_executable
+```
+
+**Available levels (least to most verbose):**
+- `NCCL_DEBUG=VERSION` → TEST_VERSION
+- `NCCL_DEBUG=WARN` → TEST_VERSION, TEST_WARN
+- `NCCL_DEBUG=INFO` → TEST_VERSION, TEST_WARN, TEST_INFO (recommended for debugging)
+- `NCCL_DEBUG=ABORT` → All above + TEST_ABORT
+- `NCCL_DEBUG=TRACE` → All macros including TEST_TRACE
+
+**Benefits:**
+- ✅ Same verbosity control as RCCL library
+- ✅ Automatic rank prefixes (no manual "Rank %d:")
+- ✅ Hostname included for multi-node tests
+- ✅ Clean output in production (no NCCL_DEBUG)
+- ✅ Detailed debugging on demand (NCCL_DEBUG=INFO)
 
 ## See Also
 

@@ -10,6 +10,7 @@
  */
 
 #include "RCCLMPIEnvironment.hpp"
+#include "MPITestBase.hpp"
 
 #ifdef MPI_TESTS_ENABLED
 
@@ -45,7 +46,7 @@ void RCCLMPIEnvironment::initialize_mpi()
         // Already initialized in main_mpi.cpp
         if(world_rank == 0)
         {
-            printf("Rank %d: MPI already initialized - skipping re-initialization\n", world_rank);
+            TEST_INFO("MPI already initialized - skipping re-initialization");
         }
         return;
     }
@@ -61,10 +62,7 @@ void RCCLMPIEnvironment::initialize_mpi()
 
     if(world_rank == 0)
     {
-        printf("Rank %d: MPI initialized - World size: %d, Thread support: %d\n",
-               world_rank,
-               world_size,
-               provided);
+        TEST_INFO("MPI initialized - World size: %d, Thread support: %d", world_size, provided);
     }
 }
 
@@ -109,26 +107,22 @@ void RCCLMPIEnvironment::initialize_devices()
 
     if(world_rank == 0)
     {
-        printf("Rank %d: Detected %d GPU(s) for %d MPI rank(s)\n",
-               world_rank,
-               numDevices,
-               world_size);
-        printf("Rank %d: Local configuration: %d ranks per node\n", world_rank, local_size);
+        TEST_INFO("Detected %d GPU(s) for %d MPI rank(s)", numDevices, world_size);
+        TEST_INFO("Local configuration: %d ranks per node", local_size);
     }
 
     // Check if we have enough GPUs for ranks on THIS node
     if(numDevices < local_size)
     {
-        printf("ERROR: Rank %d (local rank %d): Only %d GPUs available on this node for %d local "
-               "ranks.\n"
-               "RCCL requires unique GPUs per rank on each node.\n"
-               "Please run with fewer ranks per node (e.g., --ntasks-per-node=%d) "
-               "or ensure more GPUs are available.\n",
-               world_rank,
-               local_rank,
-               numDevices,
-               local_size,
-               numDevices);
+        TEST_ABORT(
+            "ERROR: (local rank %d): Only %d GPUs available on this node for %d local ranks. "
+            "RCCL requires unique GPUs per rank on each node. "
+            "Please run with fewer ranks per node (e.g., --ntasks-per-node=%d) "
+            "or ensure more GPUs are available.",
+            local_rank,
+            numDevices,
+            local_size,
+            numDevices);
         retCode             = 1;
         devices_initialized = true;
         MPI_Comm_free(&node_comm);
@@ -142,12 +136,11 @@ void RCCLMPIEnvironment::initialize_devices()
     // Validate device assignment
     if(assigned_device < 0 || assigned_device >= numDevices)
     {
-        printf("ERROR: Rank %d (local rank %d): Invalid device assignment! "
-               "assigned_device=%d, numDevices=%d\n",
-               world_rank,
-               local_rank,
-               assigned_device,
-               numDevices);
+        TEST_ABORT(
+            "ERROR: (local rank %d): Invalid device assignment! assigned_device=%d, numDevices=%d",
+            local_rank,
+            assigned_device,
+            numDevices);
         retCode             = 1;
         devices_initialized = true;
         MPI_Comm_free(&node_comm);
@@ -168,11 +161,10 @@ void RCCLMPIEnvironment::initialize_devices()
     HIPCHECK(hipGetDevice(&current_device));
     if(current_device != assigned_device)
     {
-        printf("ERROR: Rank %d (local rank %d) device assignment failed! Expected %d, got %d\n",
-               world_rank,
-               local_rank,
-               assigned_device,
-               current_device);
+        TEST_ABORT("ERROR: (local rank %d) device assignment failed! Expected %d, got %d",
+                   local_rank,
+                   assigned_device,
+                   current_device);
         retCode = 1;
         MPI_Comm_free(&node_comm);
         return;
@@ -181,22 +173,15 @@ void RCCLMPIEnvironment::initialize_devices()
     // Print device info (only from rank 0 to reduce output)
     if(world_rank == 0)
     {
-        printf("Rank %d (local rank %d): Device assignment: global rank %d -> GPU %d\n"
-               "Rank %d: PCI Bus ID = 0x%x, Device Name = %s\n"
-               "Rank %d: Total GPUs available per node: %d\n"
-               "Rank %d: Multi-node: Each node's local ranks (0-%d) mapped to GPUs (0-%d)\n",
-               world_rank,
-               local_rank,
-               world_rank,
-               assigned_device,
-               world_rank,
-               prop.pciBusID,
-               prop.name,
-               world_rank,
-               numDevices,
-               world_rank,
-               local_size - 1,
-               numDevices - 1);
+        TEST_INFO("(local rank %d): Device assignment: global rank %d -> GPU %d",
+                  local_rank,
+                  world_rank,
+                  assigned_device);
+        TEST_INFO("PCI Bus ID = 0x%x, Device Name = %s", prop.pciBusID, prop.name);
+        TEST_INFO("Total GPUs available per node: %d", numDevices);
+        TEST_INFO("Multi-node: Each node's local ranks (0-%d) mapped to GPUs (0-%d)",
+                  local_size - 1,
+                  numDevices - 1);
     }
 
     // Clean up node communicator
@@ -209,10 +194,8 @@ void RCCLMPIEnvironment::initialize_devices()
 
     if(world_rank == 0)
     {
-        printf("Rank %d: Device initialization completed\n"
-               "Rank %d: Each test will create its own NCCL communicator for isolation\n",
-               world_rank,
-               world_rank);
+        TEST_INFO("Device initialization completed");
+        TEST_INFO("Each test will create its own NCCL communicator for isolation");
     }
 }
 
