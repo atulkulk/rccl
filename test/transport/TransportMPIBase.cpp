@@ -27,9 +27,8 @@ ncclResult_t TransportTestBase::createTestCommunicator()
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: TransportTestBase config and transport components updated with "
-                   "per-test communicator\n",
-                   config.world_rank);
+            TEST_INFO("TransportTestBase config and transport components updated with per-test "
+                      "communicator");
         }
     }
 
@@ -130,6 +129,12 @@ void TransportTestBase::TearDown()
     remote_peer_info = nullptr;
     comm_handle      = nullptr;
 
+    // CRITICAL: Clear RAII guard vectors BEFORE destroying communicator
+    // The guards (especially NcclRegHandleGuard) need the communicator to be valid
+    // when they call ncclCommDeregister() in their destructors
+    reg_handle_guards_.clear();
+    buffer_guards_.clear();
+
     // Call base class TearDown to cleanup test communicator
     MPITestBase::TearDown();
 }
@@ -160,9 +165,7 @@ void TransportTestBase::allocateAndInitBuffers(void** send_buffer,
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Allocated and initialized buffers (%zu bytes each)\n",
-               config.world_rank,
-               send_bytes);
+        TEST_INFO("Allocated and initialized buffers (%zu bytes each)", send_bytes);
     }
 }
 

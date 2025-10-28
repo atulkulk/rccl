@@ -29,7 +29,7 @@ protected:
         TransportTestBase::SetUp();
         if(config.world_rank == 0)
         {
-            printf("Rank %d: NetTransport SetUp completed\n", config.world_rank);
+            TEST_INFO("NetTransport SetUp completed");
         }
     }
 
@@ -37,7 +37,7 @@ protected:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: NetTransport TearDown completed\n", config.world_rank);
+            TEST_INFO("NetTransport TearDown completed");
         }
         TransportTestBase::TearDown();
     }
@@ -48,7 +48,7 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing ncclNetGraphRegisterBuffer...\n", config.world_rank);
+            TEST_INFO("Testing ncclNetGraphRegisterBuffer...");
         }
 
         // Verify communicator is ready
@@ -94,23 +94,16 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d:     ncclNetGraphRegisterBuffer returned: %s\n"
-                   "Rank %d:     Registration flag: %d\n"
-                   "Rank %d:     Handle: %p\n"
-                   "Rank %d:     Cleanup queue elements: %d\n",
-                   config.world_rank,
-                   ncclGetErrorString(nccl_result),
-                   config.world_rank,
-                   net_reg_flag,
-                   config.world_rank,
-                   net_handle,
-                   config.world_rank,
-                   n_cleanup_elts);
+            TEST_INFO("    ncclNetGraphRegisterBuffer returned: %s",
+                      ncclGetErrorString(nccl_result));
+            TEST_INFO("    Registration flag: %d", net_reg_flag);
+            TEST_INFO("    Handle: %p", net_handle);
+            TEST_INFO("    Cleanup queue elements: %d", n_cleanup_elts);
         }
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d: ncclNetGraphRegisterBuffer test completed\n", config.world_rank);
+            TEST_INFO("ncclNetGraphRegisterBuffer test completed");
         }
     }
 
@@ -119,11 +112,9 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing ncclNetLocalRegisterBuffer...\n"
-                   "Rank %d: This API internally calls ncclNetLocalRegisterBuffer "
-                   "and ncclNetLocalRegisterBuffer\n",
-                   config.world_rank,
-                   config.world_rank);
+            TEST_INFO("Testing ncclNetLocalRegisterBuffer...");
+            TEST_INFO("This API internally calls ncclNetLocalRegisterBuffer "
+                      "and ncclNetLocalRegisterBuffer");
         }
 
         // Verify communicator is ready (NCCL has already initialized NET transport)
@@ -165,15 +156,10 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf("Rank %d:     ncclNetLocalRegisterBuffer returned: %s\n"
-                   "Rank %d:     Registration flag: %d\n"
-                   "Rank %d:     Handle: %p\n",
-                   config.world_rank,
-                   ncclGetErrorString(nccl_result),
-                   config.world_rank,
-                   net_reg_flag,
-                   config.world_rank,
-                   net_handle);
+            TEST_INFO("    ncclNetLocalRegisterBuffer returned: %s",
+                      ncclGetErrorString(nccl_result));
+            TEST_INFO("    Registration flag: %d", net_reg_flag);
+            TEST_INFO("    Handle: %p", net_handle);
         }
     }
 
@@ -182,9 +168,8 @@ public:
     {
         if(config.world_rank == 0)
         {
-            printf("Rank %d: Testing multiple buffer sizes (aligned and unaligned) with NET "
-                   "transport and data transfer...\n",
-                   config.world_rank);
+            TEST_INFO("Testing multiple buffer sizes (aligned and unaligned) with NET "
+                      "transport and data transfer...");
         }
 
         // Verify communicator is ready
@@ -230,9 +215,7 @@ public:
         {
             if(config.world_rank == 0)
             {
-                printf("Rank %d:   Testing size: %zu bytes with data transfer\n",
-                       config.world_rank,
-                       size);
+                TEST_INFO("  Testing size: %zu bytes with data transfer", size);
             }
 
             // Allocate buffers with local guards (per-iteration cleanup)
@@ -292,12 +275,11 @@ public:
                 uint8_t expected = static_cast<uint8_t>((peer_rank * 100 + i) % 256);
                 if(recv_data[i] != expected)
                 {
-                    printf("Rank %d: Size %zu - Data mismatch at index %zu: expected %u, got %u\n",
-                           config.world_rank,
-                           size,
-                           i,
-                           expected,
-                           recv_data[i]);
+                    TEST_WARN("Size %zu - Data mismatch at index %zu: expected %u, got %u",
+                              size,
+                              i,
+                              expected,
+                              recv_data[i]);
                     errors++;
                 }
             }
@@ -307,9 +289,7 @@ public:
 
             if(config.world_rank == 0 && errors == 0)
             {
-                printf("Rank %d:   Size %zu - Data transfer successful and verified\n",
-                       config.world_rank,
-                       size);
+                TEST_INFO("  Size %zu - Data transfer successful and verified", size);
             }
 
             // Guards will automatically cleanup at end of loop iteration
@@ -317,9 +297,7 @@ public:
 
         if(config.world_rank == 0)
         {
-            printf(
-                "Rank %d: Multiple buffer sizes test completed successfully - all sizes verified\n",
-                config.world_rank);
+            TEST_INFO("Multiple buffer sizes test completed successfully - all sizes verified");
         }
     }
 };
@@ -343,16 +321,14 @@ TEST_F(NetTransportMPITest, NetGraphRegisterBufferTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting ncclNetGraphRegisterBuffer test (multi-node)\n",
-               config.world_rank);
+        TEST_INFO("Starting ncclNetGraphRegisterBuffer test (multi-node)");
     }
 
     testNetGraphRegisterBuffer();
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: ncclNetGraphRegisterBuffer test completed successfully\n",
-               config.world_rank);
+        TEST_INFO("ncclNetGraphRegisterBuffer test completed successfully");
     }
 }
 
@@ -374,16 +350,14 @@ TEST_F(NetTransportMPITest, NetLocalRegisterBufferTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting ncclNetLocalRegisterBuffer test (multi-node)\n",
-               config.world_rank);
+        TEST_INFO("Starting ncclNetLocalRegisterBuffer test (multi-node)");
     }
 
     testNetLocalRegisterBuffer();
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: ncclNetLocalRegisterBuffer test completed successfully\n",
-               config.world_rank);
+        TEST_INFO("ncclNetLocalRegisterBuffer test completed successfully");
     }
 }
 
@@ -404,14 +378,14 @@ TEST_F(NetTransportMPITest, MultipleBufferSizesTest)
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Starting multiple buffer sizes test (multi-node)\n", config.world_rank);
+        TEST_INFO("Starting multiple buffer sizes test (multi-node)");
     }
 
     testMultipleBufferSizes();
 
     if(config.world_rank == 0)
     {
-        printf("Rank %d: Multiple buffer sizes test completed successfully\n", config.world_rank);
+        TEST_INFO("Multiple buffer sizes test completed successfully");
     }
 }
 

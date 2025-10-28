@@ -102,11 +102,11 @@ int MPITestConstants::detectNodeCount()
         }
 
         // Print detailed node and rank distribution
-        printf("\n");
-        printf("=== MPI Process Distribution ===\n");
-        printf("Total processes: %d\n", world_size);
-        printf("Detected nodes:  %d (via MPI_COMM_TYPE_SHARED)\n", unique_node_count);
-        printf("\n");
+        TEST_INFO("");
+        TEST_INFO("=== MPI Process Distribution ===");
+        TEST_INFO("Total processes: %d", world_size);
+        TEST_INFO("Detected nodes:  %d (via MPI_COMM_TYPE_SHARED)", unique_node_count);
+        TEST_INFO("");
 
         for(const auto& pair : node_id_to_ranks)
         {
@@ -114,18 +114,20 @@ int MPITestConstants::detectNodeCount()
             const std::vector<int>& ranks    = pair.second;
             const std::string&      hostname = node_id_to_hostname[node_id];
 
-            printf("Node %d: %s (%zu ranks)\n", node_id, hostname.c_str(), ranks.size());
-            printf("  Ranks: ");
+            TEST_INFO("Node %d: %s (%zu ranks)", node_id, hostname.c_str(), ranks.size());
+
+            // Build ranks string
+            std::string ranks_str = "  Ranks: ";
             for(size_t i = 0; i < ranks.size(); i++)
             {
-                printf("%d", ranks[i]);
+                ranks_str += std::to_string(ranks[i]);
                 if(i < ranks.size() - 1)
-                    printf(", ");
+                    ranks_str += ", ";
             }
-            printf("\n");
+            TEST_INFO("%s", ranks_str.c_str());
         }
-        printf("================================\n");
-        printf("\n");
+        TEST_INFO("================================");
+        TEST_INFO("");
     }
 
     // Clean up node communicator
@@ -161,58 +163,58 @@ bool MPITestBase::validateTestPrerequisites(
     // Display test requirements (rank 0 only)
     if(world_rank == 0)
     {
-        printf("\n");
-        printf("=== Test Requirements ===\n");
+        TEST_INFO("");
+        TEST_INFO("=== Test Requirements ===");
 
         // Process count requirements
         if(max_processes > 0 && max_processes == min_processes)
         {
-            printf("Processes:         exactly %d\n", min_processes);
+            TEST_INFO("Processes:         exactly %d", min_processes);
         }
         else if(max_processes > 0)
         {
-            printf("Processes:         %d-%d\n", min_processes, max_processes);
+            TEST_INFO("Processes:         %d-%d", min_processes, max_processes);
         }
         else
         {
-            printf("Min processes:     %d\n", min_processes);
+            TEST_INFO("Min processes:     %d", min_processes);
         }
 
-        printf("Power-of-two:      %s\n", require_power_of_two ? "required" : "not required");
+        TEST_INFO("Power-of-two:      %s", require_power_of_two ? "required" : "not required");
 
         // Node count requirements
         if(min_nodes > 1 && max_nodes > 0 && min_nodes == max_nodes)
         {
-            printf("Nodes:             exactly %d\n", min_nodes);
+            TEST_INFO("Nodes:             exactly %d", min_nodes);
         }
         else if(min_nodes == 1 && max_nodes == 1)
         {
-            printf("Nodes:             exactly 1 (single-node only)\n");
+            TEST_INFO("Nodes:             exactly 1 (single-node only)");
         }
         else if(min_nodes > 1 && max_nodes > 0)
         {
-            printf("Nodes:             %d-%d\n", min_nodes, max_nodes);
+            TEST_INFO("Nodes:             %d-%d", min_nodes, max_nodes);
         }
         else if(max_nodes > 0)
         {
-            printf("Max nodes:         %d%s\n",
-                   max_nodes,
-                   max_nodes == 1 ? " (single-node only)" : "");
+            TEST_INFO("Max nodes:         %d%s",
+                      max_nodes,
+                      max_nodes == 1 ? " (single-node only)" : "");
         }
         else if(min_nodes > 1)
         {
-            printf("Min nodes:         %d\n", min_nodes);
+            TEST_INFO("Min nodes:         %d", min_nodes);
         }
         else
         {
-            printf("Nodes:             unlimited\n");
+            TEST_INFO("Nodes:             unlimited");
         }
 
-        printf("\n");
-        printf("=== Current Environment ===\n");
-        printf("Actual processes:  %d\n", world_size);
-        printf("Is power-of-two:   %s\n",
-               MPITestConstants::isPowerOfTwo(world_size) ? "yes" : "no");
+        TEST_INFO("");
+        TEST_INFO("=== Current Environment ===");
+        TEST_INFO("Actual processes:  %d", world_size);
+        TEST_INFO("Is power-of-two:   %s",
+                  MPITestConstants::isPowerOfTwo(world_size) ? "yes" : "no");
     }
 
     // Check minimum process count
@@ -220,11 +222,12 @@ bool MPITestBase::validateTestPrerequisites(
     {
         if(world_rank == 0)
         {
-            printf("Actual nodes:      (checking...)\n");
-            printf("\n");
+            TEST_INFO("Actual nodes:      (checking...)");
+            TEST_INFO("");
             printf("❌ REQUIREMENT NOT MET: Need at least %d processes, got %d\n",
                    min_processes,
                    world_size);
+            printf("   For test details, set: NCCL_DEBUG=INFO\n");
             printf("===========================\n\n");
         }
         return false;
@@ -235,8 +238,8 @@ bool MPITestBase::validateTestPrerequisites(
     {
         if(world_rank == 0)
         {
-            printf("Actual nodes:      (checking...)\n");
-            printf("\n");
+            TEST_INFO("Actual nodes:      (checking...)");
+            TEST_INFO("");
             printf("❌ REQUIREMENT NOT MET: Need at most %d processes, got %d\n",
                    max_processes,
                    world_size);
@@ -244,6 +247,7 @@ bool MPITestBase::validateTestPrerequisites(
             {
                 printf("   This test requires exactly %d processes\n", min_processes);
             }
+            printf("   For test details, set: NCCL_DEBUG=INFO\n");
             printf("===========================\n\n");
         }
         return false;
@@ -254,9 +258,10 @@ bool MPITestBase::validateTestPrerequisites(
     {
         if(world_rank == 0)
         {
-            printf("Actual nodes:      (checking...)\n");
-            printf("\n");
+            TEST_INFO("Actual nodes:      (checking...)");
+            TEST_INFO("");
             printf("❌ REQUIREMENT NOT MET: Need power-of-two processes, got %d\n", world_size);
+            printf("   For test details, set: NCCL_DEBUG=INFO\n");
             printf("===========================\n\n");
         }
         return false;
@@ -270,8 +275,8 @@ bool MPITestBase::validateTestPrerequisites(
 
         if(world_rank == 0)
         {
-            printf("Actual nodes:      %d\n", node_count);
-            printf("\n");
+            TEST_INFO("Actual nodes:      %d", node_count);
+            TEST_INFO("");
         }
 
         // Check minimum nodes
@@ -282,6 +287,7 @@ bool MPITestBase::validateTestPrerequisites(
                 printf("❌ REQUIREMENT NOT MET: Need at least %d node(s), detected %d nodes\n",
                        min_nodes,
                        node_count);
+                printf("   For test details, set: NCCL_DEBUG=INFO\n");
                 printf("===========================\n\n");
             }
             return false;
@@ -300,6 +306,7 @@ bool MPITestBase::validateTestPrerequisites(
                     printf("   This test uses P2P/SHM transport (single-node only)\n");
                     printf("   For multi-node testing, use NET transport tests\n");
                 }
+                printf("   For test details, set: NCCL_DEBUG=INFO\n");
                 printf("===========================\n\n");
             }
             return false;
@@ -307,18 +314,19 @@ bool MPITestBase::validateTestPrerequisites(
 
         if(world_rank == 0)
         {
-            printf("✅ ALL REQUIREMENTS MET\n");
+            TEST_INFO("✅ ALL REQUIREMENTS MET");
             if(node_count == 1)
             {
-                printf("   Single-node execution (%d processes on 1 node)\n", world_size);
+                TEST_INFO("   Single-node execution (%d processes on 1 node)", world_size);
             }
             else
             {
-                printf("   Multi-node execution (%d processes on %d nodes)\n",
-                       world_size,
-                       node_count);
+                TEST_INFO("   Multi-node execution (%d processes on %d nodes)",
+                          world_size,
+                          node_count);
             }
-            printf("===========================\n\n");
+            TEST_INFO("===========================");
+            TEST_INFO("");
         }
     }
     else
@@ -326,10 +334,11 @@ bool MPITestBase::validateTestPrerequisites(
         // No node constraints specified (min_nodes=1, max_nodes=0 means unlimited)
         if(world_rank == 0)
         {
-            printf("Actual nodes:      (not checked - no constraints specified)\n");
-            printf("\n");
-            printf("✅ ALL REQUIREMENTS MET\n");
-            printf("===========================\n\n");
+            TEST_INFO("Actual nodes:      (not checked - no constraints specified)");
+            TEST_INFO("");
+            TEST_INFO("✅ ALL REQUIREMENTS MET");
+            TEST_INFO("===========================");
+            TEST_INFO("");
         }
     }
 
@@ -363,12 +372,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     int world_rank = RCCLMPIEnvironment::world_rank;
     int world_size = RCCLMPIEnvironment::world_size;
 
-    if(world_rank == 0)
-    {
-        printf("Rank %d: Creating test-specific communicator (isolated from shared "
-               "comm)\n",
-               world_rank);
-    }
+    TEST_INFO("Creating test-specific communicator");
 
     // Get unique ID on rank 0 and broadcast error status to all ranks
     ncclUniqueId nccl_id;
@@ -379,9 +383,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
         init_result = ncclGetUniqueId(&nccl_id);
         if(init_result != ncclSuccess)
         {
-            printf("Rank %d: Failed to get unique ID: %s\n",
-                   world_rank,
-                   ncclGetErrorString(init_result));
+            TEST_WARN("Failed to get unique ID: %s", ncclGetErrorString(init_result));
         }
     }
 
@@ -394,8 +396,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     {
         if(world_rank != 0)
         {
-            printf("Rank %d: Rank 0 failed to get unique ID, aborting communicator creation\n",
-                   world_rank);
+            TEST_WARN("Rank 0 failed to get unique ID, aborting communicator creation");
         }
         return static_cast<ncclResult_t>(error_code);
     }
@@ -404,7 +405,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     int mpi_result = MPI_Bcast(&nccl_id, sizeof(ncclUniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);
     if(mpi_result != MPI_SUCCESS)
     {
-        printf("Rank %d: MPI_Bcast failed\n", world_rank);
+        TEST_WARN("MPI_Bcast failed");
         return ncclSystemError;
     }
 
@@ -416,7 +417,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     ncclResult_t result = ncclGroupStart();
     if(result != ncclSuccess)
     {
-        printf("Rank %d: Failed to start NCCL group: %s\n", world_rank, ncclGetErrorString(result));
+        TEST_WARN("Failed to start NCCL group: %s", ncclGetErrorString(result));
     }
 
     // Broadcast error status - all ranks must know if any rank failed
@@ -426,7 +427,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     {
         if(world_rank == 0)
         {
-            printf("Rank 0: One or more ranks failed to start NCCL group, aborting\n");
+            TEST_WARN("One or more ranks failed to start NCCL group, aborting");
         }
         return static_cast<ncclResult_t>(error_code);
     }
@@ -435,9 +436,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     result = ncclCommInitRank(&test_comm, world_size, nccl_id, world_rank);
     if(result != ncclSuccess)
     {
-        printf("Rank %d: Failed to initialize test communicator: %s\n",
-               world_rank,
-               ncclGetErrorString(result));
+        TEST_WARN("Failed to initialize test communicator: %s", ncclGetErrorString(result));
         ncclGroupEnd(); // Clean up group
     }
 
@@ -448,7 +447,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     {
         if(world_rank == 0)
         {
-            printf("Rank 0: One or more ranks failed to initialize communicator, aborting\n");
+            TEST_WARN("One or more ranks failed to initialize communicator, aborting");
         }
         // Clean up group on all ranks
         ncclGroupEnd();
@@ -463,7 +462,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     result = ncclGroupEnd();
     if(result != ncclSuccess)
     {
-        printf("Rank %d: Failed to end NCCL group: %s\n", world_rank, ncclGetErrorString(result));
+        TEST_WARN("Failed to end NCCL group: %s", ncclGetErrorString(result));
         if(test_comm)
         {
             ncclCommDestroy(test_comm);
@@ -478,7 +477,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     {
         if(world_rank == 0)
         {
-            printf("Rank 0: One or more ranks failed to end NCCL group, aborting\n");
+            TEST_WARN("One or more ranks failed to end NCCL group, aborting");
         }
         if(test_comm)
         {
@@ -492,9 +491,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     hipError_t hip_result = hipStreamCreate(&test_stream);
     if(hip_result != hipSuccess)
     {
-        printf("Rank %d: Failed to create test stream: %s\n",
-               world_rank,
-               hipGetErrorString(hip_result));
+        TEST_WARN("Failed to create test stream: %s", hipGetErrorString(hip_result));
         ncclCommDestroy(test_comm);
         test_comm = nullptr;
     }
@@ -506,7 +503,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
     {
         if(world_rank == 0)
         {
-            printf("Rank 0: One or more ranks failed to create HIP stream, aborting\n");
+            TEST_WARN("One or more ranks failed to create HIP stream, aborting");
         }
         if(test_comm)
         {
@@ -521,10 +518,7 @@ ncclResult_t MPITestBase::createTestCommunicator()
 
     using_test_comm = true;
 
-    if(world_rank == 0)
-    {
-        printf("Rank %d: Test-specific communicator created successfully\n", world_rank);
-    }
+    TEST_INFO("Test-specific communicator created successfully");
 
     return ncclSuccess;
 }
