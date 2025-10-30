@@ -222,7 +222,8 @@ if(BUILD_TESTS)
       # Define MPI test source files
       set(MPI_TEST_SOURCE_FILES
         common/main_mpi.cpp
-        common/MPITestBase.cpp
+        common/MPIHelpers.cpp
+        common/MPITestCore.cpp
         common/RCCLMPIEnvironment.cpp
         transport/TransportMPIBase.cpp
         transport/P2pMPITests.cpp

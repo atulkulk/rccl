@@ -4,6 +4,7 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
+#include "RCCLTestBufferHelpers.hpp"
 #include "RCCLTestResourceGuards.hpp"
 #include "TransportMPIBase.hpp"
 
@@ -16,6 +17,7 @@
 // Import MPI test constants
 using namespace MPITestConstants;
 using namespace RCCLTestGuards;
+using namespace RCCLTestHelpers;
 
 namespace
 {
@@ -25,12 +27,10 @@ inline constexpr size_t kLargeBufferSize       = 135168;
 inline constexpr size_t kMediumBufferSize      = 16384;
 inline constexpr size_t kMaxValidationElements = 100;
 
-// Helper to perform stream synchronization with error handling
-hipError_t syncStream(hipStream_t stream, int rank)
-{
-    const auto err = hipStreamSynchronize(stream);
-    return err;
-}
+// Test pattern generation constants
+inline constexpr int kDefaultPatternMultiplier = 1000; // For standard rank-based patterns
+inline constexpr int kSmallPatternMultiplier   = 100; // For smaller patterns (memcpy tests)
+
 } // namespace
 
 // P2P-specific test configuration
@@ -64,35 +64,24 @@ protected:
         p2p_config.is_sender   = (config.world_rank == 0);
         p2p_config.buffer_size = kDefaultBufferSize;
 
-        // Allocate test buffers
-        hipError_t hip_result = hipMalloc(&p2p_config.send_buffer, p2p_config.buffer_size);
-        ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << config.world_rank << ": Failed to allocate send buffer";
-        BufferGuard sendGuard(p2p_config.send_buffer, false); // Guard after successful allocation
+        // Allocate and initialize send buffer with test pattern
+        constexpr size_t num_elements = kDefaultBufferSize / sizeof(float);
+        auto [send_err, _]            = allocateAndInitialize<float>(&p2p_config.send_buffer,
+                                                          num_elements,
+                                                          config.world_rank);
+        ASSERT_EQ(hipSuccess, send_err)
+            << "Rank " << config.world_rank << ": Failed to allocate/initialize send buffer";
+        BufferGuard sendGuard(p2p_config.send_buffer, false);
 
-        hip_result = hipMalloc(&p2p_config.recv_buffer, p2p_config.buffer_size);
+        // Allocate and zero-initialize receive buffer
+        hipError_t hip_result = hipMalloc(&p2p_config.recv_buffer, p2p_config.buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate recv buffer";
-        BufferGuard recvGuard(p2p_config.recv_buffer, false); // Guard after successful allocation
+        BufferGuard recvGuard(p2p_config.recv_buffer, false);
 
-        // Initialize send buffer with test data
-        constexpr size_t   num_elements = kDefaultBufferSize / sizeof(float);
-        std::vector<float> host_data(num_elements);
-        for(size_t i = 0; i < num_elements; i++)
-        {
-            host_data[i] = static_cast<float>(config.world_rank * 1000 + i);
-        }
-
-        ASSERT_EQ(hipSuccess,
-                  hipMemcpy(p2p_config.send_buffer,
-                            host_data.data(),
-                            p2p_config.buffer_size,
-                            hipMemcpyHostToDevice))
-            << "Rank " << config.world_rank << ": Failed to initialize send buffer";
-
-        // Initialize receive buffer to zero
-        ASSERT_EQ(hipSuccess, hipMemset(p2p_config.recv_buffer, 0, p2p_config.buffer_size))
-            << "Rank " << config.world_rank << ": Failed to initialize recv buffer";
+        hip_result = zeroInitializeBuffer<float>(p2p_config.recv_buffer, num_elements);
+        ASSERT_EQ(hipSuccess, hip_result)
+            << "Rank " << config.world_rank << ": Failed to zero-initialize recv buffer";
 
         // Synchronize stream to ensure all buffer operations complete
         ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
@@ -114,12 +103,12 @@ protected:
         // Cleanup P2P-specific test resources
         if(p2p_config.send_buffer)
         {
-            HIPCHECK(hipFree(p2p_config.send_buffer));
+            HIP_TEST_CHECK_GTEST_FAIL(hipFree(p2p_config.send_buffer));
             p2p_config.send_buffer = nullptr;
         }
         if(p2p_config.recv_buffer)
         {
-            HIPCHECK(hipFree(p2p_config.recv_buffer));
+            HIP_TEST_CHECK_GTEST_FAIL(hipFree(p2p_config.recv_buffer));
             p2p_config.recv_buffer = nullptr;
         }
 
@@ -193,23 +182,6 @@ public:
         ASSERT_EQ(ncclSuccess, result)
             << "Rank " << config.world_rank << ": " << (p2p_config.is_sender ? "Send" : "Recv")
             << " setup failed: " << ncclGetErrorString(result);
-
-        // Synchronize all ranks after setup to ensure proxy threads have
-        // initialized
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Waiting for proxy threads to complete initialization");
-        }
-
-        // Second barrier to ensure all proxy threads are ready
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Proxy threads ready, proceeding with tests");
-        }
     }
 
     // Test P2P connection phase
@@ -390,7 +362,8 @@ public:
             const size_t validation_count = std::min(num_elements, kMaxValidationElements);
             for(size_t i = 0; i < validation_count; i++)
             {
-                const float    expected_float = static_cast<float>(config.peer_rank * 1000 + i);
+                const float expected_float
+                    = static_cast<float>(config.peer_rank * kDefaultPatternMultiplier + i);
                 const uint32_t expected_value = *reinterpret_cast<const uint32_t*>(&expected_float);
 
                 ASSERT_EQ(expected_value, host_recv_data[i])
@@ -494,7 +467,7 @@ public:
             << "Rank " << RCCLMPIEnvironment::world_rank
             << ": Failed to initialize memcpy communicator, result: " << init_result << " ("
             << ncclGetErrorString(init_result) << ")";
-        NcclCommGuard commGuard(memcpy_comm); // Guard communicator for automatic cleanup
+        NcclCommAutoGuard commGuard(memcpy_comm); // Guard communicator for automatic cleanup
 
         if(RCCLMPIEnvironment::world_rank == 0)
         {
@@ -511,23 +484,20 @@ public:
             << "Rank " << RCCLMPIEnvironment::world_rank
             << ": Failed to allocate send buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
-        BufferGuard sendBufferGuard(send_buffer, false); // Guard after successful allocation
+        auto sendBufferGuard = makeDeviceBufferAutoGuard(send_buffer);
 
         hip_result = hipMalloc(&recv_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << RCCLMPIEnvironment::world_rank
             << ": Failed to allocate recv buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
-        BufferGuard recvBufferGuard(recv_buffer, false); // Guard after successful allocation
+        auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
 
         // Initialize send buffer with test pattern
-        std::vector<float> host_data(1024);
-        for(size_t i = 0; i < 1024; i++)
-        {
-            host_data[i] = static_cast<float>(RCCLMPIEnvironment::world_rank * 100 + i);
-        }
-
-        hip_result = hipMemcpy(send_buffer, host_data.data(), buffer_size, hipMemcpyHostToDevice);
+        hip_result = initializeBufferWithPattern<float>(send_buffer,
+                                                        1024,
+                                                        RCCLMPIEnvironment::world_rank,
+                                                        kSmallPatternMultiplier);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << RCCLMPIEnvironment::world_rank
             << ": Failed to initialize send buffer for memcpy test, error: "
@@ -612,17 +582,9 @@ public:
         }
 
         // Step 3: Initialize send buffer with test pattern
-        const size_t       num_floats = kLargeBufferSize / sizeof(float);
-        std::vector<float> host_send_data(num_floats);
-        for(size_t i = 0; i < num_floats; i++)
-        {
-            host_send_data[i] = static_cast<float>(config.world_rank * 1000 + i);
-        }
-
-        hipError_t hip_result = hipMemcpy(send_buffer,
-                                          host_send_data.data(),
-                                          kLargeBufferSize,
-                                          hipMemcpyHostToDevice);
+        const size_t num_floats = kLargeBufferSize / sizeof(float);
+        hipError_t   hip_result
+            = initializeBufferWithPattern<float>(send_buffer, num_floats, config.world_rank);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to initialize send buffer";
 
@@ -684,31 +646,21 @@ public:
         }
 
         // Step 7: Verify received data correctness
-        std::vector<float> host_recv_data(num_floats);
-        hip_result = hipMemcpy(host_recv_data.data(),
-                               recv_buffer,
-                               kLargeBufferSize,
-                               hipMemcpyDeviceToHost);
-        ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << config.world_rank << ": Failed to copy received data to host";
+        size_t error_idx;
+        float  expected_val, actual_val;
+        bool   data_correct = verifyBufferData<float>(recv_buffer,
+                                                    num_floats,
+                                                    recv_peer,
+                                                    1000,
+                                                    10,
+                                                    1e-5,
+                                                    &error_idx,
+                                                    &expected_val,
+                                                    &actual_val);
 
-        // Expected data is from recv_peer
-        bool data_correct = true;
-        for(size_t i = 0; i < num_floats && i < 10; i++)
-        { // Check first 10 elements
-            float expected = static_cast<float>(recv_peer * 1000 + i);
-            if(std::abs(host_recv_data[i] - expected) > 1e-5)
-            {
-                data_correct = false;
-                TEST_INFO("Data mismatch at index %zu: expected %f, got %f",
-                          i,
-                          expected,
-                          host_recv_data[i]);
-                break;
-            }
-        }
-
-        EXPECT_TRUE(data_correct) << "Rank " << config.world_rank << ": Data verification failed";
+        EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
+                                  << ": Data verification failed at index " << error_idx
+                                  << ": expected " << expected_val << ", got " << actual_val;
 
         if(data_correct && config.world_rank == 0)
         {
@@ -784,20 +736,21 @@ public:
             << "Rank " << config.world_rank << ": Stream sync failed - try NCCL_P2P_DISABLE=1";
 
         // Verify data correctness
-        std::vector<float> host_recv_data(count);
-        ASSERT_EQ(
-            hipSuccess,
-            hipMemcpy(host_recv_data.data(), recv_buffer, kLargeBufferSize, hipMemcpyDeviceToHost))
-            << "Rank " << config.world_rank << ": Failed to copy data to host for verification";
-
-        const int    peer_rank_verify = 1 - config.world_rank;
-        const size_t verify_count     = std::min(size_t{10}, host_recv_data.size());
-
-        for(size_t i = 0; i < verify_count; i++)
-        {
-            const float expected = static_cast<float>(peer_rank_verify * 1000 + i);
-            EXPECT_FLOAT_EQ(expected, host_recv_data[i]) << "Data mismatch at index " << i;
-        }
+        const int peer_rank_verify = 1 - config.world_rank;
+        size_t    error_idx;
+        float     expected_val, actual_val;
+        bool      data_correct = verifyBufferData<float>(recv_buffer,
+                                                    count,
+                                                    peer_rank_verify,
+                                                    1000,
+                                                    10,
+                                                    1e-5,
+                                                    &error_idx,
+                                                    &expected_val,
+                                                    &actual_val);
+        EXPECT_TRUE(data_correct) << "Rank " << config.world_rank << ": Data mismatch at index "
+                                  << error_idx << ": expected " << expected_val << ", got "
+                                  << actual_val;
     }
 
     // Test ncclIpcGraphRegisterBuffer API with multiple peers
@@ -920,30 +873,22 @@ public:
         }
 
         // Verify received data
-        std::vector<float> host_recv_data(count);
-        ASSERT_EQ(
-            hipSuccess,
-            hipMemcpy(host_recv_data.data(), recv_buffer, kLargeBufferSize, hipMemcpyDeviceToHost))
-            << "Rank " << config.world_rank << ": Failed to copy received data to host";
+        size_t error_idx;
+        float  expected_val, actual_val;
+        bool   data_correct = verifyBufferData<float>(recv_buffer,
+                                                    count,
+                                                    peer_rank,
+                                                    1000,
+                                                    10,
+                                                    1e-5,
+                                                    &error_idx,
+                                                    &expected_val,
+                                                    &actual_val);
 
-        // Validate first few elements
-        bool data_correct = true;
-        for(size_t i = 0; i < std::min(size_t{10}, host_recv_data.size()); i++)
-        {
-            float expected = static_cast<float>(peer_rank * 1000 + i);
-            if(std::abs(host_recv_data[i] - expected) > 1e-5)
-            {
-                data_correct = false;
-                TEST_INFO("Data mismatch at index %zu: expected %f, got %f",
-                          i,
-                          expected,
-                          host_recv_data[i]);
-                break;
-            }
-        }
-
-        EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
-                                  << ": IPC graph registered buffer data verification failed";
+        EXPECT_TRUE(data_correct)
+            << "Rank " << config.world_rank
+            << ": IPC graph registered buffer data verification failed at index " << error_idx
+            << ": expected " << expected_val << ", got " << actual_val;
 
         if(data_correct && config.world_rank == 0)
         {
@@ -954,9 +899,6 @@ public:
         {
             TEST_INFO("ncclIpcGraphRegisterBuffer test completed successfully");
         }
-
-        // Synchronize before returning
-        MPI_Barrier(MPI_COMM_WORLD);
     }
 };
 
@@ -982,9 +924,6 @@ TEST_F(P2pMPITest, P2pWorkflow)
     }
 
     testP2PCanConnect();
-    // Synchronize after canConnect check
-    MPI_Barrier(MPI_COMM_WORLD);
-
     testP2PSetup();
     testP2PConnect();
     testP2PDataTransfer();
@@ -1056,9 +995,6 @@ TEST_F(P2pMPITest, P2pSendRecvRegistrationTest)
                   config.world_size);
     }
 
-    // Synchronize all ranks before starting test
-    MPI_Barrier(MPI_COMM_WORLD);
-
     // This test performs Send/Recv operations which internally trigger
     // ncclRegisterP2pIpcBuffer from sendrecv_reg.cc
     testP2PSendRecvRegistration();
@@ -1090,9 +1026,6 @@ TEST_F(P2pMPITest, P2pRegistrationBasicBuffersTest)
         TEST_INFO("Starting basic P2P IPC buffer registration test (%d processes)",
                   config.world_size);
     }
-
-    // Synchronize all ranks before starting test
-    MPI_Barrier(MPI_COMM_WORLD);
 
     testP2PRegistrationBasicBuffers();
 
@@ -1151,8 +1084,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NullBufferPointer)
         << "Rank " << config.world_rank << ": API should handle null buffer gracefully";
     EXPECT_EQ(0, ipc_reg_flag) << "Rank " << config.world_rank
                                << ": Registration flag should be 0 for null buffer";
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_ZeroSize)
@@ -1180,7 +1111,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_ZeroSize)
     ncclIntruQueue<ncclCommCallback, &ncclCommCallback::next> cleanup_queue{};
 
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 1024));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer with actual size (1024)
@@ -1219,7 +1150,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_ZeroSize)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_VerySmallBuffer)
@@ -1249,7 +1179,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_VerySmallBuffer)
 
     void*        buffer     = nullptr;
     const size_t small_size = 64;
-    HIPCHECK(hipMalloc(&buffer, small_size));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, small_size));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer
@@ -1289,7 +1219,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_VerySmallBuffer)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_LargeBuffer)
@@ -1370,8 +1299,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_LargeBuffer)
         }
         GTEST_SKIP() << "Large buffer allocation failed";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_InvalidPeerRank)
@@ -1402,7 +1329,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_InvalidPeerRank)
     ncclIntruQueue<ncclCommCallback, &ncclCommCallback::next> cleanup_queue{};
 
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 1024));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer
@@ -1443,8 +1370,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_InvalidPeerRank)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_NegativePeerRank)
@@ -1474,7 +1399,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NegativePeerRank)
     ncclIntruQueue<ncclCommCallback, &ncclCommCallback::next> cleanup_queue{};
 
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 1024));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer
@@ -1515,8 +1440,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NegativePeerRank)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
@@ -1544,7 +1467,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
     ncclIntruQueue<ncclCommCallback, &ncclCommCallback::next> cleanup_queue{};
 
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 4096));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 4096));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer
@@ -1601,8 +1524,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_SelfPeerRank)
@@ -1629,7 +1550,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SelfPeerRank)
     ncclIntruQueue<ncclCommCallback, &ncclCommCallback::next> cleanup_queue{};
 
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 1024));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer
@@ -1666,8 +1587,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SelfPeerRank)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_UnalignedBufferAddress)
@@ -1695,7 +1614,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_UnalignedBufferAddress)
     ncclIntruQueue<ncclCommCallback, &ncclCommCallback::next> cleanup_queue{};
 
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 4096));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 4096));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register the aligned buffer first
@@ -1737,8 +1656,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_UnalignedBufferAddress)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, P2pIpcBufferRegistration_NonPowerOfTwoSize)
@@ -1767,7 +1684,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NonPowerOfTwoSize)
 
     void*        buffer   = nullptr;
     const size_t odd_size = 12345;
-    HIPCHECK(hipMalloc(&buffer, odd_size));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, odd_size));
     BufferGuard bufferGuard(buffer, false); // GPU memory
 
     // Pre-register buffer
@@ -1805,8 +1722,6 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NonPowerOfTwoSize)
         ASSERT_EQ(ncclSuccess, ncclCommDeregister(getActiveCommunicator(), reg_handle))
             << "Rank " << config.world_rank << ": Failed to deregister buffer";
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(P2pMPITest, IpcGraphRegisterBufferTest)

@@ -4,12 +4,147 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
+#include "RCCLTestBufferHelpers.hpp"
 #include "TransportMPIBase.hpp"
 
 #ifdef MPI_TESTS_ENABLED
 
 // Import MPI test constants
 using namespace MPITestConstants;
+using namespace RCCLTestHelpers;
+
+// NET-specific RAII deleters
+namespace RCCLTestGuards
+{
+
+struct NetMHandleDeleter
+{
+    ncclNet_t* net;
+    void*      comm;
+    NetMHandleDeleter(ncclNet_t* n = nullptr, void* c = nullptr) : net(n), comm(c) {}
+    void operator()(void* mhandle) const
+    {
+        if(mhandle && comm && net)
+        {
+            net->deregMr(comm, mhandle);
+        }
+    }
+};
+
+struct NetSendCommDeleter
+{
+    ncclNet_t* net;
+    explicit NetSendCommDeleter(ncclNet_t* n = nullptr) : net(n) {}
+    void operator()(void* comm) const
+    {
+        if(comm && net)
+            net->closeSend(comm);
+    }
+};
+
+struct NetRecvCommDeleter
+{
+    ncclNet_t* net;
+    explicit NetRecvCommDeleter(ncclNet_t* n = nullptr) : net(n) {}
+    void operator()(void* comm) const
+    {
+        if(comm && net)
+            net->closeRecv(comm);
+    }
+};
+
+struct NetListenCommDeleter
+{
+    ncclNet_t* net;
+    explicit NetListenCommDeleter(ncclNet_t* n = nullptr) : net(n) {}
+    void operator()(void* comm) const
+    {
+        if(comm && net)
+            net->closeListen(comm);
+    }
+};
+
+using NetMHandleGuard    = ResourceGuard<void*, NetMHandleDeleter>;
+using NetSendCommGuard   = ResourceGuard<void*, NetSendCommDeleter>;
+using NetRecvCommGuard   = ResourceGuard<void*, NetRecvCommDeleter>;
+using NetListenCommGuard = ResourceGuard<void*, NetListenCommDeleter>;
+
+class NetConnectionGuard
+{
+private:
+    ncclNet_t* net_;
+    void*      listen_comm_;
+    void*      send_comm_;
+    void*      recv_comm_;
+
+public:
+    explicit NetConnectionGuard(ncclNet_t* net)
+        : net_(net), listen_comm_(nullptr), send_comm_(nullptr), recv_comm_(nullptr)
+    {}
+
+    ~NetConnectionGuard()
+    {
+        if(recv_comm_ && net_)
+            net_->closeRecv(recv_comm_);
+        if(send_comm_ && net_)
+            net_->closeSend(send_comm_);
+        if(listen_comm_ && net_)
+            net_->closeListen(listen_comm_);
+    }
+
+    void setListenComm(void* comm)
+    {
+        listen_comm_ = comm;
+    }
+    void setSendComm(void* comm)
+    {
+        send_comm_ = comm;
+    }
+    void setRecvComm(void* comm)
+    {
+        recv_comm_ = comm;
+    }
+
+    void* getListenComm() const
+    {
+        return listen_comm_;
+    }
+    void* getSendComm() const
+    {
+        return send_comm_;
+    }
+    void* getRecvComm() const
+    {
+        return recv_comm_;
+    }
+
+    NetConnectionGuard(const NetConnectionGuard&)            = delete;
+    NetConnectionGuard& operator=(const NetConnectionGuard&) = delete;
+    NetConnectionGuard(NetConnectionGuard&&)                 = delete;
+    NetConnectionGuard& operator=(NetConnectionGuard&&)      = delete;
+};
+
+inline NetMHandleGuard makeNetMHandleGuard(void* mhandle, ncclNet_t* net, void* comm)
+{
+    return NetMHandleGuard(mhandle, NetMHandleDeleter(net, comm));
+}
+
+inline NetSendCommGuard makeNetSendCommGuard(void* comm, ncclNet_t* net)
+{
+    return NetSendCommGuard(comm, NetSendCommDeleter(net));
+}
+
+inline NetRecvCommGuard makeNetRecvCommGuard(void* comm, ncclNet_t* net)
+{
+    return NetRecvCommGuard(comm, NetRecvCommDeleter(net));
+}
+
+inline NetListenCommGuard makeNetListenCommGuard(void* comm, ncclNet_t* net)
+{
+    return NetListenCommGuard(comm, NetListenCommDeleter(net));
+}
+
+} // namespace RCCLTestGuards
 
 namespace
 {
@@ -19,6 +154,11 @@ inline constexpr size_t kTestBufferSize = 16384;
 // NET transport test requirements
 inline constexpr int kMinNodesForNET   = 2; // NET transport requires at least 2 nodes
 inline constexpr int kExactRanksForNET = 2; // NET transport tests use exactly 2 ranks (1 per node)
+
+// Test pattern generation constants
+inline constexpr int kDefaultPatternMultiplier = 100; // For NET transport patterns
+inline constexpr int kByteValueModulo          = 256; // For uint8_t wraparound
+
 } // namespace
 
 class NetTransportMPITest : public TransportTestBase
@@ -234,8 +374,7 @@ public:
             for(size_t i = 0; i < size; i++)
             {
                 send_data[i] = static_cast<uint8_t>(
-                    (config.world_rank * 100 + i)
-                    % 256); // Adjusted the pattern to use modulo 256 to fit in a byte
+                    (config.world_rank * kDefaultPatternMultiplier + i) % kByteValueModulo);
             }
 
             // Initialize recv buffer with invalid pattern
@@ -246,33 +385,28 @@ public:
             }
 
             // Perform actual data transfer using NCCL Send/Recv
-            ASSERT_EQ(ncclSuccess, ncclGroupStart())
-                << "Rank " << config.world_rank << ": Failed to start NCCL group for size " << size;
+            // Use ASSERT_MPI_SUCCESS to ensure both ranks synchronize on NCCL errors
+            ASSERT_MPI_SUCCESS(ncclGroupStart());
 
-            ASSERT_EQ(
-                ncclSuccess,
-                ncclSend(send_buffer, size, ncclInt8, peer_rank, getActiveCommunicator(), stream))
-                << "Rank " << config.world_rank << ": ncclSend failed for size " << size;
+            ASSERT_MPI_SUCCESS(
+                ncclSend(send_buffer, size, ncclInt8, peer_rank, getActiveCommunicator(), stream));
 
-            ASSERT_EQ(
-                ncclSuccess,
-                ncclRecv(recv_buffer, size, ncclInt8, peer_rank, getActiveCommunicator(), stream))
-                << "Rank " << config.world_rank << ": ncclRecv failed for size " << size;
+            ASSERT_MPI_SUCCESS(
+                ncclRecv(recv_buffer, size, ncclInt8, peer_rank, getActiveCommunicator(), stream));
 
-            ASSERT_EQ(ncclSuccess, ncclGroupEnd())
-                << "Rank " << config.world_rank << ": Failed to end NCCL group for size " << size;
+            ASSERT_MPI_SUCCESS(ncclGroupEnd());
 
             // Wait for transfer to complete
-            ASSERT_EQ(hipSuccess, hipStreamSynchronize(stream))
-                << "Rank " << config.world_rank << ": Stream synchronization failed for size "
-                << size;
+            // Use ASSERT_MPI_EQ to ensure both ranks synchronize on HIP errors
+            ASSERT_MPI_EQ(hipSuccess, hipStreamSynchronize(stream));
 
             // Verify received data matches peer's send pattern
             int       errors              = 0;
             const int max_errors_to_print = 5;
             for(size_t i = 0; i < size && errors < max_errors_to_print; i++)
             {
-                uint8_t expected = static_cast<uint8_t>((peer_rank * 100 + i) % 256);
+                uint8_t expected = static_cast<uint8_t>((peer_rank * kDefaultPatternMultiplier + i)
+                                                        % kByteValueModulo);
                 if(recv_data[i] != expected)
                 {
                     TEST_WARN("Size %zu - Data mismatch at index %zu: expected %u, got %u",
@@ -292,12 +426,7 @@ public:
                 TEST_INFO("  Size %zu - Data transfer successful and verified", size);
             }
 
-            // Guards will automatically cleanup at end of loop iteration
-        }
-
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Multiple buffer sizes test completed successfully - all sizes verified");
+            // Resource Guards will automatically cleanup at end of loop iteration
         }
     }
 };
@@ -316,8 +445,8 @@ TEST_F(NetTransportMPITest, NetGraphRegisterBufferTest)
                      << kMinNodesForNET << " nodes (1 rank per node)";
     }
 
-    // Create test-specific communicator for isolation
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Create test-specific communicator
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     if(config.world_rank == 0)
     {
@@ -345,8 +474,8 @@ TEST_F(NetTransportMPITest, NetLocalRegisterBufferTest)
                      << kMinNodesForNET << " nodes (1 rank per node)";
     }
 
-    // Create test-specific communicator for isolation
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Create test-specific communicator
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     if(config.world_rank == 0)
     {
@@ -374,7 +503,7 @@ TEST_F(NetTransportMPITest, MultipleBufferSizesTest)
                      << kMinNodesForNET << " nodes (1 rank per node)";
     }
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     if(config.world_rank == 0)
     {
