@@ -1,6 +1,9 @@
-# MPI Test Runner
+# MPI Test Runner (Google Test)
 
-A simple C++ testing framework for multi-process RCCL tests using MPI (Message Passing Interface) and Google Test.
+A simple C++ testing framework for multi-process RCCL tests using MPI (Message Passing Interface) and **Google Test**.
+
+> **📝 Note:** This guide covers **Google Test-based** MPI testing. For **standalone tests** without
+> Google Test (performance, low-level API tests), see **[STANDALONE_TEST_GUIDE.md](STANDALONE_TEST_GUIDE.md)**.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -12,12 +15,13 @@ A simple C++ testing framework for multi-process RCCL tests using MPI (Message P
 - [Examples](#examples)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
+- [Standalone Tests](#standalone-tests)
 
 ---
 
 ## Overview
 
-`MPITestBase` is a base class for writing multi-process tests that verify RCCL features across multiple GPUs. It provides infrastructure for MPI-based distributed testing.
+`MPITestBase` is a Google Test adapter for writing multi-process tests that verify RCCL features across multiple GPUs. It provides infrastructure for MPI-based distributed testing.
 
 **Key Features:**
 - ✅ Multi-process testing with MPI
@@ -27,6 +31,7 @@ A simple C++ testing framework for multi-process RCCL tests using MPI (Message P
 - ✅ HIP stream lifecycle management
 - ✅ Integrated with Google Test framework
 - ✅ Test-specific communicators for isolation
+- ✅ Framework-agnostic core (can be used without GTest)
 
 **Location:** `test/common/MPITestBase.hpp`
 
@@ -92,10 +97,12 @@ TEST_F(MyMPITest, AllReduce) {
 ### Basic Example
 
 ```cpp
-#include "common/MPITestBase.hpp"
+#include "MPITestBase.hpp"
+#include "RCCLTestResourceGuards.hpp"
 
-// Import constants for convenience
+// Import constants and guards
 using namespace MPITestConstants;
+using namespace RCCLTestGuards;
 
 class MyMPITest : public MPITestBase {
 protected:
@@ -106,36 +113,39 @@ protected:
 
 TEST_F(MyMPITest, BasicAllReduce) {
   // Validate we have enough processes (uses defaults for other parameters)
-  validateTestPrerequisites(kMinProcessesForMPI);  // min=2, no max, any nodes
+  ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI));  // min=2, no max, any nodes
 
   // Create test-specific communicator
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
   const int N = 1024;
-  float* d_send;
-  float* d_recv;
+  float* d_send = nullptr;
+  float* d_recv = nullptr;
 
-  // Allocate GPU memory
-  HIPCHECK(hipMalloc(&d_send, N * sizeof(float)));
-  HIPCHECK(hipMalloc(&d_recv, N * sizeof(float)));
+  // Allocate GPU memory with RAII guards for automatic cleanup
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
+  auto send_guard = makeDeviceBufferAutoGuard(d_send);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
+  auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
 
   // Initialize with rank-specific data
   float value = RCCLMPIEnvironment::world_rank + 1.0f;
-  HIPCHECK(hipMemset(d_send, value, N * sizeof(float)));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemset(d_send, value, N * sizeof(float)));
 
   // Perform AllReduce
-  NCCLCHECK(ncclAllReduce(
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(
       d_send, d_recv, N, ncclFloat, ncclSum,
       getActiveCommunicator(),
       getActiveStream()
   ));
 
-  HIPCHECK(hipStreamSynchronize(getActiveStream()));
+  HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
   // Verify result
   std::vector<float> result(N);
-  HIPCHECK(hipMemcpy(result.data(), d_recv, N * sizeof(float),
-                     hipMemcpyDeviceToHost));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(result.data(), d_recv, N * sizeof(float),
+                                       hipMemcpyDeviceToHost));
 
   float expected = (RCCLMPIEnvironment::world_size *
                     (RCCLMPIEnvironment::world_size + 1)) / 2.0f;
@@ -144,9 +154,7 @@ TEST_F(MyMPITest, BasicAllReduce) {
     EXPECT_FLOAT_EQ(result[i], expected);
   }
 
-  // Cleanup
-  HIPCHECK(hipFree(d_send));
-  HIPCHECK(hipFree(d_recv));
+  // Automatic cleanup via RAII guards - no manual hipFree() needed!
 }
 ```
 
@@ -339,7 +347,7 @@ MPI barriers ensure all ranks reach certain points together:
 
 ```cpp
 // Explicit barrier (use sparingly)
-MPI_Barrier(MPI_COMM_WORLD);
+ASSERT_MPI_SUCCESS(MPI_Barrier(MPI_COMM_WORLD));
 
 // Barriers are automatically used in:
 // - createTestCommunicator() (before and after)
@@ -496,7 +504,6 @@ TEST_F(MyMPITest, DebugExample) {
 
 **Available TEST_* Macros:**
 ```cpp
-TEST_VERSION("Version info");    // NCCL_DEBUG=VERSION or higher
 TEST_WARN("Warning message");    // NCCL_DEBUG=WARN or higher
 TEST_INFO("Info message");       // NCCL_DEBUG=INFO or higher
 TEST_ABORT("Abort message");     // NCCL_DEBUG=ABORT or higher
@@ -717,14 +724,14 @@ printf("Detected %d unique node(s)\n", nodes);
 ### Helper Macros
 
 ```cpp
-// MPI error checking (test code)
-MPICHECK(MPI_Function());
+// MPI error checking
+ASSERT_MPI_SUCCESS(MPI_Function());  // GTest assertion-based
 
 // RCCL error checking
-NCCLCHECK(ncclFunction());
+RCCL_TEST_CHECK_GTEST_FAIL(ncclFunction());  // GTest FAIL on error
 
 // HIP error checking
-HIPCHECK(hipFunction());
+HIP_TEST_CHECK_GTEST_FAIL(hipFunction());  // GTest FAIL on error
 ```
 
 ---
@@ -745,20 +752,23 @@ TEST_F(UnifiedMPITest, BasicAllReduce) {
   std::vector<float> send_data(N, RCCLMPIEnvironment::world_rank + 1.0f);
   std::vector<float> recv_data(N);
 
-  float *d_send, *d_recv;
-  HIPCHECK(hipMalloc(&d_send, N * sizeof(float)));
-  HIPCHECK(hipMalloc(&d_recv, N * sizeof(float)));
+  float *d_send = nullptr, *d_recv = nullptr;
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
+  auto send_guard = makeDeviceBufferAutoGuard(d_send);
 
-  HIPCHECK(hipMemcpy(d_send, send_data.data(), N * sizeof(float),
-                     hipMemcpyHostToDevice));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
+  auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_send, send_data.data(), N * sizeof(float),
+                                       hipMemcpyHostToDevice));
 
   // AllReduce: Sum across all ranks
-  NCCLCHECK(ncclAllReduce(d_send, d_recv, N, ncclFloat, ncclSum,
-                          getActiveCommunicator(), getActiveStream()));
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(d_send, d_recv, N, ncclFloat, ncclSum,
+                                            getActiveCommunicator(), getActiveStream()));
 
-  HIPCHECK(hipMemcpy(recv_data.data(), d_recv, N * sizeof(float),
-                     hipMemcpyDeviceToHost));
-  HIPCHECK(hipStreamSynchronize(getActiveStream()));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(recv_data.data(), d_recv, N * sizeof(float),
+                                       hipMemcpyDeviceToHost));
+  HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
   // Verify: sum of (1 + 2 + 3 + ... + world_size)
   float expected = (RCCLMPIEnvironment::world_size *
@@ -768,8 +778,7 @@ TEST_F(UnifiedMPITest, BasicAllReduce) {
     EXPECT_FLOAT_EQ(recv_data[i], expected);
   }
 
-  HIPCHECK(hipFree(d_send));
-  HIPCHECK(hipFree(d_recv));
+  // Automatic cleanup via RAII guards
 }
 ```
 
@@ -788,25 +797,27 @@ TEST_F(UnifiedMPITest, Broadcast) {
     std::iota(data.begin(), data.end(), 1.0f);  // 1, 2, 3, ..., N
   }
 
-  float *d_data;
-  HIPCHECK(hipMalloc(&d_data, N * sizeof(float)));
-  HIPCHECK(hipMemcpy(d_data, data.data(), N * sizeof(float),
-                     hipMemcpyHostToDevice));
+  float *d_data = nullptr;
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_data, N * sizeof(float)));
+  auto data_guard = makeDeviceBufferAutoGuard(d_data);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_data, data.data(), N * sizeof(float),
+                                       hipMemcpyHostToDevice));
 
   // Broadcast from rank 0 to all ranks
-  NCCLCHECK(ncclBroadcast(d_data, d_data, N, ncclFloat, 0,
-                          getActiveCommunicator(), getActiveStream()));
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclBroadcast(d_data, d_data, N, ncclFloat, 0,
+                                            getActiveCommunicator(), getActiveStream()));
 
-  HIPCHECK(hipMemcpy(data.data(), d_data, N * sizeof(float),
-                     hipMemcpyDeviceToHost));
-  HIPCHECK(hipStreamSynchronize(getActiveStream()));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(data.data(), d_data, N * sizeof(float),
+                                       hipMemcpyDeviceToHost));
+  HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
   // All ranks should have the same data now
   for (int i = 0; i < N; i++) {
     EXPECT_FLOAT_EQ(data[i], i + 1.0f);
   }
 
-  HIPCHECK(hipFree(d_data));
+  // Automatic cleanup via RAII guards
 }
 ```
 
@@ -820,8 +831,8 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
   const int N = 1024;
   const int peer_rank = 1 - RCCLMPIEnvironment::world_rank;  // 0↔1
 
-  float* d_send;
-  float* d_recv;
+  float* d_send = nullptr;
+  float* d_recv = nullptr;
   std::vector<float> h_send(N);
   std::vector<float> h_recv(N);
 
@@ -830,27 +841,31 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
     h_send[i] = RCCLMPIEnvironment::world_rank * 1000 + i;
   }
 
-  HIPCHECK(hipMalloc(&d_send, N * sizeof(float)));
-  HIPCHECK(hipMalloc(&d_recv, N * sizeof(float)));
-  HIPCHECK(hipMemcpy(d_send, h_send.data(), N * sizeof(float),
-                     hipMemcpyHostToDevice));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
+  auto send_guard = makeDeviceBufferAutoGuard(d_send);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
+  auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_send, h_send.data(), N * sizeof(float),
+                                       hipMemcpyHostToDevice));
 
   // Exchange data between ranks
   if (RCCLMPIEnvironment::world_rank == 0) {
-    NCCLCHECK(ncclSend(d_send, N, ncclFloat, 1,
-                       getActiveCommunicator(), getActiveStream()));
-    NCCLCHECK(ncclRecv(d_recv, N, ncclFloat, 1,
-                       getActiveCommunicator(), getActiveStream()));
+    RCCL_TEST_CHECK_GTEST_FAIL(ncclSend(d_send, N, ncclFloat, 1,
+                                         getActiveCommunicator(), getActiveStream()));
+    RCCL_TEST_CHECK_GTEST_FAIL(ncclRecv(d_recv, N, ncclFloat, 1,
+                                         getActiveCommunicator(), getActiveStream()));
   } else {
-    NCCLCHECK(ncclRecv(d_recv, N, ncclFloat, 0,
-                       getActiveCommunicator(), getActiveStream()));
-    NCCLCHECK(ncclSend(d_send, N, ncclFloat, 0,
-                       getActiveCommunicator(), getActiveStream()));
+    RCCL_TEST_CHECK_GTEST_FAIL(ncclRecv(d_recv, N, ncclFloat, 0,
+                                         getActiveCommunicator(), getActiveStream()));
+    RCCL_TEST_CHECK_GTEST_FAIL(ncclSend(d_send, N, ncclFloat, 0,
+                                         getActiveCommunicator(), getActiveStream()));
   }
 
-  HIPCHECK(hipStreamSynchronize(getActiveStream()));
-  HIPCHECK(hipMemcpy(h_recv.data(), d_recv, N * sizeof(float),
-                     hipMemcpyDeviceToHost));
+  HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(h_recv.data(), d_recv, N * sizeof(float),
+                                       hipMemcpyDeviceToHost));
 
   // Verify received peer's data
   for (int i = 0; i < N; i++) {
@@ -858,8 +873,7 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
     EXPECT_FLOAT_EQ(h_recv[i], expected);
   }
 
-  HIPCHECK(hipFree(d_send));
-  HIPCHECK(hipFree(d_recv));
+  // Automatic cleanup via RAII guards
 }
 ```
 
@@ -871,8 +885,8 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
   const int N = 512;
-  float* d_send;
-  float* d_recv;
+  float* d_send = nullptr;
+  float* d_recv = nullptr;
   std::vector<float> h_send(N);
   std::vector<float> h_recv(N);
 
@@ -881,18 +895,22 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
     h_send[i] = RCCLMPIEnvironment::world_rank * 10 + i;
   }
 
-  HIPCHECK(hipMalloc(&d_send, N * sizeof(float)));
-  HIPCHECK(hipMalloc(&d_recv, N * sizeof(float)));
-  HIPCHECK(hipMemcpy(d_send, h_send.data(), N * sizeof(float),
-                     hipMemcpyHostToDevice));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
+  auto send_guard = makeDeviceBufferAutoGuard(d_send);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
+  auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_send, h_send.data(), N * sizeof(float),
+                                       hipMemcpyHostToDevice));
 
   // AllReduce with MAX operation
-  NCCLCHECK(ncclAllReduce(d_send, d_recv, N, ncclFloat, ncclMax,
-                          getActiveCommunicator(), getActiveStream()));
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(d_send, d_recv, N, ncclFloat, ncclMax,
+                                            getActiveCommunicator(), getActiveStream()));
 
-  HIPCHECK(hipMemcpy(h_recv.data(), d_recv, N * sizeof(float),
-                     hipMemcpyDeviceToHost));
-  HIPCHECK(hipStreamSynchronize(getActiveStream()));
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(h_recv.data(), d_recv, N * sizeof(float),
+                                       hipMemcpyDeviceToHost));
+  HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
   // Maximum should be from highest rank
   for (int i = 0; i < N; i++) {
@@ -900,8 +918,7 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
     EXPECT_FLOAT_EQ(h_recv[i], expected);
   }
 
-  HIPCHECK(hipFree(d_send));
-  HIPCHECK(hipFree(d_recv));
+  // Automatic cleanup via RAII guards
 }
 ```
 
@@ -933,9 +950,9 @@ TEST_F(P2pMPITest, P2pWorkflow) {
 
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
-  // Test runs on single node: ✅
-  // Test skips on multi-node with informative message: ⚠️
-  //   "❌ REQUIREMENT NOT MET: Need at most 1 node(s), detected 2 nodes"
+  // Test runs on single node:
+  // Test skips on multi-node with informative message:
+  //   "Error: REQUIREMENT NOT MET: Need at most 1 node(s), detected 2 nodes"
   //   "This test uses P2P/SHM transport (single-node only)"
   //   "For multi-node testing, use NET transport tests"
 
@@ -959,8 +976,8 @@ TEST_F(NetMPITest, NetWorkflow) {
 
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
-  // Test runs on single node: ✅
-  // Test runs on multi-node: ✅
+  // Test runs on single node:
+  // Test runs on multi-node:
   // Works with any node configuration
 
   // Your multi-node test logic here...
@@ -1284,12 +1301,12 @@ TEST_F(MyMPITest, TestAllReduce)
 ### 7. Check Return Codes
 
 ```cpp
-// ✅ GOOD: Check all return codes
+// ✅ GOOD: Check all return codes with appropriate macros
 ASSERT_EQ(ncclSuccess, createTestCommunicator());
-NCCLCHECK(ncclAllReduce(...));
-HIPCHECK(hipMalloc(&ptr, size));
+RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(...));
+HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&ptr, size));
 
-// ❌ BAD: Ignoring return values
+// BAD: Ignoring return values
 createTestCommunicator();  // Might fail silently!
 ncclAllReduce(...);         // Could return error
 hipMalloc(&ptr, size);      // Allocation might fail
@@ -1299,12 +1316,12 @@ hipMalloc(&ptr, size);      // Allocation might fail
 
 ```cpp
 // ✅ GOOD: Synchronize before checking results
-NCCLCHECK(ncclAllReduce(...));
-HIPCHECK(hipStreamSynchronize(getActiveStream()));
+RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(...));
+HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 // Now safe to verify results
 
 // ❌ BAD: Check results without sync
-NCCLCHECK(ncclAllReduce(...));
+RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(...));
 EXPECT_EQ(result, expected);  // Operation might not be done!
 ```
 
@@ -1326,6 +1343,304 @@ TEST_F(MyTest, AllReduceSum) {
   // EXPECT_FLOAT_EQ(result, 2.0f);  // Only works with 2 processes!
 }
 ```
+
+---
+
+## RAII Resource Guards
+
+The test infrastructure provides comprehensive RAII (Resource Acquisition Is Initialization) guards for automatic resource cleanup. These guards ensure resources are cleaned up even when tests fail via `ASSERT_*` or `EXPECT_*` failures.
+
+### Overview
+
+Two types of guards are provided:
+
+1. **`AutoGuard<T, auto DeleterFunc>`** - Modern C++17 guard using function pointers (for simple cleanup)
+2. **`ResourceGuard<T, Deleter>`** - Functor-based guard (for complex stateful cleanup)
+
+### AutoGuard - Simple Cleanup
+
+For resources with simple, stateless cleanup functions:
+
+```cpp
+// Device memory
+void* buffer;
+hipMalloc(&buffer, size);
+auto guard = makeDeviceBufferAutoGuard(buffer);
+// buffer automatically freed on scope exit
+
+// HIP stream
+hipStream_t stream;
+hipStreamCreate(&stream);
+auto guard = makeStreamAutoGuard(stream);
+// stream automatically destroyed on scope exit
+
+// HIP event
+hipEvent_t event;
+hipEventCreate(&event);
+auto guard = makeEventAutoGuard(event);
+// event automatically destroyed on scope exit
+
+// Host memory
+void* host_buf = malloc(size);
+auto guard = makeHostBufferAutoGuard(host_buf);
+// host_buf automatically freed on scope exit
+
+// NCCL communicator
+ncclComm_t comm;
+ncclCommInitRank(&comm, ...);
+auto guard = makeCommAutoGuard(comm);
+// comm automatically destroyed on scope exit
+```
+
+### ResourceGuard - Complex Cleanup
+
+For resources requiring additional context (stateful deleters):
+
+```cpp
+// NCCL registration handle (needs communicator)
+void* reg_handle;
+ncclCommRegister(comm, buffer, size, &reg_handle);
+auto guard = makeRegHandleGuard(reg_handle, comm);
+// reg_handle automatically deregistered on scope exit
+
+// NET plugin memory handle (needs net plugin + comm)
+void* mhandle;
+net->regMr(comm, buffer, size, type, &mhandle);
+auto guard = makeNetMHandleGuard(mhandle, net, comm);
+// mhandle automatically deregistered on scope exit
+
+// NET send communicator (needs net plugin)
+void* send_comm;
+net->connect(dev, handle, &send_comm, &send_dev_handle);
+auto guard = makeNetSendCommGuard(send_comm, net);
+// send_comm automatically closed on scope exit
+```
+
+### Guard Operations
+
+All guards support these operations:
+
+```cpp
+auto guard = makeDeviceBufferAutoGuard(buffer);
+
+// Get the resource handle
+void* buf = guard.get();
+
+// Get pointer to handle (for API calls that take T*)
+void** buf_ptr = guard.ptr();
+
+// Set a new resource
+guard.set(new_buffer);
+
+// Release ownership (prevent cleanup)
+void* released = guard.release();
+
+// Dismiss without returning (prevent cleanup)
+guard.dismiss();
+```
+
+### Specialized Guards
+
+#### BufferGuard - Host or Device Memory
+
+Manages both host and device memory with runtime discrimination:
+
+```cpp
+void* device_buf;
+hipMalloc(&device_buf, size);
+BufferGuard dev_guard(device_buf, false);  // false = device memory
+
+void* host_buf = malloc(size);
+BufferGuard host_guard(host_buf, true);  // true = host memory
+
+// Both automatically freed on scope exit with correct function
+```
+
+#### NetConnectionGuard - Multiple Network Resources
+
+Manages listen, send, and recv communicators together:
+
+```cpp
+NetConnectionGuard conn_guard(net_plugin);
+
+// Set resources as they're created
+conn_guard.setListenComm(listen_comm);
+conn_guard.setSendComm(send_comm);
+conn_guard.setRecvComm(recv_comm);
+
+// All automatically closed on scope exit in correct order
+```
+
+#### TransportResourceGuard - Send and Recv Together
+
+Manages paired send/recv transport resources:
+
+```cpp
+ncclConnector send_conn, recv_conn;
+TransportResourceGuard guard(&send_conn, &recv_conn, transport);
+
+// Both connectors automatically cleaned up on scope exit
+```
+
+### Factory Methods
+
+Prefer factory methods for type deduction and cleaner syntax:
+
+```cpp
+// ✅ GOOD: Factory method (type deduced)
+auto guard = makeDeviceBufferAutoGuard(buffer);
+
+// ❌ VERBOSE: Explicit type (harder to read)
+AutoGuard<void*, hipFreeWrapper> guard(buffer);
+
+// ✅ GOOD: Complex guard with factory
+auto guard = makeRegHandleGuard(handle, comm);
+
+// ❌ VERBOSE: Explicit type
+ResourceGuard<void*, NcclRegHandleDeleter> guard(handle, NcclRegHandleDeleter(comm));
+```
+
+### Available Factory Methods
+
+**Simple Resources (AutoGuard):**
+- `makeHostBufferAutoGuard(void* buffer)` - Host memory
+- `makeDeviceBufferAutoGuard(void* buffer)` - Device memory
+- `makeStreamAutoGuard(hipStream_t stream)` - HIP stream
+- `makeEventAutoGuard(hipEvent_t event)` - HIP event
+- `makeCommAutoGuard(ncclComm_t comm)` - NCCL communicator
+
+**Complex Resources (ResourceGuard):**
+- `makeRegHandleGuard(void* handle, ncclComm_t comm)` - NCCL registration
+- `makeNetMHandleGuard(void* handle, ncclNet_t* net, void* comm)` - NET memory
+- `makeNetSendCommGuard(void* comm, ncclNet_t* net)` - NET send comm
+- `makeNetRecvCommGuard(void* comm, ncclNet_t* net)` - NET recv comm
+- `makeNetListenCommGuard(void* comm, ncclNet_t* net)` - NET listen comm
+- `makeTransportSendGuard(ncclConnector* conn, ncclTransport* trans)` - Transport send
+- `makeTransportRecvGuard(ncclConnector* conn, ncclTransport* trans)` - Transport recv
+
+**Generic:**
+- `makeGuard(T resource, Deleter deleter)` - Generic ResourceGuard
+- `makeCustomGuard(T resource, Deleter deleter)` - Custom deleter (alias)
+
+
+### Best Practices with Guards
+
+**1. Use Guards for All Resources:**
+```cpp
+// ✅ GOOD: Guards ensure cleanup even on assertion failure
+TEST_F(MyTest, Example) {
+  void* buffer;
+  hipMalloc(&buffer, size);
+  auto guard = makeDeviceBufferAutoGuard(buffer);
+
+  ASSERT_TRUE(condition);  // If fails, buffer still freed!
+
+  // Use buffer...
+  // Automatic cleanup on scope exit
+}
+
+// ❌ BAD: Manual cleanup leaks on assertion failure
+TEST_F(MyTest, Example) {
+  void* buffer;
+  hipMalloc(&buffer, size);
+
+  ASSERT_TRUE(condition);  // If fails, buffer leaks!
+
+  hipFree(buffer);  // Never reached
+}
+```
+
+**2. Respect Cleanup Order:**
+```cpp
+// ✅ GOOD: Correct cleanup order (handles before comm)
+TEST_F(MyTest, Example) {
+  ncclComm_t comm;
+  ncclCommInitRank(&comm, ...);
+  auto comm_guard = makeCommAutoGuard(comm);
+
+  void* reg_handle;
+  ncclCommRegister(comm, buffer, size, &reg_handle);
+  auto handle_guard = makeRegHandleGuard(reg_handle, comm);
+
+  // Cleanup order: handle_guard destroyed first (correct!)
+  // Then comm_guard destroyed
+}
+
+// ❌ BAD: Wrong order causes "corrupted comm object" error
+TEST_F(MyTest, Example) {
+  void* reg_handle;
+  ncclCommRegister(comm, buffer, size, &reg_handle);
+  auto handle_guard = makeRegHandleGuard(reg_handle, comm);
+
+  ncclComm_t comm;
+  ncclCommInitRank(&comm, ...);
+  auto comm_guard = makeCommAutoGuard(comm);
+
+  // Cleanup order: comm_guard destroyed first - ERROR!
+  // handle_guard tries to use destroyed comm
+}
+```
+
+**3. Use Local Guards for Loops:**
+```cpp
+// ✅ GOOD: Local guards for per-iteration cleanup
+for (const auto size : test_sizes) {
+  void* buffer;
+  hipMalloc(&buffer, size);
+  auto guard = makeDeviceBufferAutoGuard(buffer);
+
+  // Test with this size...
+
+  // Buffer freed here at end of iteration
+}
+
+// ❌ BAD: Accumulating allocations
+std::vector<void*> buffers;
+for (const auto size : test_sizes) {
+  void* buffer;
+  hipMalloc(&buffer, size);
+  buffers.push_back(buffer);  // Memory accumulates!
+}
+// All buffers freed only at end - high memory usage
+```
+
+**4. Use Custom Guards for Lambdas:**
+```cpp
+// Complex cleanup with lambda
+FILE* file = fopen("test.txt", "w");
+auto guard = makeCustomGuard(file, [](FILE* f) {
+  if (f) {
+    fflush(f);
+    fclose(f);
+  }
+});
+// file automatically flushed and closed on scope exit
+```
+
+### Implementation Details
+
+**AutoGuard:**
+- Uses C++17 `auto` non-type template parameters
+- Zero overhead - deleter is a compile-time constant
+- No functor object stored - just the resource handle
+- Smaller memory footprint than ResourceGuard
+
+**ResourceGuard:**
+- Stores both resource and deleter functor
+- Supports stateful deleters with additional context
+- Move-only semantics (non-copyable)
+- Slightly larger memory footprint due to deleter storage
+
+**When to Use Which:**
+- Use **AutoGuard** (via factory methods like `makeDeviceBufferAutoGuard`) for simple cleanup
+- Use **ResourceGuard** (via factory methods like `makeRegHandleGuard`) for cleanup requiring context
+
+### See Also
+
+- **RCCLTestResourceGuards.hpp** - Full guard implementation
+- **RCCLGenericScopeGuard.hpp** - Generic scope guard for arbitrary cleanup
+- **TransportMPIBase.hpp** - Transport test base with guarded resource management
+- **Best Practices** section above for RAII usage patterns
 
 ---
 
@@ -1394,13 +1709,13 @@ if (rank == 0) {
 }
 
 // ✅ GOOD: All ranks participate
-ncclAllReduce(...);
+RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(...));
 ```
 
 2. **Missing Synchronization:**
 ```cpp
 // ❌ BAD: Rank 0 waits for data other ranks haven't sent
-MPI_Barrier(MPI_COMM_WORLD);  // All ranks must reach this
+ASSERT_MPI_SUCCESS(MPI_Barrier(MPI_COMM_WORLD));  // All ranks must reach this
 
 // ✅ GOOD: createTestCommunicator() includes barriers
 ASSERT_EQ(ncclSuccess, createTestCommunicator());
@@ -1409,8 +1724,8 @@ ASSERT_EQ(ncclSuccess, createTestCommunicator());
 3. **Stream Not Synchronized:**
 ```cpp
 // ✅ GOOD: Wait for operations to complete
-HIPCHECK(hipStreamSynchronize(getActiveStream()));
-MPI_Barrier(MPI_COMM_WORLD);
+HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
+ASSERT_MPI_SUCCESS(MPI_Barrier(MPI_COMM_WORLD));
 ```
 
 **See:** [Per-Rank Logging](#per-rank-logging) for detailed debugging techniques
@@ -1652,13 +1967,13 @@ cat rccl_test_rank_1.log
 ```cpp
 // Use TEST_INFO for debug output (respects NCCL_DEBUG=INFO)
 TEST_INFO("result[0] = %f", result[0]);
-MPI_Barrier(MPI_COMM_WORLD);
+ASSERT_MPI_SUCCESS(MPI_Barrier(MPI_COMM_WORLD));
 
 // Verify all ranks agree
 float local_result = result[0];
 float global_result;
-MPI_Allreduce(&local_result, &global_result, 1, MPI_FLOAT,
-              MPI_MAX, MPI_COMM_WORLD);
+ASSERT_MPI_SUCCESS(MPI_Allreduce(&local_result, &global_result, 1, MPI_FLOAT,
+                                  MPI_MAX, MPI_COMM_WORLD));
 EXPECT_FLOAT_EQ(local_result, global_result);
 ```
 
@@ -1714,25 +2029,27 @@ TEST_F(MyTest, MultipleComms) {
 
   // Create two separate communicators
   ncclUniqueId id1, id2;
-  ncclComm_t comm1, comm2;
+  ncclComm_t comm1 = nullptr, comm2 = nullptr;
 
   if (RCCLMPIEnvironment::world_rank == 0) {
-    ncclGetUniqueId(&id1);
-    ncclGetUniqueId(&id2);
+    RCCL_TEST_CHECK_GTEST_FAIL(ncclGetUniqueId(&id1));
+    RCCL_TEST_CHECK_GTEST_FAIL(ncclGetUniqueId(&id2));
   }
 
-  MPI_Bcast(&id1, sizeof(id1), MPI_BYTE, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&id2, sizeof(id2), MPI_BYTE, 0, MPI_COMM_WORLD);
+  ASSERT_MPI_SUCCESS(MPI_Bcast(&id1, sizeof(id1), MPI_BYTE, 0, MPI_COMM_WORLD));
+  ASSERT_MPI_SUCCESS(MPI_Bcast(&id2, sizeof(id2), MPI_BYTE, 0, MPI_COMM_WORLD));
 
-  ncclCommInitRank(&comm1, RCCLMPIEnvironment::world_size, id1,
-                   RCCLMPIEnvironment::world_rank);
-  ncclCommInitRank(&comm2, RCCLMPIEnvironment::world_size, id2,
-                   RCCLMPIEnvironment::world_rank);
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclCommInitRank(&comm1, RCCLMPIEnvironment::world_size, id1,
+                                               RCCLMPIEnvironment::world_rank));
+  auto comm1_guard = makeCommAutoGuard(comm1);
+
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclCommInitRank(&comm2, RCCLMPIEnvironment::world_size, id2,
+                                               RCCLMPIEnvironment::world_rank));
+  auto comm2_guard = makeCommAutoGuard(comm2);
 
   // Use both communicators...
 
-  ncclCommDestroy(comm1);
-  ncclCommDestroy(comm2);
+  // Automatic cleanup via RAII guards
 }
 ```
 
@@ -1743,11 +2060,15 @@ TEST_F(MyTest, InvalidRankHandling) {
   ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI));
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
+  void* buffer = nullptr;
+  HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
+  auto buffer_guard = makeDeviceBufferAutoGuard(buffer);
+
   // Deliberately use invalid rank
   int invalid_rank = 999;
 
   // Expect error (don't crash)
-  ncclResult_t result = ncclSend(buffer, count, type, invalid_rank,
+  ncclResult_t result = ncclSend(buffer, 256, ncclFloat, invalid_rank,
                                   getActiveCommunicator(), getActiveStream());
 
   EXPECT_NE(result, ncclSuccess);
@@ -1894,9 +2215,8 @@ NCCL_DEBUG=TRACE mpirun -np 2 ./test_executable
 ```
 
 **Available levels (least to most verbose):**
-- `NCCL_DEBUG=VERSION` → TEST_VERSION
-- `NCCL_DEBUG=WARN` → TEST_VERSION, TEST_WARN
-- `NCCL_DEBUG=INFO` → TEST_VERSION, TEST_WARN, TEST_INFO (recommended for debugging)
+- `NCCL_DEBUG=WARN` → TEST_WARN
+- `NCCL_DEBUG=INFO` → TEST_WARN, TEST_INFO (recommended for debugging)
 - `NCCL_DEBUG=ABORT` → All above + TEST_ABORT
 - `NCCL_DEBUG=TRACE` → All macros including TEST_TRACE
 
@@ -1907,11 +2227,76 @@ NCCL_DEBUG=TRACE mpirun -np 2 ./test_executable
 - ✅ Clean output in production (no NCCL_DEBUG)
 - ✅ Detailed debugging on demand (NCCL_DEBUG=INFO)
 
+---
+
+## Standalone Tests
+
+The MPI test infrastructure now supports **framework-agnostic testing**, allowing you to write tests
+without Google Test. This is ideal for:
+
+- **Performance benchmarks** (bandwidth, latency)
+- **Low-level API tests** without GTest overhead
+- **Production utilities** using MPI infrastructure
+- **Custom test harnesses**
+
+### Quick Comparison
+
+| Feature | GTest (MPITestBase) | Standalone (MPIStandaloneTest) |
+|---------|--------------------|---------------------------------|
+| Requires GTest | ✅ Yes | ❌ No |
+| Assertions | ASSERT_*, EXPECT_* | Return codes |
+| Setup/Teardown | Automatic | Manual `cleanup()` |
+| Best For | Unit/integration tests | Performance benchmarks |
+| Overhead | Higher | Minimal |
+
+### Example: Standalone Test
+
+```cpp
+#include "MPIStandaloneTest.hpp"
+#include "MPIHelpers.hpp"
+
+class MyBenchmark : public MPIStandaloneTest {
+public:
+    int run() override {
+        // Validate prerequisites
+        if (!validateTestPrerequisites(2, 2)) return 0; // Skip
+
+        // Create communicator
+        if (createTestCommunicator() != ncclSuccess) return 1; // Error
+
+        // Your benchmark code here...
+        // Use getActiveCommunicator() and getActiveStream()
+
+        return 0; // Success
+    }
+};
+
+int main(int argc, char** argv) {
+    // Initialize MPI and setup GPU
+    auto mpi_ctx = MPIHelpers::initializeMPI(&argc, &argv);
+    MPIHelpers::setupGPU(mpi_ctx.world_rank);
+
+    // Run test with automatic cleanup via RAII
+    int result = 0;
+    {
+        MyBenchmark test;
+        MPIStandaloneTestRAII raii(&test);  // Automatic cleanup on scope exit
+        result = test.run();
+    }
+
+    MPI_Finalize();
+    return result;
+}
+```
+
+---
+
 ## See Also
 
 **Core Test Infrastructure:**
-- **MPITestBase.hpp** - Full API documentation
-- **MPITestBase.cpp** - Implementation details
+- **MPITestCore.hpp** - Framework-agnostic base class
+- **MPITestBase.hpp** - Google Test adapter (full API documentation)
+- **MPIStandaloneTest.hpp** - Standalone test adapter
 - **RCCLMPIEnvironment.hpp** - MPI environment setup
 - **RCCLMPIEnvironment.cpp** - Multi-node GPU assignment implementation
 
