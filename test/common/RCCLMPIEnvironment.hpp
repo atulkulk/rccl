@@ -132,18 +132,64 @@
         while(0)
 
     /**
- * @def NCCLCHECK
- * @brief NCCL error checking macro
+ * @def RCCL_TEST_CHECK
+ * @brief RCCL error checking macro for test infrastructure code
  *
- * Checks the result of NCCL function calls and fails the test if an error occurs.
- * Prints file location, line number, and NCCL error string.
+ * Similar to the library's NCCLCHECK macro but for test infrastructure.
+ * Returns ncclResult_t on error instead of calling exit().
+ * Use this in test infrastructure/framework code (e.g., setup/teardown methods)
+ * that needs to return errors gracefully.
  *
- * @par Example:
- * @code
- * NCCLCHECK(ncclAllReduce(sendbuf, recvbuf, count, datatype, op, comm, stream));
- * @endcode
+ * Behavior:
+ * - Checks NCCL function result
+ * - Logs error with fprintf (visible even without NCCL_DEBUG)
+ * - Returns error code to caller
+ *
+ * @note Requires enclosing function to return ncclResult_t
+ * @note For test bodies, use RCCL_TEST_CHECK_GTEST_FAIL instead (calls FAIL())
+ * @note For code with cleanup, use ScopeGuard pattern
+ *
+ * Example (in infrastructure code):
+ *   ncclResult_t setupComm() {
+ *     RCCL_TEST_CHECK(ncclCommInitRank(&comm, size, id, rank));
+ *     RCCL_TEST_CHECK(ncclGroupStart());
+ *     return ncclSuccess;
+ *   }
  */
-    #define NCCLCHECK(cmd)                                                                         \
+    #define RCCL_TEST_CHECK(cmd)                            \
+        do                                                  \
+        {                                                   \
+            ncclResult_t res = cmd;                         \
+            if(res != ncclSuccess && res != ncclInProgress) \
+            {                                               \
+                fprintf(stderr,                             \
+                        "RCCL Error at %s:%d - %s\n",       \
+                        __FILE__,                           \
+                        __LINE__,                           \
+                        ncclGetErrorString(res));           \
+                return res;                                 \
+            }                                               \
+        }                                                   \
+        while(0)
+
+    /**
+ * @def RCCL_TEST_CHECK_GTEST_FAIL
+ * @brief RCCL error checking macro for GTest test bodies
+ *
+ * Test-specific version of NCCLCHECK that integrates with Google Test.
+ * Checks the result of NCCL function calls and fails the test if an error occurs.
+ * Prints file location, line number, and NCCL error string, then calls FAIL()
+ * from Google Test to mark the test as failed.
+ *
+ * @note Use this in TEST_F/TEST_P test bodies
+ * @note For infrastructure code (setup/teardown), use RCCL_TEST_CHECK instead
+ *
+ * Example (in test body):
+ *   TEST_F(MyTest, Example) {
+ *     RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(...));
+ *   }
+ */
+    #define RCCL_TEST_CHECK_GTEST_FAIL(cmd)                                                        \
         do                                                                                         \
         {                                                                                          \
             ncclResult_t res = cmd;                                                                \
@@ -156,19 +202,110 @@
         while(0)
 
     /**
- * @def HIPCHECK
- * @brief HIP error checking macro
+ * @def HIP_TEST_CHECK
+ * @brief HIP error checking macro for test infrastructure code
  *
- * Checks the result of HIP function calls and fails the test if an error occurs.
- * Prints file location, line number, and HIP error string.
+ * Similar to the library's CUDACHECK macro - returns an error code instead of exiting.
+ * Use this in test infrastructure/framework code (e.g., setup/teardown methods) that
+ * needs to return errors gracefully rather than calling exit().
  *
- * @par Example:
- * @code
- * HIPCHECK(hipMalloc(&d_ptr, size));
- * HIPCHECK(hipMemcpy(d_ptr, h_ptr, size, hipMemcpyHostToDevice));
- * @endcode
+ * Behavior:
+ * - Checks HIP function result
+ * - Logs error with fprintf (visible even without NCCL_DEBUG)
+ * - Returns ncclUnhandledCudaError to caller
+ *
+ * @note Requires enclosing function to return ncclResult_t
+ * @note For test bodies, use HIP_TEST_CHECK_GTEST_FAIL instead (calls FAIL())
+ * @note For code with cleanup, use ScopeGuard pattern
+ *
+ * Example (in infrastructure code):
+ *   ncclResult_t setupResources() {
+ *     void* buffer = nullptr;
+ *     HIP_TEST_CHECK(hipMalloc(&buffer, size));
+ *     HIP_TEST_CHECK(hipMemset(buffer, 0, size));
+ *     return ncclSuccess;
+ *   }
  */
-    #define HIPCHECK(cmd)                                                                        \
+    #define HIP_TEST_CHECK(cmd)                                      \
+        do                                                           \
+        {                                                            \
+            hipError_t err = cmd;                                    \
+            if(err != hipSuccess)                                    \
+            {                                                        \
+                fprintf(stderr,                                      \
+                        "HIP Error at %s:%d - %s (hipError_t=%d)\n", \
+                        __FILE__,                                    \
+                        __LINE__,                                    \
+                        hipGetErrorString(err),                      \
+                        static_cast<int>(err));                      \
+                return ncclUnhandledCudaError;                       \
+            }                                                        \
+        }                                                            \
+        while(0)
+
+    /**
+ * @def HIPCHECK
+ * @brief HIP error checking macro (library-style)
+ *
+ * Similar to RCCL library's CUDACHECK macro. Returns ncclUnhandledCudaError on error.
+ * Use in any code that returns ncclResult_t.
+ *
+ * Behavior:
+ * - Checks HIP function result
+ * - Logs error with fprintf (visible even without NCCL_DEBUG)
+ * - Returns ncclUnhandledCudaError to caller
+ *
+ * @note Requires enclosing function to return ncclResult_t
+ * @note For GTest test bodies, use HIP_TEST_CHECK_GTEST_FAIL instead
+ * @note This mirrors the library's CUDACHECK behavior
+ *
+ * Example:
+ *   ncclResult_t setupBuffer() {
+ *     HIPCHECK(hipMalloc(&buffer, size));
+ *     HIPCHECK(hipMemcpy(buffer, data, size, hipMemcpyHostToDevice));
+ *     return ncclSuccess;
+ *   }
+ */
+    #ifndef HIPCHECK
+        #define HIPCHECK(cmd)                                            \
+            do                                                           \
+            {                                                            \
+                hipError_t err = cmd;                                    \
+                if(err != hipSuccess)                                    \
+                {                                                        \
+                    fprintf(stderr,                                      \
+                            "HIP Error at %s:%d - %s (hipError_t=%d)\n", \
+                            __FILE__,                                    \
+                            __LINE__,                                    \
+                            hipGetErrorString(err),                      \
+                            static_cast<int>(err));                      \
+                    return ncclUnhandledCudaError;                       \
+                }                                                        \
+            }                                                            \
+            while(0)
+    #endif // HIPCHECK
+
+    /**
+ * @def HIP_TEST_CHECK_GTEST_FAIL
+ * @brief HIP error checking for GTest test bodies
+ *
+ * Checks HIP function calls and fails the test if an error occurs.
+ * Use in TEST_F/TEST_P test bodies.
+ *
+ * Behavior:
+ * - Checks HIP function result
+ * - Prints error to stdout (always visible)
+ * - Calls FAIL() to mark test as failed
+ *
+ * Example (in test body):
+ *   TEST_F(MyTest, Example) {
+ *     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, size));
+ *     HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(buffer, data, size, hipMemcpyHostToDevice));
+ *   }
+ *
+ * @note Use HIPCHECK or HIP_TEST_CHECK in infrastructure code that returns ncclResult_t
+ */
+    #define HIP_TEST_CHECK_GTEST_FAIL(cmd)                                                       \
         do                                                                                       \
         {                                                                                        \
             hipError_t err = cmd;                                                                \
@@ -179,6 +316,34 @@
             }                                                                                    \
         }                                                                                        \
         while(0)
+
+    // ============================================================================
+    // Generic RAII Scope Guard for C++11+
+    // ============================================================================
+
+    /**
+ * @brief Include generic RAII scope guard utilities
+ *
+ * Provides ScopeGuard template class, makeScopeGuard() helper, and SCOPE_EXIT macro
+ * for exception-safe automatic cleanup - the C++ alternative to goto-based cleanup.
+ *
+ * @par Key Components:
+ * - ScopeGuard<Func> - Generic RAII guard template
+ * - makeScopeGuard(lambda) - Helper for creating guards with type deduction
+ * - SCOPE_EXIT(code) - Macro for quick one-liner cleanup
+ *
+ * @par Quick Example:
+ * @code
+ * void* buffer = nullptr;
+ * hipMalloc(&buffer, size);
+ * auto guard = makeScopeGuard([&]() { if(buffer) hipFree(buffer); });
+ * // Automatic cleanup on scope exit
+ * @endcode
+ *
+ * @see RCCLGenericScopeGuard.hpp for full documentation and examples
+ * @see RAII_CLEANUP_PATTERNS.md for comprehensive usage guide
+ */
+    #include "RCCLGenericScopeGuard.hpp"
 
 /**
  * @class RCCLMPIEnvironment
@@ -232,6 +397,17 @@ public:
      * Prevents multiple MPI_Init calls (only allowed once per process).
      */
     inline static bool mpi_initialized{false};
+
+    /**
+     * @brief Cached result of multi-node detection
+     *
+     * Computed once during SetUp() using MPI_Comm_split_type().
+     * -1 = not computed, 0 = single node, 1 = multi-node
+     *
+     * @note MUST be initialized before any TEST_* macros are called
+     * @note Prevents nested MPI collective operations in isMultiNodeTest()
+     */
+    inline static int cached_multi_node_result{-1};
 
     /**
      * @brief Flag indicating GPU devices have been initialized

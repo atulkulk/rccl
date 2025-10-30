@@ -6,473 +6,451 @@
 
 #pragma once
 
-#include <hip/hip_runtime.h>
 #include "nccl.h"
 #include "net.h"
 #include "transport.h"
+#include <cstdio>
 #include <cstdlib>
+#include <hip/hip_runtime.h>
 #include <utility>
 
 /**
  * @file RCCLTestResourceGuards.hpp
- * @brief Templatized RAII resource guards for automatic cleanup in tests
+ * @brief RAII resource guards for automatic cleanup in tests
  *
- * This file provides generic RAII (Resource Acquisition Is Initialization)
- * guards using C++ templates to minimize code duplication. All guards ensure
- * resources are cleaned up even when ASSERT_* fails in tests.
- *
- * Usage Example:
- * @code
- * TEST_F(MyTest, Example) {
- *     BufferGuard bufferGuard(malloc(4096), true);
- *     ASSERT_NE(bufferGuard.get(), nullptr);  // If fails, buffer still freed!
- *
- *     NetConnectionGuard connGuard(net_);
- *     connGuard.setListenComm(listenComm);  // Auto-closed on any failure!
- *
- *     ASSERT_TRUE(SomeOperation());  // All resources cleaned up if this fails!
- * }
- * @endcode
+ * Provides generic RAII guards using C++ templates for automatic resource
+ * management. Guards ensure cleanup even when ASSERT_* fails in tests.
+ * See MPITestRunner.md for detailed usage documentation.
  */
 
-namespace RCCLTestGuards {
+namespace RCCLTestGuards
+{
 
-// ============================================================================
-// Generic Resource Guard Template
-// ============================================================================
+/**
+ * @class AutoGuard
+ * @brief Modern RAII guard using non-type template parameter for deleter
+ *
+ * Uses C++17's auto template parameters to directly reference cleanup functions,
+ * eliminating the need for deleter functors in simple cases.
+ *
+ * @tparam T Resource handle type
+ * @tparam DeleterFunc Function pointer for cleanup (auto-deduced)
+ */
+template<typename T, auto DeleterFunc>
+class AutoGuard
+{
+private:
+    T    resource_;
+    bool dismissed_;
+
+public:
+    explicit AutoGuard(T resource = T{}) : resource_(resource), dismissed_(false) {}
+
+    ~AutoGuard()
+    {
+        if(!dismissed_ && resource_)
+        {
+            DeleterFunc(resource_);
+        }
+    }
+
+    // Get the resource handle
+    T get() const
+    {
+        return resource_;
+    }
+    // Get pointer to resource handle (for API calls)
+    T* ptr()
+    {
+        return &resource_;
+    }
+    // Set the resource handle
+    void set(T resource)
+    {
+        resource_ = resource;
+    }
+    // Dismiss the guard (prevent cleanup)
+    void dismiss()
+    {
+        dismissed_ = true;
+    }
+
+    // Release ownership (prevent cleanup)
+    T release()
+    {
+        dismissed_ = true;
+        return resource_;
+    }
+
+    AutoGuard(const AutoGuard&)            = delete;
+    AutoGuard& operator=(const AutoGuard&) = delete;
+
+    AutoGuard(AutoGuard&& other) noexcept : resource_(other.resource_), dismissed_(other.dismissed_)
+    {
+        other.dismissed_ = true;
+    }
+
+    AutoGuard& operator=(AutoGuard&& other) noexcept
+    {
+        if(this != &other)
+        {
+            if(!dismissed_ && resource_)
+            {
+                DeleterFunc(resource_);
+            }
+            resource_        = other.resource_;
+            dismissed_       = other.dismissed_;
+            other.dismissed_ = true;
+        }
+        return *this;
+    }
+};
 
 /**
  * @class ResourceGuard
- * @brief Generic RAII guard template for single resources
+ * @brief Generic RAII guard template for resources with complex cleanup
+ *
+ * Uses a functor-based deleter for stateful deleters requiring additional context.
+ * For simple cleanup functions, prefer AutoGuard<T, func> instead.
  *
  * @tparam T Resource handle type
  * @tparam Deleter Functor type for cleanup
  */
 template<typename T, typename Deleter>
-class ResourceGuard {
+class ResourceGuard
+{
 private:
-    T resource_;
+    T       resource_;
     Deleter deleter_;
-    bool owns_;
+    bool    owns_;
 
 public:
-    /**
-     * @brief Construct a resource guard
-     * @param resource Resource handle (can be nullptr/0)
-     * @param deleter Cleanup function/functor
-     */
+    // Construct a resource guard
+    // @param resource Resource handle (can be nullptr/0)
+    // @param deleter Cleanup function/functor
     explicit ResourceGuard(T resource = T{}, Deleter deleter = Deleter{})
-        : resource_(resource), deleter_(std::move(deleter)), owns_(true) {}
+        : resource_(resource), deleter_(std::move(deleter)), owns_(true)
+    {}
 
-    /**
-     * @brief Destructor - automatically cleans up resource
-     */
-    ~ResourceGuard() {
-        if (owns_ && resource_) {
+    // Destructor - automatically cleans up resource
+    ~ResourceGuard()
+    {
+        if(owns_ && resource_)
+        {
             deleter_(resource_);
         }
     }
 
-    /**
-     * @brief Get the resource handle
-     * @return Resource handle
-     */
-    T get() const { return resource_; }
+    // Get the resource handle
+    T get() const
+    {
+        return resource_;
+    }
+    // Get pointer to resource handle (for API calls)
+    T* ptr()
+    {
+        return &resource_;
+    }
+    // Set the resource handle
+    void set(T resource)
+    {
+        resource_ = resource;
+    }
 
-    /**
-     * @brief Get pointer to resource handle (for API calls)
-     * @return Pointer to resource handle
-     */
-    T* ptr() { return &resource_; }
-
-    /**
-     * @brief Set the resource handle
-     * @param resource New resource handle
-     */
-    void set(T resource) { resource_ = resource; }
-
-    /**
-     * @brief Reset to a new resource (cleans up old resource if different)
-     * @param resource New resource handle
-     */
-    void reset(T resource = T{}) {
-        if (owns_ && resource_ && resource_ != resource) {
+    // Reset the resource handle
+    // @param resource New resource handle (can be nullptr/0)
+    void reset(T resource = T{})
+    {
+        if(owns_ && resource_ && resource_ != resource)
+        {
             deleter_(resource_);
         }
         resource_ = resource;
-        owns_ = true;
+        owns_     = true;
     }
 
-    /**
-     * @brief Release ownership without cleanup
-     * @return The resource handle (caller takes ownership)
-     */
-    T release() {
+    T release()
+    {
         owns_ = false;
         return resource_;
     }
 
-    // Delete copy constructor and assignment operator
-    ResourceGuard(const ResourceGuard&) = delete;
+    ResourceGuard(const ResourceGuard&)            = delete;
     ResourceGuard& operator=(const ResourceGuard&) = delete;
 
-    // Allow move
     ResourceGuard(ResourceGuard&& other) noexcept
-        : resource_(other.resource_), deleter_(std::move(other.deleter_)), owns_(other.owns_) {
+        : resource_(other.resource_), deleter_(std::move(other.deleter_)), owns_(other.owns_)
+    {
         other.owns_ = false;
     }
 
-    ResourceGuard& operator=(ResourceGuard&& other) noexcept {
-        if (this != &other) {
+    ResourceGuard& operator=(ResourceGuard&& other) noexcept
+    {
+        if(this != &other)
+        {
             // Clean up current resource
-            if (owns_ && resource_) {
+            if(owns_ && resource_)
+            {
                 deleter_(resource_);
             }
             // Take ownership of other's resource
-            resource_ = other.resource_;
-            deleter_ = std::move(other.deleter_);
-            owns_ = other.owns_;
+            resource_   = other.resource_;
+            deleter_    = std::move(other.deleter_);
+            owns_       = other.owns_;
             other.owns_ = false;
         }
         return *this;
     }
 };
 
-// ============================================================================
-// Deleters (Cleanup Functors)
-// ============================================================================
-
-/**
- * @brief Deleter for host memory (free)
- */
-struct HostMemoryDeleter {
-    void operator()(void* ptr) const {
-        if (ptr) free(ptr);
-    }
-};
-
-/**
- * @brief Deleter for device memory (hipFree)
- */
-struct DeviceMemoryDeleter {
-    void operator()(void* ptr) const {
-        if (ptr) (void)hipFree(ptr);
-    }
-};
-
-/**
- * @brief Deleter for HIP streams
- */
-struct HipStreamDeleter {
-    void operator()(hipStream_t stream) const {
-        if (stream) (void)hipStreamDestroy(stream);
-    }
-};
-
-/**
- * @brief Deleter for HIP events
- */
-struct HipEventDeleter {
-    void operator()(hipEvent_t event) const {
-        if (event) (void)hipEventDestroy(event);
-    }
-};
-
-/**
- * @brief Deleter for NCCL communicators
- */
-struct NcclCommDeleter {
-    void operator()(ncclComm_t comm) const {
-        if (comm) ncclCommDestroy(comm);
-    }
-};
-
-/**
- * @brief Deleter for NCCL registration handles
- */
-struct NcclRegHandleDeleter {
+// Note: Simple stateless deleters are replaced by wrapper functions + AutoGuard.
+// Only stateful deleters that need additional context are kept here.
+// Common deleters (NCCL-specific, used across many tests)
+struct NcclRegHandleDeleter
+{
     ncclComm_t comm;
-
     explicit NcclRegHandleDeleter(ncclComm_t c = nullptr) : comm(c) {}
-
-    void operator()(void* reg_handle) const {
-        if (reg_handle && comm) {
+    void operator()(void* reg_handle) const
+    {
+        if(reg_handle && comm)
+        {
             ncclCommDeregister(comm, reg_handle);
         }
     }
 };
 
-/**
- * @brief Deleter for NET plugin memory handles
- */
-struct NetMHandleDeleter {
-    ncclNet_t* net;
-    void* comm;
-
-    NetMHandleDeleter(ncclNet_t* n = nullptr, void* c = nullptr)
-        : net(n), comm(c) {}
-
-    void operator()(void* mhandle) const {
-        if (mhandle && comm && net) {
-            net->deregMr(comm, mhandle);
+// Wrapper functions for AutoGuard (void-returning cleanup functions)
+inline void hipFreeWrapper(void* ptr)
+{
+    if(ptr)
+    {
+        hipError_t err = hipFree(ptr);
+        if(err != hipSuccess)
+        {
+            fprintf(stderr,
+                    "WARNING: hipFree failed in destructor: %s (ptr=%p)\n",
+                    hipGetErrorString(err),
+                    ptr);
         }
     }
-};
+}
 
-/**
- * @brief Deleter for NET send communicators
- */
-struct NetSendCommDeleter {
-    ncclNet_t* net;
-
-    explicit NetSendCommDeleter(ncclNet_t* n = nullptr) : net(n) {}
-
-    void operator()(void* comm) const {
-        if (comm && net) net->closeSend(comm);
-    }
-};
-
-/**
- * @brief Deleter for NET recv communicators
- */
-struct NetRecvCommDeleter {
-    ncclNet_t* net;
-
-    explicit NetRecvCommDeleter(ncclNet_t* n = nullptr) : net(n) {}
-
-    void operator()(void* comm) const {
-        if (comm && net) net->closeRecv(comm);
-    }
-};
-
-/**
- * @brief Deleter for NET listen communicators
- */
-struct NetListenCommDeleter {
-    ncclNet_t* net;
-
-    explicit NetListenCommDeleter(ncclNet_t* n = nullptr) : net(n) {}
-
-    void operator()(void* comm) const {
-        if (comm && net) net->closeListen(comm);
-    }
-};
-
-/**
- * @brief Deleter for transport send resources
- */
-struct TransportSendResourceDeleter {
-    ncclTransport* transport;
-
-    explicit TransportSendResourceDeleter(ncclTransport* t = nullptr) : transport(t) {}
-
-    void operator()(ncclConnector* connector) const {
-        if (connector && transport) {
-            transport->send.free(connector);
+inline void hipStreamDestroyWrapper(hipStream_t stream)
+{
+    if(stream)
+    {
+        hipError_t err = hipStreamDestroy(stream);
+        if(err != hipSuccess)
+        {
+            fprintf(stderr,
+                    "WARNING: hipStreamDestroy failed in destructor: %s (stream=%p)\n",
+                    hipGetErrorString(err),
+                    static_cast<void*>(stream));
         }
     }
-};
+}
 
-/**
- * @brief Deleter for transport recv resources
- */
-struct TransportRecvResourceDeleter {
-    ncclTransport* transport;
-
-    explicit TransportRecvResourceDeleter(ncclTransport* t = nullptr) : transport(t) {}
-
-    void operator()(ncclConnector* connector) const {
-        if (connector && transport) {
-            transport->recv.free(connector);
+inline void hipEventDestroyWrapper(hipEvent_t event)
+{
+    if(event)
+    {
+        hipError_t err = hipEventDestroy(event);
+        if(err != hipSuccess)
+        {
+            fprintf(stderr,
+                    "WARNING: hipEventDestroy failed in destructor: %s (event=%p)\n",
+                    hipGetErrorString(err),
+                    static_cast<void*>(event));
         }
     }
-};
+}
 
-// ============================================================================
-// Type Aliases (Convenience Names)
-// ============================================================================
+inline void ncclCommDestroyWrapper(ncclComm_t comm)
+{
+    if(comm)
+    {
+        ncclResult_t result = ncclCommDestroy(comm);
+        if(result != ncclSuccess)
+        {
+            fprintf(stderr,
+                    "WARNING: ncclCommDestroy failed in destructor: %s (comm=%p)\n",
+                    ncclGetErrorString(result),
+                    static_cast<void*>(comm));
+        }
+    }
+}
 
-/** @brief Guard for host memory buffers */
-using HostBufferGuard = ResourceGuard<void*, HostMemoryDeleter>;
+inline void freeWrapper(void* ptr)
+{
+    if(ptr)
+        free(ptr);
+}
 
-/** @brief Guard for device memory buffers */
-using DeviceBufferGuard = ResourceGuard<void*, DeviceMemoryDeleter>;
+// Type aliases for AutoGuard-based guards
+using HostBufferAutoGuard   = AutoGuard<void*, freeWrapper>;
+using DeviceBufferAutoGuard = AutoGuard<void*, hipFreeWrapper>;
+using HipStreamAutoGuard    = AutoGuard<hipStream_t, hipStreamDestroyWrapper>;
+using HipEventAutoGuard     = AutoGuard<hipEvent_t, hipEventDestroyWrapper>;
+using NcclCommAutoGuard     = AutoGuard<ncclComm_t, ncclCommDestroyWrapper>;
 
-/** @brief Guard for HIP streams */
-using HipStreamGuard = ResourceGuard<hipStream_t, HipStreamDeleter>;
-
-/** @brief Guard for HIP events */
-using HipEventGuard = ResourceGuard<hipEvent_t, HipEventDeleter>;
-
-/** @brief Guard for NCCL communicators */
-using NcclCommGuard = ResourceGuard<ncclComm_t, NcclCommDeleter>;
-
-/** @brief Guard for NCCL registration handles */
+// Type aliases for ResourceGuard-based guards (common/NCCL-specific)
 using NcclRegHandleGuard = ResourceGuard<void*, NcclRegHandleDeleter>;
-
-/** @brief Guard for NET plugin memory handles */
-using NetMHandleGuard = ResourceGuard<void*, NetMHandleDeleter>;
-
-/** @brief Guard for NET send communicators */
-using NetSendCommGuard = ResourceGuard<void*, NetSendCommDeleter>;
-
-/** @brief Guard for NET recv communicators */
-using NetRecvCommGuard = ResourceGuard<void*, NetRecvCommDeleter>;
-
-/** @brief Guard for NET listen communicators */
-using NetListenCommGuard = ResourceGuard<void*, NetListenCommDeleter>;
-
-/** @brief Guard for transport send resources */
-using TransportSendResourceGuard = ResourceGuard<ncclConnector*, TransportSendResourceDeleter>;
-
-/** @brief Guard for transport recv resources */
-using TransportRecvResourceGuard = ResourceGuard<ncclConnector*, TransportRecvResourceDeleter>;
-
-// ============================================================================
-// Specialized Guards (Complex Cases)
-// ============================================================================
 
 /**
  * @class BufferGuard
  * @brief RAII guard for host or device memory buffers
- *
- * Combines host and device memory management in one guard for convenience.
  */
-class BufferGuard {
+class BufferGuard
+{
 private:
     void* buffer_;
-    bool is_host_;
-    bool owns_;
+    bool  is_host_;
+    bool  owns_;
 
 public:
-    /**
-     * @brief Construct a buffer guard
-     * @param buffer Pointer to buffer (can be nullptr)
-     * @param is_host true for host memory, false for device memory
-     */
+    // Construct a buffer guard
+    // @param buffer Pointer to buffer (can be nullptr)
+    // @param is_host true for host memory, false for device memory
     explicit BufferGuard(void* buffer = nullptr, bool is_host = true)
-        : buffer_(buffer), is_host_(is_host), owns_(true) {}
+        : buffer_(buffer), is_host_(is_host), owns_(true)
+    {}
 
-    ~BufferGuard() {
-        if (owns_ && buffer_) {
-            if (is_host_) {
+    ~BufferGuard()
+    {
+        if(owns_ && buffer_)
+        {
+            if(is_host_)
+            {
                 free(buffer_);
-            } else {
+            }
+            else
+            {
                 (void)hipFree(buffer_);
             }
         }
     }
 
-    void* get() const { return buffer_; }
-    void** ptr() { return &buffer_; }
+    void* get() const
+    {
+        return buffer_;
+    }
+    void** ptr()
+    {
+        return &buffer_;
+    }
+    void set(void* buffer)
+    {
+        buffer_ = buffer;
+    }
+    bool isHost() const
+    {
+        return is_host_;
+    }
 
-    void reset(void* new_buffer = nullptr) {
-        if (owns_ && buffer_ && buffer_ != new_buffer) {
-            if (is_host_) {
+    void reset(void* buffer = nullptr)
+    {
+        if(owns_ && buffer_ && buffer_ != buffer)
+        {
+            if(is_host_)
+            {
                 free(buffer_);
-            } else {
+            }
+            else
+            {
                 (void)hipFree(buffer_);
             }
         }
-        buffer_ = new_buffer;
-        owns_ = true;
+        buffer_ = buffer;
+        owns_   = true;
     }
 
-    void* release() {
+    void* release()
+    {
         owns_ = false;
         return buffer_;
     }
 
-    // Delete copy, allow move
-    BufferGuard(const BufferGuard&) = delete;
+    BufferGuard(const BufferGuard&)            = delete;
     BufferGuard& operator=(const BufferGuard&) = delete;
 
     BufferGuard(BufferGuard&& other) noexcept
-        : buffer_(other.buffer_), is_host_(other.is_host_), owns_(other.owns_) {
+        : buffer_(other.buffer_), is_host_(other.is_host_), owns_(other.owns_)
+    {
         other.owns_ = false;
     }
 
-    BufferGuard& operator=(BufferGuard&& other) noexcept {
-        if (this != &other) {
-            if (owns_ && buffer_) {
-                if (is_host_) free(buffer_); else (void)hipFree(buffer_);
+    BufferGuard& operator=(BufferGuard&& other) noexcept
+    {
+        if(this != &other)
+        {
+            if(owns_ && buffer_)
+            {
+                if(is_host_)
+                {
+                    free(buffer_);
+                }
+                else
+                {
+                    (void)hipFree(buffer_);
+                }
             }
-            buffer_ = other.buffer_;
-            is_host_ = other.is_host_;
-            owns_ = other.owns_;
+            buffer_     = other.buffer_;
+            is_host_    = other.is_host_;
+            owns_       = other.owns_;
             other.owns_ = false;
         }
         return *this;
     }
 };
 
-/**
- * @class NetConnectionGuard
- * @brief RAII guard for multiple NET plugin connections
- *
- * Manages send, recv, and listen communicators together.
- */
-class NetConnectionGuard {
-private:
-    NetSendCommGuard send_guard_;
-    NetRecvCommGuard recv_guard_;
-    NetListenCommGuard listen_guard_;
+// Factory methods for ResourceGuard
+template<typename T, typename Deleter>
+inline auto makeGuard(T resource, Deleter deleter) -> ResourceGuard<T, Deleter>
+{
+    return ResourceGuard<T, Deleter>(resource, std::move(deleter));
+}
 
-public:
-    explicit NetConnectionGuard(ncclNet_t* net)
-        : send_guard_(nullptr, NetSendCommDeleter(net))
-        , recv_guard_(nullptr, NetRecvCommDeleter(net))
-        , listen_guard_(nullptr, NetListenCommDeleter(net)) {}
+inline NcclRegHandleGuard makeRegHandleGuard(void* handle, ncclComm_t comm)
+{
+    return NcclRegHandleGuard(handle, NcclRegHandleDeleter(comm));
+}
 
-    // Setters
-    void setSendComm(void* comm) { send_guard_.set(comm); }
-    void setRecvComm(void* comm) { recv_guard_.set(comm); }
-    void setListenComm(void* comm) { listen_guard_.set(comm); }
+template<typename T, typename Deleter>
+inline auto makeCustomGuard(T resource, Deleter deleter) -> ResourceGuard<T, Deleter>
+{
+    return ResourceGuard<T, Deleter>(resource, std::move(deleter));
+}
 
-    // Getters
-    void* getSendComm() const { return send_guard_.get(); }
-    void* getRecvComm() const { return recv_guard_.get(); }
-    void* getListenComm() const { return listen_guard_.get(); }
+// Factory methods for AutoGuard
+template<typename T, auto DeleterFunc>
+inline AutoGuard<T, DeleterFunc> makeAutoGuard(T resource)
+{
+    return AutoGuard<T, DeleterFunc>(resource);
+}
 
-    // Release ownership
-    void releaseSendComm() { send_guard_.release(); }
-    void releaseRecvComm() { recv_guard_.release(); }
-    void releaseListenComm() { listen_guard_.release(); }
+inline HostBufferAutoGuard makeHostBufferAutoGuard(void* buffer)
+{
+    return HostBufferAutoGuard(buffer);
+}
 
-    NetConnectionGuard(const NetConnectionGuard&) = delete;
-    NetConnectionGuard& operator=(const NetConnectionGuard&) = delete;
-};
+inline DeviceBufferAutoGuard makeDeviceBufferAutoGuard(void* buffer)
+{
+    return DeviceBufferAutoGuard(buffer);
+}
 
-/**
- * @class TransportResourceGuard
- * @brief RAII guard for transport send/recv resources
- *
- * Manages both send and recv transport resources together.
- */
-class TransportResourceGuard {
-private:
-    TransportSendResourceGuard send_guard_;
-    TransportRecvResourceGuard recv_guard_;
+inline HipStreamAutoGuard makeStreamAutoGuard(hipStream_t stream)
+{
+    return HipStreamAutoGuard(stream);
+}
 
-public:
-    explicit TransportResourceGuard(ncclTransport* transport)
-        : send_guard_(nullptr, TransportSendResourceDeleter(transport))
-        , recv_guard_(nullptr, TransportRecvResourceDeleter(transport)) {}
+inline HipEventAutoGuard makeEventAutoGuard(hipEvent_t event)
+{
+    return HipEventAutoGuard(event);
+}
 
-    // Setters
-    void setSendResources(ncclConnector* res) { send_guard_.set(res); }
-    void setRecvResources(ncclConnector* res) { recv_guard_.set(res); }
-
-    // Getters
-    ncclConnector* getSendResources() const { return send_guard_.get(); }
-    ncclConnector* getRecvResources() const { return recv_guard_.get(); }
-
-    // Release ownership
-    void releaseSendResources() { send_guard_.release(); }
-    void releaseRecvResources() { recv_guard_.release(); }
-
-    TransportResourceGuard(const TransportResourceGuard&) = delete;
-    TransportResourceGuard& operator=(const TransportResourceGuard&) = delete;
-};
+inline NcclCommAutoGuard makeCommAutoGuard(ncclComm_t comm)
+{
+    return NcclCommAutoGuard(comm);
+}
 
 } // namespace RCCLTestGuards
