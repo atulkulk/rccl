@@ -8,6 +8,13 @@
 
 #ifdef MPI_TESTS_ENABLED
 
+namespace
+{
+// Test pattern generation constants for TransportTestBase
+inline constexpr int kDefaultPatternMultiplier = 100; // For transport base patterns
+inline constexpr int kByteValueModulo          = 256; // For uint8_t wraparound
+} // namespace
+
 // Override createTestCommunicator to also update config and transport components
 ncclResult_t TransportTestBase::createTestCommunicator()
 {
@@ -38,7 +45,7 @@ ncclResult_t TransportTestBase::createTestCommunicator()
 // SetUp: Initialize common transport test components
 void TransportTestBase::SetUp()
 {
-    // Call base class SetUp first
+    // Call GTest's SetUp (which will call MPITestCore::initializeTest())
     MPITestBase::SetUp();
 
     // Initialize test configuration using aggregate initialization
@@ -129,13 +136,14 @@ void TransportTestBase::TearDown()
     remote_peer_info = nullptr;
     comm_handle      = nullptr;
 
-    // CRITICAL: Clear RAII guard vectors BEFORE destroying communicator
+    // Note: Clear RAII guard vectors BEFORE destroying communicator
     // The guards (especially NcclRegHandleGuard) need the communicator to be valid
     // when they call ncclCommDeregister() in their destructors
     reg_handle_guards_.clear();
     buffer_guards_.clear();
 
     // Call base class TearDown to cleanup test communicator
+    // This calls MPITestBase::TearDown() -> MPITestCore::cleanupTest() -> cleanupTestCommunicator()
     MPITestBase::TearDown();
 }
 
@@ -156,7 +164,8 @@ void TransportTestBase::allocateAndInitBuffers(void** send_buffer,
     std::vector<uint8_t> host_data(send_bytes);
     for(size_t i = 0; i < host_data.size(); i++)
     {
-        host_data[i] = static_cast<uint8_t>((config.world_rank * 100 + i) % 256);
+        host_data[i] = static_cast<uint8_t>((config.world_rank * kDefaultPatternMultiplier + i)
+                                            % kByteValueModulo);
     }
 
     ASSERT_EQ(hipSuccess,
@@ -252,8 +261,7 @@ std::pair<NcclRegHandleGuard, NcclRegHandleGuard>
         reg_handle_guards_.push_back(std::move(recvGuard));
 
         // Return empty guards (resources now managed by base class)
-        return {NcclRegHandleGuard(nullptr, NcclRegHandleDeleter(nullptr)),
-                NcclRegHandleGuard(nullptr, NcclRegHandleDeleter(nullptr))};
+        return {makeRegHandleGuard(nullptr, nullptr), makeRegHandleGuard(nullptr, nullptr)};
     }
     else
     {

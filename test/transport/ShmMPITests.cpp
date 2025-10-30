@@ -4,18 +4,18 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
+#include "RCCLTestBufferHelpers.hpp"
 #include "RCCLTestResourceGuards.hpp"
 #include "TransportMPIBase.hpp"
 
-#include <algorithm>
 #include <cmath>
-#include <string>
 
 #ifdef MPI_TESTS_ENABLED
 
 // Import MPI test constants
 using namespace MPITestConstants;
 using namespace RCCLTestGuards;
+using namespace RCCLTestHelpers;
 
 // External reference to SHM transport
 extern struct ncclTransport shmTransport;
@@ -38,15 +38,14 @@ inline constexpr int kMultipleTransferCount = 5;
 inline constexpr int kMaxErrorsToReport     = 10;
 
 // Validation sampling parameters
-inline constexpr size_t kValidationStride     = 1000;
-inline constexpr size_t kMinValidationSamples = 100;
+inline constexpr size_t kValidationStride = 1000;
 
-// Helper to perform stream synchronization with error handling
-[[nodiscard]] hipError_t syncStream(hipStream_t stream, int rank)
-{
-    const auto err = hipStreamSynchronize(stream);
-    return err;
-}
+// Test pattern generation constants
+inline constexpr int    kDefaultPatternMultiplier = 1000; // For standard patterns
+inline constexpr int    kLargePatternMultiplier   = 1000000; // For large buffer patterns
+inline constexpr int    kPatternModulo            = 10000; // For wraparound patterns
+inline constexpr size_t kMinValidationSamples     = 100;
+
 } // namespace
 
 // SHM-specific test configuration
@@ -76,31 +75,22 @@ protected:
         shm_config.is_sender   = (config.world_rank == 0);
         shm_config.buffer_size = kDefaultBufferSize;
 
-        // Allocate test buffers
-        EXPECT_EQ(hipSuccess, hipMalloc(&shm_config.send_buffer, shm_config.buffer_size))
-            << "Rank " << config.world_rank << ": Failed to allocate send buffer";
+        // Allocate and initialize send buffer with test pattern
+        constexpr size_t num_elements = kDefaultBufferSize / sizeof(float);
+        auto [send_err, _]            = allocateAndInitialize<float>(&shm_config.send_buffer,
+                                                          num_elements,
+                                                          config.world_rank);
+        EXPECT_EQ(hipSuccess, send_err)
+            << "Rank " << config.world_rank << ": Failed to allocate/initialize send buffer";
 
-        EXPECT_EQ(hipSuccess, hipMalloc(&shm_config.recv_buffer, shm_config.buffer_size))
+        // Allocate and zero-initialize receive buffer
+        hipError_t hip_result = hipMalloc(&shm_config.recv_buffer, shm_config.buffer_size);
+        EXPECT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate recv buffer";
 
-        // Initialize send buffer with test data
-        constexpr size_t   num_elements = kDefaultBufferSize / sizeof(float);
-        std::vector<float> host_data(num_elements);
-        for(size_t i = 0; i < num_elements; i++)
-        {
-            host_data[i] = static_cast<float>(config.world_rank * 1000 + i);
-        }
-
-        EXPECT_EQ(hipSuccess,
-                  hipMemcpy(shm_config.send_buffer,
-                            host_data.data(),
-                            shm_config.buffer_size,
-                            hipMemcpyHostToDevice))
-            << "Rank " << config.world_rank << ": Failed to initialize send buffer";
-
-        // Initialize receive buffer to zero
-        EXPECT_EQ(hipSuccess, hipMemset(shm_config.recv_buffer, 0, shm_config.buffer_size))
-            << "Rank " << config.world_rank << ": Failed to initialize recv buffer";
+        hip_result = zeroInitializeBuffer<float>(shm_config.recv_buffer, num_elements);
+        EXPECT_EQ(hipSuccess, hip_result)
+            << "Rank " << config.world_rank << ": Failed to zero-initialize recv buffer";
 
         // Synchronize stream to ensure all buffer operations complete
         EXPECT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
@@ -113,12 +103,12 @@ protected:
         // Cleanup SHM-specific test resources
         if(shm_config.send_buffer)
         {
-            HIPCHECK(hipFree(shm_config.send_buffer));
+            (void)hipFree(shm_config.send_buffer);
             shm_config.send_buffer = nullptr;
         }
         if(shm_config.recv_buffer)
         {
-            HIPCHECK(hipFree(shm_config.recv_buffer));
+            (void)hipFree(shm_config.recv_buffer);
             shm_config.recv_buffer = nullptr;
         }
 
@@ -180,12 +170,6 @@ public:
         ASSERT_EQ(ncclSuccess, result)
             << "Rank " << config.world_rank << ": " << (shm_config.is_sender ? "Send" : "Recv")
             << " setup failed: " << ncclGetErrorString(result);
-
-        // Synchronize all ranks after setup to ensure proxy threads have initialized
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        // Second barrier to ensure all proxy threads are ready
-        MPI_Barrier(MPI_COMM_WORLD);
     }
 
     // Test SHM connection phase
@@ -197,9 +181,6 @@ public:
             << "Rank " << config.world_rank << ": local_peer_info is null";
         ASSERT_NE(nullptr, remote_peer_info)
             << "Rank " << config.world_rank << ": remote_peer_info is null";
-
-        // Ensure all ranks are ready before connecting
-        MPI_Barrier(MPI_COMM_WORLD);
 
         // Create and initialize SHM connect info structures
         ncclConnect send_connect_info{};
@@ -326,9 +307,6 @@ public:
             << "Rank " << config.world_rank << ": RCCL " << (shm_config.is_sender ? "Send" : "Recv")
             << " failed: " << ncclGetErrorString(result);
 
-        // Ensure both ranks have posted their NCCL operations before synchronizing
-        MPI_Barrier(MPI_COMM_WORLD);
-
         ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
             << "Rank " << config.world_rank << ": Stream synchronization failed";
 
@@ -351,7 +329,8 @@ public:
             const size_t validation_count = std::min(num_elements, kMaxValidationElements);
             for(size_t i = 0; i < validation_count; i++)
             {
-                const float    expected_float = static_cast<float>(config.peer_rank * 1000 + i);
+                const float expected_float
+                    = static_cast<float>(config.peer_rank * kDefaultPatternMultiplier + i);
                 const uint32_t expected_value = *reinterpret_cast<const uint32_t*>(&expected_float);
 
                 EXPECT_EQ(expected_value, host_recv_data[i])
@@ -420,7 +399,6 @@ public:
             << ": SHM cannot connect - test skipped but connection was expected";
 
         // Step 2: Test SHM setup with CE memcpy enabled
-        MPI_Barrier(MPI_COMM_WORLD);
 
         ncclConnect send_connect_info{};
         ncclConnect recv_connect_info{};
@@ -490,7 +468,6 @@ public:
         }
 
         // Step 3: Test SHM connect with CE memcpy
-        MPI_Barrier(MPI_COMM_WORLD);
 
         if(shm_config.is_sender)
         {
@@ -517,8 +494,6 @@ public:
                 << ": SHM recv connect with CE memcpy failed: " << ncclGetErrorString(result);
         }
 
-        MPI_Barrier(MPI_COMM_WORLD);
-
         // Step 4: Send large buffer with CE memcpy and validate
         const size_t buffer_size  = kCEMemcpyBufferSize;
         const size_t num_elements = buffer_size / sizeof(float);
@@ -528,22 +503,19 @@ public:
         hipError_t hip_result = hipMalloc(&send_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate send buffer";
-        BufferGuard sendBufferGuard(send_buffer, false); // Device memory
+        auto sendBufferGuard = makeDeviceBufferAutoGuard(send_buffer);
 
         hip_result = hipMalloc(&recv_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate recv buffer";
-        BufferGuard recvBufferGuard(recv_buffer, false); // Device memory
+        auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
 
         // Initialize send buffer with unique pattern
-        std::vector<float> host_send_data(num_elements);
-        for(size_t i = 0; i < num_elements; i++)
-        {
-            host_send_data[i] = static_cast<float>(config.world_rank * 1000000 + (i % 10000));
-        }
-
-        hip_result
-            = hipMemcpy(send_buffer, host_send_data.data(), buffer_size, hipMemcpyHostToDevice);
+        hip_result = initializeBufferWithCustomPattern<float>(
+            send_buffer,
+            num_elements,
+            [rank = config.world_rank](size_t i)
+            { return static_cast<float>(rank * kLargePatternMultiplier + (i % kPatternModulo)); });
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to initialize send buffer";
 
@@ -551,16 +523,10 @@ public:
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to zero recv buffer";
 
-        // Ensure both ranks complete buffer initialization before synchronizing stream
-        MPI_Barrier(MPI_COMM_WORLD);
-
         // Synchronize stream before transfer
         hip_result = syncStream(config.stream, config.world_rank);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Stream sync failed before transfer";
-
-        // Ensure both ranks complete stream sync before posting NCCL operations
-        MPI_Barrier(MPI_COMM_WORLD);
 
         // Perform the actual data transfer using NCCL
         const size_t count = buffer_size / sizeof(float);
@@ -581,10 +547,6 @@ public:
                                        << (shm_config.is_sender ? "Send" : "Recv")
                                        << " with CE memcpy failed: " << ncclGetErrorString(result);
 
-        // Ensure both ranks have posted their NCCL operations before synchronizing
-        // (required for NCCL_LAUNCH_MODE=GROUP to avoid deadlock)
-        MPI_Barrier(MPI_COMM_WORLD);
-
         // Synchronize to ensure transfer completes
         hip_result = syncStream(config.stream, config.world_rank);
         ASSERT_EQ(hipSuccess, hip_result)
@@ -593,42 +555,22 @@ public:
         // Step 5: Validate received data (on receiver only)
         if(!shm_config.is_sender)
         {
-            std::vector<float> host_recv_data(num_elements);
-            hip_result
-                = hipMemcpy(host_recv_data.data(), recv_buffer, buffer_size, hipMemcpyDeviceToHost);
-
-            ASSERT_EQ(hipSuccess, hip_result)
-                << "Rank " << config.world_rank << ": Failed to copy received data to host";
-
-            // Validate data - check samples throughout the buffer
-            const size_t validation_samples = std::min(num_elements, size_t(10000));
-            const size_t stride             = num_elements / validation_samples;
-            int          errors             = 0;
-
-            for(size_t i = 0; i < num_elements; i += stride)
-            {
-                const float expected = static_cast<float>(config.peer_rank * 1000000 + (i % 10000));
-                const float received = host_recv_data[i];
-
-                if(std::abs(received - expected) > 1e-5)
+            // Verify with custom pattern check (matching initialization pattern)
+            size_t error_idx;
+            bool   data_correct = verifyBufferWithCustomCheck<float>(
+                recv_buffer,
+                num_elements,
+                [peer_rank = config.peer_rank](size_t i, float val)
                 {
-                    errors++;
-                    if(errors <= 10)
-                    { // Print first 10 errors
-                        TEST_WARN("Validation error at index %zu: expected=%.0f, received=%.0f",
-                                  i,
-                                  expected,
-                                  received);
-                    }
-                }
-            }
+                    float expected = static_cast<float>(peer_rank * kLargePatternMultiplier
+                                                        + (i % kPatternModulo));
+                    return std::abs(val - expected) <= 1e-5;
+                },
+                &error_idx);
 
-            EXPECT_EQ(0, errors) << "Rank " << config.world_rank << ": Data validation failed with "
-                                 << errors << " mismatches out of " << validation_samples
-                                 << " samples";
+            EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
+                                      << ": Data validation failed at index " << error_idx;
         }
-
-        MPI_Barrier(MPI_COMM_WORLD);
     }
 
     // Test SHM buffer allocation and sharing
@@ -665,13 +607,11 @@ TEST_F(ShmMPITest, ShmWorkflow)
         << "Test requirements not met - all ranks must meet requirements";
 
     // Create test-specific communicator for isolation
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Use ASSERT_MPI_SUCCESS to prevent deadlock if creation fails on some ranks
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     // Test 1: SHM Capability Detection
     testShmCanConnect();
-
-    // Synchronize after canConnect check
-    MPI_Barrier(MPI_COMM_WORLD);
 
     // Test 2: SHM Setup
     testShmSetup();
@@ -696,7 +636,8 @@ TEST_F(ShmMPITest, ShmWithMemcpyTest)
         << "Test requirements not met - all ranks must meet requirements";
 
     // Create test-specific communicator for isolation
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Use ASSERT_MPI_SUCCESS to prevent deadlock if creation fails on some ranks
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     testShmWithMemcpy();
 }
@@ -710,7 +651,8 @@ TEST_F(ShmMPITest, ShmBufferAllocationTest)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Use ASSERT_MPI_SUCCESS to prevent deadlock if creation fails on some ranks
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     testShmBufferAllocation();
 }
@@ -724,11 +666,12 @@ TEST_F(ShmMPITest, ShmTransfer_ZeroSizeBuffer)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Use ASSERT_MPI_SUCCESS to prevent deadlock if creation fails on some ranks
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     // Allocate minimal buffer
     void* buffer = nullptr;
-    HIPCHECK(hipMalloc(&buffer, 1)); // Allocate 1 byte
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1)); // Allocate 1 byte
     BufferGuard bufferGuard(buffer, false); // Device memory
 
     const bool is_sender = (config.world_rank == 0);
@@ -742,10 +685,7 @@ TEST_F(ShmMPITest, ShmTransfer_ZeroSizeBuffer)
     ASSERT_EQ(ncclSuccess, result)
         << "Rank " << config.world_rank << ": Zero-size transfer should succeed";
 
-    // Ensure both ranks have posted their NCCL operations before synchronizing
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    HIPCHECK(hipStreamSynchronize(config.stream));
+    HIP_TEST_CHECK_GTEST_FAIL(syncStream(config.stream, config.world_rank));
 }
 
 TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
@@ -757,21 +697,22 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    // Use ASSERT_MPI_SUCCESS to prevent deadlock if creation fails on some ranks
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     // Try to allocate a very large buffer
     const size_t large_size  = kCEMemcpyBufferSize;
     void*        send_buffer = nullptr;
     void*        recv_buffer = nullptr;
 
-    hipError_t  hip_result = hipMalloc(&send_buffer, large_size);
-    BufferGuard sendBufferGuard(send_buffer, false); // Device memory
+    hipError_t hip_result      = hipMalloc(&send_buffer, large_size);
+    auto       sendBufferGuard = makeDeviceBufferAutoGuard(send_buffer);
 
-    hip_result = hipMalloc(&recv_buffer, large_size);
-    BufferGuard recvBufferGuard(recv_buffer, false); // Device memory
+    hip_result           = hipMalloc(&recv_buffer, large_size);
+    auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
 
     // Initialize buffer
-    HIPCHECK(hipMemset(send_buffer, 0x42, large_size));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMemset(send_buffer, 0x42, large_size));
 
     const bool   is_sender = (config.world_rank == 0);
     const int    peer      = is_sender ? 1 : 0;
@@ -786,12 +727,7 @@ TEST_F(ShmMPITest, ShmTransfer_VeryLargeBuffer)
     ASSERT_EQ(ncclSuccess, result)
         << "Rank " << config.world_rank << ": Large buffer transfer failed";
 
-    // Ensure both ranks have posted their NCCL operations before synchronizing
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    HIPCHECK(hipStreamSynchronize(config.stream));
-
-    MPI_Barrier(MPI_COMM_WORLD);
+    HIP_TEST_CHECK_GTEST_FAIL(syncStream(config.stream, config.world_rank));
 }
 
 TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
@@ -803,12 +739,12 @@ TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     // Allocate aligned buffer
     const size_t buffer_size    = 4096;
     void*        aligned_buffer = nullptr;
-    HIPCHECK(hipMalloc(&aligned_buffer, buffer_size));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&aligned_buffer, buffer_size));
     BufferGuard bufferGuard(aligned_buffer, false); // Device memory
 
     // Create unaligned pointer (offset by 1 byte)
@@ -822,11 +758,8 @@ TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
               ? ncclSend(unaligned_buffer, 1024, ncclChar, peer, config.nccl_comm, config.stream)
               : ncclRecv(unaligned_buffer, 1024, ncclChar, peer, config.nccl_comm, config.stream);
 
-    // Ensure both ranks have posted their NCCL operations before synchronizing
-    MPI_Barrier(MPI_COMM_WORLD);
-
     // Don't fail the test - just report the result
-    HIPCHECK(hipStreamSynchronize(config.stream));
+    HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(config.stream));
 }
 
 TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
@@ -838,19 +771,19 @@ TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     const size_t buffer_size = kMediumBufferSize;
     void*        send_buffer = nullptr;
     void*        recv_buffer = nullptr;
 
-    HIPCHECK(hipMalloc(&send_buffer, buffer_size));
-    BufferGuard sendBufferGuard(send_buffer, false); // Device memory
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&send_buffer, buffer_size));
+    auto sendBufferGuard = makeDeviceBufferAutoGuard(send_buffer);
 
-    HIPCHECK(hipMalloc(&recv_buffer, buffer_size));
-    BufferGuard recvBufferGuard(recv_buffer, false); // Device memory
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&recv_buffer, buffer_size));
+    auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
 
-    HIPCHECK(hipMemset(send_buffer, 0xAB, buffer_size));
+    HIP_TEST_CHECK_GTEST_FAIL(hipMemset(send_buffer, 0xAB, buffer_size));
 
     const bool   is_sender = (config.world_rank == 0);
     const int    peer      = is_sender ? 1 : 0;
@@ -869,10 +802,8 @@ TEST_F(ShmMPITest, ShmMultipleConsecutiveTransfers)
         // Ensure both ranks have posted their NCCL operations before synchronizing
         MPI_Barrier(MPI_COMM_WORLD);
 
-        HIPCHECK(hipStreamSynchronize(config.stream));
+        HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(config.stream));
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(ShmMPITest, ShmCleanup_DoubleCleanup)
@@ -884,7 +815,7 @@ TEST_F(ShmMPITest, ShmCleanup_DoubleCleanup)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     const bool is_sender = (config.world_rank == 0);
     auto*      connector = is_sender ? &send_connector : &recv_connector;
@@ -926,8 +857,6 @@ TEST_F(ShmMPITest, ShmCleanup_DoubleCleanup)
 
     // Mark as cleaned up
     connector->transportResources = nullptr;
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(ShmMPITest, ShmConnect_WithoutSetup)
@@ -939,7 +868,7 @@ TEST_F(ShmMPITest, ShmConnect_WithoutSetup)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     if(config.world_rank == 0)
     {
@@ -970,8 +899,6 @@ TEST_F(ShmMPITest, ShmConnect_WithoutSetup)
         TEST_INFO("Connect without setup result: %s", ncclGetErrorString(result));
         TEST_INFO("Note: This tests invalid state handling");
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 TEST_F(ShmMPITest, ShmConnect_CorruptedConnectInfo)
@@ -983,7 +910,7 @@ TEST_F(ShmMPITest, ShmConnect_CorruptedConnectInfo)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    ASSERT_EQ(ncclSuccess, createTestCommunicator());
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
 
     if(config.world_rank == 0)
     {
@@ -1048,8 +975,6 @@ TEST_F(ShmMPITest, ShmConnect_CorruptedConnectInfo)
         (void)cleanup_result; // Ignore result as we're in error path
         connector->transportResources = nullptr;
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
 }
 
 #endif // MPI_TESTS_ENABLED

@@ -14,6 +14,9 @@
 
 #ifdef MPI_TESTS_ENABLED
 
+    #include <chrono>
+    #include <thread>
+
 /**
  * @brief Initialize the global test environment
  *
@@ -90,7 +93,7 @@ void RCCLMPIEnvironment::initialize_devices()
     }
 
     auto numDevices = int{};
-    HIPCHECK(hipGetDeviceCount(&numDevices));
+    HIP_TEST_CHECK_GTEST_FAIL(hipGetDeviceCount(&numDevices));
 
     // Calculate local rank (rank within this node) for multi-node support
     // Split MPI_COMM_WORLD by node using MPI_Comm_split_type
@@ -105,10 +108,16 @@ void RCCLMPIEnvironment::initialize_devices()
     MPI_Comm_rank(node_comm, &local_rank);
     MPI_Comm_size(node_comm, &local_size);
 
+    // Cache multi-node detection result ONCE during initialization
+    // local_size < world_size means we have multiple nodes
+    cached_multi_node_result = (local_size < world_size) ? 1 : 0;
+
     if(world_rank == 0)
     {
         TEST_INFO("Detected %d GPU(s) for %d MPI rank(s)", numDevices, world_size);
         TEST_INFO("Local configuration: %d ranks per node", local_size);
+        TEST_INFO("Multi-node configuration: %s",
+                  cached_multi_node_result ? "YES (multiple nodes)" : "NO (single node)");
     }
 
     // Check if we have enough GPUs for ranks on THIS node
@@ -148,17 +157,17 @@ void RCCLMPIEnvironment::initialize_devices()
     }
 
     // Complete HIP context reset and isolation
-    HIPCHECK(hipDeviceReset());
-    HIPCHECK(hipSetDevice(assigned_device));
+    HIP_TEST_CHECK_GTEST_FAIL(hipDeviceReset());
+    HIP_TEST_CHECK_GTEST_FAIL(hipSetDevice(assigned_device));
 
     // Force HIP context creation and synchronization
     auto prop = hipDeviceProp_t{};
-    HIPCHECK(hipGetDeviceProperties(&prop, assigned_device));
-    HIPCHECK(hipDeviceSynchronize());
+    HIP_TEST_CHECK_GTEST_FAIL(hipGetDeviceProperties(&prop, assigned_device));
+    HIP_TEST_CHECK_GTEST_FAIL(hipDeviceSynchronize());
 
     // Verify device assignment
     auto current_device = int{};
-    HIPCHECK(hipGetDevice(&current_device));
+    HIP_TEST_CHECK_GTEST_FAIL(hipGetDevice(&current_device));
     if(current_device != assigned_device)
     {
         TEST_ABORT("ERROR: (local rank %d) device assignment failed! Expected %d, got %d",
@@ -211,9 +220,82 @@ void RCCLMPIEnvironment::initialize_devices()
  */
 void RCCLMPIEnvironment::TearDown()
 {
-    // CRITICAL: Synchronize ALL ranks BEFORE calling cleanup_mpi()
-    // This ensures all ranks complete their test-level teardown before starting global cleanup
-    MPI_Barrier(MPI_COMM_WORLD);
+    // CRITICAL: Handle the case where ranks are out of sync due to test failures
+    //
+    // Problem: If rank 0 fails with ASSERT/FAIL, it immediately goes to TearDown()
+    // while rank 1 is still in the test body. This causes deadlock when rank 0
+    // tries to do MPI collectives (like Allreduce) while rank 1 is doing different
+    // MPI collectives (like Bcast in createTestCommunicator).
+    //
+    // Solution: Use MPI_Ibarrier (non-blocking) with a timeout to detect if ranks
+    // are out of sync, then force cleanup with MPI_Abort if necessary.
+
+    // Try a non-blocking barrier to check if all ranks are ready
+    MPI_Request barrier_req;
+    int         barrier_result = MPI_Ibarrier(MPI_COMM_WORLD, &barrier_req);
+
+    if(barrier_result == MPI_SUCCESS)
+    {
+        // Wait for barrier with a timeout (1 second)
+        int        flag             = 0;
+        auto       timeout_start    = std::chrono::steady_clock::now();
+        const auto timeout_duration = std::chrono::seconds(1);
+
+        while(!flag)
+        {
+            MPI_Test(&barrier_req, &flag, MPI_STATUS_IGNORE);
+
+            if(!flag)
+            {
+                // Check if timeout exceeded
+                auto elapsed = std::chrono::steady_clock::now() - timeout_start;
+                if(elapsed > timeout_duration)
+                {
+                    // Timeout - ranks are out of sync!
+                    std::fprintf(
+                        stderr,
+                        "Rank %d: TIMEOUT in TearDown barrier - ranks out of sync, forcing abort\n",
+                        world_rank);
+                    std::fflush(stderr);
+
+                    // Cancel the barrier request
+                    MPI_Cancel(&barrier_req);
+                    MPI_Request_free(&barrier_req);
+
+                    // Force abort - can't safely continue
+                    MPI_Abort(MPI_COMM_WORLD, 1);
+                    return;
+                }
+
+                // Sleep briefly to avoid busy-waiting
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+
+        // Barrier completed - all ranks are synchronized
+        // Now safe to do collective operations
+
+        // Check if ANY rank had a failure
+        int local_failed  = (retCode != 0) ? 1 : 0;
+        int global_failed = 0;
+        MPI_Allreduce(&local_failed, &global_failed, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+
+        // Update retCode to reflect global failure status
+        if(global_failed > 0)
+        {
+            retCode = 1;
+        }
+    }
+    else
+    {
+        // MPI_Ibarrier failed - something is very wrong
+        std::fprintf(stderr,
+                     "Rank %d: MPI_Ibarrier failed in TearDown, forcing abort\n",
+                     world_rank);
+        std::fflush(stderr);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+        return;
+    }
 
     cleanup_mpi();
 }

@@ -29,6 +29,83 @@
 
 using namespace RCCLTestGuards;
 
+// Transport-specific RAII deleters
+namespace RCCLTestGuards
+{
+
+struct TransportSendResourceDeleter
+{
+    ncclTransport* transport;
+    explicit TransportSendResourceDeleter(ncclTransport* t = nullptr) : transport(t) {}
+    void operator()(ncclConnector* connector) const
+    {
+        if(connector && transport)
+        {
+            transport->send.free(connector);
+        }
+    }
+};
+
+struct TransportRecvResourceDeleter
+{
+    ncclTransport* transport;
+    explicit TransportRecvResourceDeleter(ncclTransport* t = nullptr) : transport(t) {}
+    void operator()(ncclConnector* connector) const
+    {
+        if(connector && transport)
+        {
+            transport->recv.free(connector);
+        }
+    }
+};
+
+using TransportSendResourceGuard = ResourceGuard<ncclConnector*, TransportSendResourceDeleter>;
+using TransportRecvResourceGuard = ResourceGuard<ncclConnector*, TransportRecvResourceDeleter>;
+
+class TransportResourceGuard
+{
+private:
+    ncclConnector* send_connector_;
+    ncclConnector* recv_connector_;
+    ncclTransport* transport_;
+
+public:
+    TransportResourceGuard(ncclConnector* send, ncclConnector* recv, ncclTransport* transport)
+        : send_connector_(send), recv_connector_(recv), transport_(transport)
+    {}
+
+    ~TransportResourceGuard()
+    {
+        if(recv_connector_ && transport_)
+        {
+            transport_->recv.free(recv_connector_);
+        }
+        if(send_connector_ && transport_)
+        {
+            transport_->send.free(send_connector_);
+        }
+    }
+
+    TransportResourceGuard(const TransportResourceGuard&)            = delete;
+    TransportResourceGuard& operator=(const TransportResourceGuard&) = delete;
+    TransportResourceGuard(TransportResourceGuard&&)                 = delete;
+    TransportResourceGuard& operator=(TransportResourceGuard&&)      = delete;
+};
+
+inline TransportSendResourceGuard makeTransportSendGuard(ncclConnector* connector,
+                                                         ncclTransport* transport)
+{
+    return TransportSendResourceGuard(connector, TransportSendResourceDeleter(transport));
+}
+
+inline TransportRecvResourceGuard makeTransportRecvGuard(ncclConnector* connector,
+                                                         ncclTransport* transport)
+{
+    return TransportRecvResourceGuard(connector, TransportRecvResourceDeleter(transport));
+}
+
+} // namespace RCCLTestGuards
+
 extern struct ncclTransport p2pTransport;
 extern struct ncclTransport netTransport;
 
@@ -115,6 +192,64 @@ protected:
                                   void** recv_reg_handle,
                                   bool   store_in_base = true);
 };
+
+// ============================================================================
+// Generic Stream Synchronization Helpers
+// ============================================================================
+
+/**
+ * @brief Generic stream synchronization helper
+ *
+ * Synchronizes a HIP stream and returns the error code. This function is
+ * marked [[nodiscard]] to ensure callers check the return value.
+ *
+ * @param stream HIP stream to synchronize
+ * @param rank MPI rank (for error reporting, currently unused but allows
+ *             future enhancement with rank-specific error messages)
+ * @return hipError_t Result of hipStreamSynchronize
+ *
+ * Usage examples:
+ *   - Manual error checking: hipError_t err = syncStream(stream, rank);
+ *   - With HIPCHECK macro: HIPCHECK(syncStream(stream, rank));
+ *   - With assertion macro: ASSERT_STREAM_SYNC(stream, rank);
+ */
+[[nodiscard]] inline hipError_t syncStream(hipStream_t stream, int rank = 0)
+{
+    return hipStreamSynchronize(stream);
+}
+
+    /**
+ * @def ASSERT_STREAM_SYNC
+ * @brief Macro to assert stream synchronization succeeds
+ *
+ * Convenience macro that combines syncStream() with ASSERT_EQ to provide
+ * clean, consistent stream synchronization checks in tests.
+ *
+ * @param stream HIP stream to synchronize
+ * @param rank MPI rank for error reporting
+ *
+ * Example: ASSERT_STREAM_SYNC(config.stream, config.world_rank);
+ */
+    #define ASSERT_STREAM_SYNC(stream, rank)            \
+        ASSERT_EQ(hipSuccess, syncStream(stream, rank)) \
+            << "Rank " << rank << ": Stream synchronization failed"
+
+    /**
+ * @def ASSERT_STREAM_SYNC_MPI
+ * @brief MPI-aware stream synchronization assertion
+ *
+ * Uses ASSERT_MPI_EQ to ensure all ranks synchronize before failing.
+ * This prevents deadlocks when one rank fails while others are waiting
+ * in collective operations.
+ *
+ * @param stream HIP stream to synchronize
+ * @param rank MPI rank for error reporting
+ *
+ * Example: ASSERT_STREAM_SYNC_MPI(config.stream, config.world_rank);
+ *
+ * @note Prefer this version in multi-rank tests to avoid hangs
+ */
+    #define ASSERT_STREAM_SYNC_MPI(stream, rank) ASSERT_MPI_EQ(hipSuccess, syncStream(stream, rank))
 
 #endif // MPI_TESTS_ENABLED
 
