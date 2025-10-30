@@ -396,11 +396,11 @@ static struct tuningModel tuning_model_6 {
   // Follow order in RcclTunableColls
   .llProtoRanges = {
     /*ReduceScatter*/
-    {/*LL (min/max/factor/thread_threshold)*/ {0, 131071, 1, 16}, /*LL64/128 (min/max/factor/thread_threshold)*/ {131071, 4194304, 1, 64}},
+    {/*LL (min/max/factor/thread_threshold)*/ {0, 65536, 1, 16}, /*LL64/128 (min/max/factor/thread_threshold)*/ {65536, 4194304, 1, 64}},
     /*AllGather*/
-    {/*LL (min/max/factor/thread_threshold)*/ {0, 7,  1, 16}, /*LL64/128 (min/max/factor/thread_threshold)*/ {7, 8388608, 1, 64}},
+    {/*LL (min/max/factor/thread_threshold)*/ {0, 32768,  1, 16}, /*LL64/128 (min/max/factor/thread_threshold)*/ {32768, 8388608, 1, 64}},
     /*AllReduce*/
-    {/*LL (min/max/factor/thread_threshold)*/ {0, 131071, 1, 0},/*LL64/128 (min/max/factor/thread_threshold)*/ {131071, 17660227, 3145728, 0}},
+    {/*LL (min/max/factor/thread_threshold)*/ {0, 262144, 1, 0},/*LL64/128 (min/max/factor/thread_threshold)*/ {262144, 17660227, 3145728, 0}},
     /*Reduce*/
     {/*LL (min/max/factor/thread_threshold)*/ {0, 16383, 1, 0},/*LL64/128 (min/max/factor/thread_threshold)*/ {16383, 16777216, 1, 0}},
     /*Broadcast*/
