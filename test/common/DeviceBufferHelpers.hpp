@@ -13,14 +13,17 @@
 #include <vector>
 
 /**
- * @file RCCLTestBufferHelpers.hpp
- * @brief Template-based buffer transfer utilities for RCCL tests
+ * @file DeviceBufferHelpers.hpp
+ * @brief Template-based device buffer utilities for RCCL tests
  *
- * Provides type-safe, reusable functions for common buffer operations:
- * - Initialization with test patterns
+ * Provides type-safe, reusable functions for device buffer operations:
+ * - Initialization with test patterns (Host -> Device)
  * - Host <-> Device transfers
- * - Data verification
+ * - Data verification (Device -> Host)
  * - NCCL datatype mapping
+ *
+ * NOTE: All functions expect DEVICE memory pointers allocated with hipMalloc().
+ *       For host memory operations, use direct CPU operations instead.
  */
 
 namespace RCCLTestHelpers
@@ -124,7 +127,7 @@ constexpr const char* getTypeName()
 }
 
 // ============================================================================
-// Buffer Initialization
+// Device Buffer Initialization
 // ============================================================================
 
 /**
@@ -134,7 +137,7 @@ constexpr const char* getTypeName()
  * This pattern is deterministic and easy to verify.
  *
  * @tparam T Element type (float, int, etc.)
- * @param device_buffer Device memory pointer
+ * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Number of elements
  * @param rank MPI rank (used in pattern generation)
  * @param multiplier Pattern multiplier (default: 1000)
@@ -172,7 +175,7 @@ hipError_t initializeBufferWithPattern(void*  device_buffer,
  *
  * @tparam T Element type
  * @tparam PatternFunc Callable type (lambda, function pointer, functor)
- * @param device_buffer Device memory pointer
+ * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Number of elements
  * @param pattern_func Function that generates value for each index: T pattern_func(size_t index)
  * @return hipError_t from hipMemcpy, or hipSuccess
@@ -203,7 +206,7 @@ hipError_t initializeBufferWithCustomPattern(void*       device_buffer,
  * @brief Zero-initialize device buffer
  *
  * @tparam T Element type
- * @param device_buffer Device memory pointer
+ * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Number of elements
  * @return hipError_t from hipMemset
  */
@@ -219,7 +222,7 @@ hipError_t zeroInitializeBuffer(void* device_buffer, size_t num_elements)
 }
 
 // ============================================================================
-// Buffer Verification
+// Device Buffer Verification
 // ============================================================================
 
 /**
@@ -229,7 +232,7 @@ hipError_t zeroInitializeBuffer(void* device_buffer, size_t num_elements)
  * Uses appropriate comparison for floating-point vs integer types.
  *
  * @tparam T Element type
- * @param device_buffer Device memory pointer
+ * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Total number of elements
  * @param expected_rank Rank that generated the pattern
  * @param multiplier Pattern multiplier (must match initialization)
@@ -311,7 +314,7 @@ bool verifyBufferData(const void* device_buffer,
  *
  * @tparam T Element type
  * @tparam VerifyFunc Callable type: bool verify_func(size_t index, T actual_value)
- * @param device_buffer Device memory pointer
+ * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Number of elements
  * @param verify_func Function that verifies each element
  * @param[out] first_error_index If verification fails, set to index of first mismatch
@@ -356,7 +359,7 @@ bool verifyBufferWithCustomCheck(const void* device_buffer,
 // ============================================================================
 
 /**
- * @brief Allocate, initialize, and return RAII-guarded buffers
+ * @brief Allocate, initialize, and return RAII-guarded device buffers
  *
  * Convenience function that combines allocation and initialization.
  * Returns host vector for later verification if needed.
@@ -406,8 +409,8 @@ std::pair<hipError_t, std::vector<T>> allocateAndInitialize(void** device_buffer
  * @brief Copy data from one device buffer to another
  *
  * @tparam T Element type (used for size calculation)
- * @param dst Destination device buffer
- * @param src Source device buffer
+ * @param dst Destination device buffer (from hipMalloc)
+ * @param src Source device buffer (from hipMalloc)
  * @param num_elements Number of elements to copy
  * @return hipError_t from hipMemcpy
  */
@@ -426,7 +429,7 @@ hipError_t copyDeviceBuffer(void* dst, const void* src, size_t num_elements)
  * @brief Download device buffer to host vector
  *
  * @tparam T Element type
- * @param device_buffer Device memory pointer
+ * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Number of elements
  * @return std::pair<hipError_t, std::vector<T>> - error code and host data
  */
@@ -449,3 +452,5 @@ std::pair<hipError_t, std::vector<T>> downloadBuffer(const void* device_buffer, 
 }
 
 } // namespace RCCLTestHelpers
+
+

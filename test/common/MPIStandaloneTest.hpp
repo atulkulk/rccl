@@ -47,7 +47,7 @@
  *     int run() override {
  *         // Validate prerequisites
  *         if (!validateTestPrerequisites(2)) {
- *             if (RCCLMPIEnvironment::world_rank == 0) {
+ *             if (MPIEnvironment::world_rank == 0) {
  *                 printf("SKIP: Need at least 2 processes\n");
  *             }
  *             return 0; // Skip (not an error)
@@ -55,7 +55,7 @@
  *
  *         // Setup communicator
  *         if (createTestCommunicator() != ncclSuccess) {
- *             if (RCCLMPIEnvironment::world_rank == 0) {
+ *             if (MPIEnvironment::world_rank == 0) {
  *                 fprintf(stderr, "ERROR: Failed to create communicator\n");
  *             }
  *             return 1; // Error
@@ -64,7 +64,7 @@
  *         // Run test logic
  *         ncclComm_t comm = getActiveCommunicator();
  *         hipStream_t stream = getActiveStream();
- *         
+ *
  *         // Your test code here...
  *
  *         return 0; // Success
@@ -73,11 +73,11 @@
  *
  * int main(int argc, char** argv) {
  *     MPI_Init(&argc, &argv);
- *     
+ *
  *     MyBandwidthTest test;
  *     int result = test.run();
  *     test.cleanup(); // Explicit cleanup
- *     
+ *
  *     MPI_Finalize();
  *     return result;
  * }
@@ -87,7 +87,7 @@
  * @code
  * int main(int argc, char** argv) {
  *     MPI_Init(&argc, &argv);
- *     
+ *
  *     int result = 0;
  *     {
  *         MPIStandaloneTestRAII test;
@@ -95,7 +95,7 @@
  *         result = bandwidth_test.run();
  *         // Automatic cleanup when test goes out of scope
  *     }
- *     
+ *
  *     MPI_Finalize();
  *     return result;
  * }
@@ -170,7 +170,7 @@ public:
  * @code
  * int main(int argc, char** argv) {
  *     MPI_Init(&argc, &argv);
- *     
+ *
  *     int result = 0;
  *     {
  *         MPIStandaloneTestRAII raii_wrapper;
@@ -178,7 +178,7 @@ public:
  *         result = test.run();
  *         // Automatic cleanup when raii_wrapper goes out of scope
  *     }
- *     
+ *
  *     MPI_Finalize();
  *     return result;
  * }

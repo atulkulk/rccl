@@ -50,9 +50,9 @@ void TransportTestBase::SetUp()
 
     // Initialize test configuration using aggregate initialization
     // Note: rccl_comm and stream are set to nullptr initially; tests must call createTestCommunicator()
-    config = {.world_rank = RCCLMPIEnvironment::world_rank,
-              .world_size = RCCLMPIEnvironment::world_size,
-              .peer_rank  = (RCCLMPIEnvironment::world_rank == 0) ? 1 : 0,
+    config = {.world_rank = MPIEnvironment::world_rank,
+              .world_size = MPIEnvironment::world_size,
+              .peer_rank  = (MPIEnvironment::world_rank == 0) ? 1 : 0,
               .nccl_comm  = nullptr,
               .stream     = nullptr};
 
@@ -62,10 +62,10 @@ void TransportTestBase::SetUp()
         GTEST_SKIP() << "Transport testing requires at least 2 MPI processes";
     }
 
-    // Check if RCCLMPIEnvironment was properly initialized
-    if(RCCLMPIEnvironment::retCode != 0)
+    // Check if MPIEnvironment was properly initialized
+    if(MPIEnvironment::retCode != 0)
     {
-        GTEST_FAIL() << "RCCLMPIEnvironment initialization failed";
+        GTEST_FAIL() << "MPIEnvironment initialization failed";
     }
 
     // Initialize transport component pointers to nullptr
