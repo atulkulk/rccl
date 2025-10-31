@@ -19,7 +19,7 @@
 #define MPI_TEST_CORE_HPP
 
 #ifdef MPI_TESTS_ENABLED
-    #include "RCCLMPIEnvironment.hpp"
+    #include "MPIEnvironment.hpp"
     #include "rccl/rccl.h"
     #include "utils.h" // For getHostName() from RCCL
     #include <cstdio>
@@ -74,7 +74,7 @@ inline bool isMultiNodeTest()
 {
     // Return cached result from global environment
     // If not yet computed (== -1), assume single node to be safe
-    return RCCLMPIEnvironment::cached_multi_node_result == 1;
+    return MPIEnvironment::cached_multi_node_result == 1;
 }
 
     // TEST_WARN: Logs when NCCL_DEBUG=WARN or higher

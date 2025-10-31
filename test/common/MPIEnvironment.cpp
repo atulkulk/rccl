@@ -5,11 +5,11 @@
  ************************************************************************/
 
 /**
- * @file RCCLMPIEnvironment.cpp
+ * @file MPIEnvironment.cpp
  * @brief Implementation of global MPI environment for RCCL testing
  */
 
-#include "RCCLMPIEnvironment.hpp"
+#include "MPIEnvironment.hpp"
 #include "MPITestBase.hpp"
 
 #ifdef MPI_TESTS_ENABLED
@@ -26,7 +26,7 @@
  *
  * @note Called automatically by Google Test framework before any tests run
  */
-void RCCLMPIEnvironment::SetUp()
+void MPIEnvironment::SetUp()
 {
     // One-time initialization (MPI_Init can only be called once)
     initialize_mpi();
@@ -42,7 +42,7 @@ void RCCLMPIEnvironment::SetUp()
  * Idempotent - safe to call multiple times (uses mpi_initialized flag).
  * Typically called from main_mpi.cpp, but provides fallback initialization.
  */
-void RCCLMPIEnvironment::initialize_mpi()
+void MPIEnvironment::initialize_mpi()
 {
     if(mpi_initialized)
     {
@@ -85,7 +85,7 @@ void RCCLMPIEnvironment::initialize_mpi()
  * @note Sets retCode=1 on error (insufficient GPUs, assignment failure)
  * @note Idempotent - safe to call multiple times (uses devices_initialized flag)
  */
-void RCCLMPIEnvironment::initialize_devices()
+void MPIEnvironment::initialize_devices()
 {
     if(devices_initialized)
     {
@@ -218,7 +218,7 @@ void RCCLMPIEnvironment::initialize_devices()
  * @note Critical synchronization point - ensures all test cleanup is complete
  * @note Called automatically by Google Test framework after all tests complete
  */
-void RCCLMPIEnvironment::TearDown()
+void MPIEnvironment::TearDown()
 {
     // CRITICAL: Handle the case where ranks are out of sync due to test failures
     //
@@ -319,7 +319,7 @@ void RCCLMPIEnvironment::TearDown()
  * @note Safe to call from signal handlers or error paths
  * @note All ranks must call this function for proper finalization
  */
-void RCCLMPIEnvironment::cleanup_mpi()
+void MPIEnvironment::cleanup_mpi()
 {
     // Use static guard to prevent multiple cleanup attempts
     static bool cleanup_in_progress_or_done = false;

@@ -15,7 +15,7 @@
 #include <utility>
 
 /**
- * @file RCCLTestResourceGuards.hpp
+ * @file ResourceGuards.hpp
  * @brief RAII resource guards for automatic cleanup in tests
  *
  * Provides generic RAII guards using C++ templates for automatic resource
@@ -454,3 +454,4 @@ inline NcclCommAutoGuard makeCommAutoGuard(ncclComm_t comm)
 }
 
 } // namespace RCCLTestGuards
+

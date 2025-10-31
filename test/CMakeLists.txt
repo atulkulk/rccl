@@ -224,7 +224,7 @@ if(BUILD_TESTS)
         common/main_mpi.cpp
         common/MPIHelpers.cpp
         common/MPITestCore.cpp
-        common/RCCLMPIEnvironment.cpp
+        common/MPIEnvironment.cpp
         transport/TransportMPIBase.cpp
         transport/P2pMPITests.cpp
         transport/NetMPITests.cpp

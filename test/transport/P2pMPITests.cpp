@@ -4,8 +4,8 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "RCCLTestBufferHelpers.hpp"
-#include "RCCLTestResourceGuards.hpp"
+#include "DeviceBufferHelpers.hpp"
+#include "ResourceGuards.hpp"
 #include "TransportMPIBase.hpp"
 
 #include <algorithm>
@@ -416,7 +416,7 @@ public:
     // Test proxyConnect and proxyProgress specifically when useMemcpy is enabled
     void testProxyConnectProgressWithMemcpy()
     {
-        if(RCCLMPIEnvironment::world_rank == 0)
+        if(MPIEnvironment::world_rank == 0)
         {
             TEST_INFO("Testing proxyConnect and proxyProgress with CE memcpy support...");
         }
@@ -425,28 +425,28 @@ public:
         const char* p2p_memcpy_env = getenv("NCCL_P2P_USE_CUDA_MEMCPY");
         if(!p2p_memcpy_env || strcmp(p2p_memcpy_env, "1") != 0)
         {
-            if(RCCLMPIEnvironment::world_rank == 0)
+            if(MPIEnvironment::world_rank == 0)
             {
                 TEST_INFO("Skipping CE memcpy test - NCCL_P2P_USE_CUDA_MEMCPY not set to '1'");
                 TEST_INFO("To enable this test, set: export NCCL_P2P_USE_CUDA_MEMCPY=1");
             } // Skip test gracefully
         }
 
-        if(RCCLMPIEnvironment::world_rank == 0)
+        if(MPIEnvironment::world_rank == 0)
         {
             TEST_INFO("Found NCCL_P2P_USE_CUDA_MEMCPY=1 - CE memcpy mode enabled");
         }
 
         // Create a separate NCCL communicator with memcpy mode enabled
-        // Use RCCLMPIEnvironment variables instead of duplicating them
+        // Use MPIEnvironment variables instead of duplicating them
         ncclComm_t   memcpy_comm;
         ncclUniqueId memcpy_id;
 
-        if(RCCLMPIEnvironment::world_rank == 0)
+        if(MPIEnvironment::world_rank == 0)
         {
             const ncclResult_t id_result = ncclGetUniqueId(&memcpy_id);
             ASSERT_EQ(ncclSuccess, id_result)
-                << "Rank " << RCCLMPIEnvironment::world_rank
+                << "Rank " << MPIEnvironment::world_rank
                 << ": Failed to get unique ID for memcpy test, result: " << id_result << " ("
                 << ncclGetErrorString(id_result) << ")";
         }
@@ -454,22 +454,22 @@ public:
         // Broadcast the unique ID to all ranks
         int mpi_result = MPI_Bcast(&memcpy_id, sizeof(ncclUniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);
         ASSERT_EQ(MPI_SUCCESS, mpi_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": MPI_Bcast failed for memcpy test, result: " << mpi_result;
 
         // Initialize communicator with memcpy mode - this will set up
         // proxyConnect/proxyProgress
         const ncclResult_t init_result = ncclCommInitRank(&memcpy_comm,
-                                                          RCCLMPIEnvironment::world_size,
+                                                          MPIEnvironment::world_size,
                                                           memcpy_id,
-                                                          RCCLMPIEnvironment::world_rank);
+                                                          MPIEnvironment::world_rank);
         ASSERT_EQ(ncclSuccess, init_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": Failed to initialize memcpy communicator, result: " << init_result << " ("
             << ncclGetErrorString(init_result) << ")";
         NcclCommAutoGuard commGuard(memcpy_comm); // Guard communicator for automatic cleanup
 
-        if(RCCLMPIEnvironment::world_rank == 0)
+        if(MPIEnvironment::world_rank == 0)
         {
             TEST_INFO("Initialized communicator with CE memcpy mode (enables proxyConnect)");
         }
@@ -481,14 +481,14 @@ public:
 
         hipError_t hip_result = hipMalloc(&send_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": Failed to allocate send buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
         auto sendBufferGuard = makeDeviceBufferAutoGuard(send_buffer);
 
         hip_result = hipMalloc(&recv_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": Failed to allocate recv buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
         auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
@@ -496,14 +496,14 @@ public:
         // Initialize send buffer with test pattern
         hip_result = initializeBufferWithPattern<float>(send_buffer,
                                                         1024,
-                                                        RCCLMPIEnvironment::world_rank,
+                                                        MPIEnvironment::world_rank,
                                                         kSmallPatternMultiplier);
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": Failed to initialize send buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
 
-        if(RCCLMPIEnvironment::world_rank == 0)
+        if(MPIEnvironment::world_rank == 0)
         {
             TEST_INFO("Allocated buffers for CE memcpy testing");
         }
@@ -519,10 +519,10 @@ public:
                                                             memcpy_comm,
                                                             getActiveStream());
         ASSERT_EQ(ncclSuccess, allreduce_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": AllReduce with CE memcpy failed, result: " << allreduce_result << " ("
             << ncclGetErrorString(allreduce_result) << ")";
-        if(allreduce_result == ncclSuccess && RCCLMPIEnvironment::world_rank == 0)
+        if(allreduce_result == ncclSuccess && MPIEnvironment::world_rank == 0)
         {
             TEST_INFO("AllReduce with CE memcpy successful (exercises proxyProgress)");
         }
@@ -530,11 +530,11 @@ public:
         // Synchronize stream using getActiveStream()
         hip_result = hipStreamSynchronize(getActiveStream());
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << RCCLMPIEnvironment::world_rank
+            << "Rank " << MPIEnvironment::world_rank
             << ": Stream sync failed after CE memcpy AllReduce, error: "
             << hipGetErrorString(hip_result);
 
-        if(RCCLMPIEnvironment::world_rank == 0)
+        if(MPIEnvironment::world_rank == 0)
         {
             TEST_INFO("CE memcpy proxy test completed successfully");
             TEST_INFO("Summary of CE memcpy proxy functions exercised:");

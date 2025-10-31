@@ -7,7 +7,7 @@
 #include "MPITestCore.hpp"
 
 #ifdef MPI_TESTS_ENABLED
-    #include "RCCLGenericScopeGuard.hpp"
+    #include "GenericScopeGuard.hpp"
 
 // Detect the number of unique nodes
 int MPITestConstants::detectNodeCount()
@@ -123,8 +123,8 @@ int MPITestConstants::detectNodeCount()
 bool MPITestCore::validateTestPrerequisites(
     int min_processes, int max_processes, bool require_power_of_two, int min_nodes, int max_nodes)
 {
-    int world_rank = RCCLMPIEnvironment::world_rank;
-    int world_size = RCCLMPIEnvironment::world_size;
+    int world_rank = MPIEnvironment::world_rank;
+    int world_size = MPIEnvironment::world_size;
 
     // Only detect nodes if node constraints are specified
     int actual_nodes = 1;
@@ -277,8 +277,8 @@ bool MPITestCore::validateTestPrerequisites(
 // Create test communicator
 ncclResult_t MPITestCore::createTestCommunicator()
 {
-    int world_rank = RCCLMPIEnvironment::world_rank;
-    int world_size = RCCLMPIEnvironment::world_size;
+    int world_rank = MPIEnvironment::world_rank;
+    int world_size = MPIEnvironment::world_size;
 
     if(world_rank == 0)
     {
@@ -364,7 +364,7 @@ ncclResult_t MPITestCore::cleanupTestCommunicator()
         return ncclSuccess; // Already cleaned up or never created
     }
 
-    int world_rank = RCCLMPIEnvironment::world_rank;
+    int world_rank = MPIEnvironment::world_rank;
 
     MPI_Barrier(MPI_COMM_WORLD);
 

@@ -7,7 +7,9 @@
 #include <gtest/gtest.h>
 #include <hip/hip_runtime.h>
 #include "MPITestBase.hpp"
-#include "RCCLTestResourceGuards.hpp"
+#include "ResourceGuards.hpp"
+#include "TestChecks.hpp"
+#include "DeviceBufferHelpers.hpp"
 #include "nccl.h"
 #include "net.h"
 #include <vector>
@@ -15,11 +17,65 @@
 #include <cstring>
 #include <algorithm>
 
-// Import guard namespace for convenience
+// Import helper namespaces
 using namespace RCCLTestGuards;
+using namespace RCCLTestHelpers;
 
 // External NET IB plugin
 extern ncclNet_t ncclNetIb;
+
+// NET IB-specific resource deleters
+struct NetMHandleDeleter {
+    ncclNet_t* net;
+    void* comm;
+
+    NetMHandleDeleter(ncclNet_t* n = nullptr, void* c = nullptr) : net(n), comm(c) {}
+
+    void operator()(void* mhandle) const {
+        if (mhandle && net && comm) {
+            int rank = MPIEnvironment::world_rank;
+            TEST_INFO("Rank %d: NetMHandleDeleter - Deregistering memory handle (mhandle=%p, comm=%p)",
+                      rank, mhandle, comm);
+            ncclResult_t result = net->deregMr(comm, mhandle);
+            TEST_INFO("Rank %d: NetMHandleDeleter - deregMr result: %d", rank, result);
+        }
+    }
+};
+
+// NET IB connection guard
+class NetConnectionGuard {
+private:
+    ncclNet_t* net_;
+    void* sendComm_;
+    void* recvComm_;
+    void* listenComm_;
+
+public:
+    explicit NetConnectionGuard(ncclNet_t* net)
+        : net_(net), sendComm_(nullptr), recvComm_(nullptr), listenComm_(nullptr) {}
+
+    ~NetConnectionGuard() {
+        if (sendComm_ && net_) {
+            net_->closeSend(sendComm_);
+        }
+        if (recvComm_ && net_) {
+            net_->closeRecv(recvComm_);
+        }
+        if (listenComm_ && net_) {
+            net_->closeListen(listenComm_);
+        }
+    }
+
+    void setSendComm(void* comm) { sendComm_ = comm; }
+    void setRecvComm(void* comm) { recvComm_ = comm; }
+    void setListenComm(void* comm) { listenComm_ = comm; }
+
+    NetConnectionGuard(const NetConnectionGuard&) = delete;
+    NetConnectionGuard& operator=(const NetConnectionGuard&) = delete;
+};
+
+// Type alias for NetMHandleGuard using ResourceGuard
+using NetMHandleGuard = RCCLTestGuards::ResourceGuard<void*, NetMHandleDeleter>;
 
 // Test fixture for NET IB tests
 class NetIbMPITest : public MPITestBase {
@@ -27,6 +83,41 @@ protected:
     static constexpr int kMinProcessesForMPI = 2;
     static constexpr bool kRequirePowerOfTwo = true;
     static constexpr int kNoNodeLimit = MPITestConstants::kNoNodeLimit;
+
+    // Buffer pattern constants
+    static constexpr int kBytePatternModulo = 256;
+
+    // Timing constants
+    static constexpr int kDefaultTimeoutMs = 5000;
+    static constexpr int kLargeTransferTimeoutMs = 30000;
+    static constexpr int kPollIntervalUs = 10000;  // 10ms
+    static constexpr int kPollIntervalMs = 10;
+    static constexpr int kMaxRetryAttempts = 1000;  // For NULL request handling
+
+    // Buffer size constants
+    static constexpr size_t kSmallBufferSize = 4096;
+    static constexpr size_t kLargeBufferSize = 16 * 1024 * 1024;  // 16 MB
+
+    // Test seed constants
+    static constexpr int kBaseSeedOffset = 1000;
+    static constexpr int kMultiSizeSeedOffset = 2000;
+
+    // Debug output constants
+    static constexpr int kNumDebugSamples = 4;
+
+    // Invalid device ID offset for negative tests
+    static constexpr int kInvalidDeviceOffset = 100;
+
+    // Process count constants
+    static constexpr int kExactTwoProcesses = 2;
+    static constexpr int kMinGpusPerNode = 1;
+
+    // Transfer test constants
+    static constexpr int kNumSequentialTransfers = 100;
+    static constexpr int kTransferTagBase = 300;
+
+    // Timeout constants
+    static constexpr int kLargeTransferTimeout = 30000;
 
     ncclNet_t* net_;
     int numDevices_;
@@ -107,6 +198,7 @@ protected:
     }
 
     // Helper: Test request completion
+    // No implementation for this method in the NET IB plugin
     ncclResult_t TestRequest(void* request, int* done, int* sizes) {
         return net_->test(request, done, sizes);
     }
@@ -142,7 +234,7 @@ protected:
     ncclResult_t SetupConnection(int dev, ConnectionPair& pair, int rank, int peerRank) {
         if (rank == 0) {
             // Rank 0: Listen
-            NCCLCHECK(CreateListenComm(dev, &pair.handle, &pair.listenComm));
+            RCCL_TEST_CHECK(CreateListenComm(dev, &pair.handle, &pair.listenComm));
 
             // Send handle to peer
             MPI_Send(&pair.handle, sizeof(ncclNetHandle_t), MPI_BYTE, peerRank, 0, MPI_COMM_WORLD);
@@ -173,69 +265,31 @@ protected:
         return ncclSuccess;
     }
 
-    // Helper: Cleanup connection
-    void CleanupConnection(ConnectionPair& pair, int rank) {
-        if (rank == 0) {
-            if (pair.recvComm) CloseRecvComm(pair.recvComm);
-            if (pair.listenComm) CloseListenComm(pair.listenComm);
-        } else {
-            if (pair.sendComm) CloseSendComm(pair.sendComm);
-        }
+    // Helper: Initialize device buffer with pattern using DeviceBufferHelpers
+    hipError_t InitializeBuffer(void* buffer, size_t size, int pattern) {
+        // Use template-based helper with custom pattern: (pattern + i) % kBytePatternModulo
+        return initializeBufferWithCustomPattern<uint8_t>(
+            buffer, size,
+            [pattern](size_t i) { return static_cast<uint8_t>((pattern + i) % kBytePatternModulo); }
+        );
     }
 
-    // Helper: Allocate GPU memory
-    void* AllocateGpuMemory(size_t size) {
-        void* ptr = nullptr;
-        hipError_t err = hipMalloc(&ptr, size);
-        if (err != hipSuccess) {
-            return nullptr;
-        }
-        return ptr;
-    }
-
-    // Helper: Free GPU memory
-    void FreeGpuMemory(void* ptr) {
-        if (ptr) {
-            hipFree(ptr);
-        }
-    }
-
-    // Helper: Allocate host memory
-    void* AllocateHostMemory(size_t size) {
-        return malloc(size);
-    }
-
-    // Helper: Free host memory
-    void FreeHostMemory(void* ptr) {
-        if (ptr) {
-            free(ptr);
-        }
-    }
-
-    // Helper: Initialize buffer with pattern
-    void InitializeBuffer(void* buffer, size_t size, int pattern) {
-        uint8_t* bytes = static_cast<uint8_t*>(buffer);
-        for (size_t i = 0; i < size; i++) {
-            bytes[i] = static_cast<uint8_t>((pattern + i) % 256);
-        }
-    }
-
-    // Helper: Verify buffer pattern
+    // Helper: Verify device buffer pattern using DeviceBufferHelpers
     bool VerifyBuffer(void* buffer, size_t size, int pattern) {
-        uint8_t* bytes = static_cast<uint8_t*>(buffer);
-        for (size_t i = 0; i < size; i++) {
-            if (bytes[i] != static_cast<uint8_t>((pattern + i) % 256)) {
-                return false;
+        // Use template-based helper with custom verification
+        return verifyBufferWithCustomCheck<uint8_t>(
+            buffer, size,
+            [pattern](size_t i, uint8_t val) {
+                return val == static_cast<uint8_t>((pattern + i) % kBytePatternModulo);
             }
-        }
-        return true;
+        );
     }
 
     // Helper: Wait for request completion with timeout
-    ncclResult_t WaitForCompletion(void* request, int* sizes, int timeoutMs = 5000) {
+    ncclResult_t WaitForCompletion(void* request, int* sizes, int timeoutMs = kDefaultTimeoutMs) {
         int done = 0;
         int attempts = 0;
-        const int maxAttempts = timeoutMs / 10;
+        const int maxAttempts = timeoutMs / kPollIntervalMs;
 
         while (!done && attempts < maxAttempts) {
             ncclResult_t result = TestRequest(request, &done, sizes);
@@ -247,7 +301,7 @@ protected:
             if (done) {
                 break;
             } else {
-                usleep(10000); // 10ms
+                usleep(kPollIntervalUs); // 10ms
                 attempts++;
             }
         }
@@ -256,9 +310,7 @@ protected:
     }
 };
 
-// ============================================================================
 // Initialization Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, InitializePlugin) {
     ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI, MPITestConstants::kNoProcessLimit,
@@ -280,14 +332,12 @@ TEST_F(NetIbMPITest, GetDeviceCount) {
     EXPECT_EQ(GetDeviceCount(&ndev), ncclSuccess);
     EXPECT_GT(ndev, 0) << "No IB devices found";
 
-    if (RCCLMPIEnvironment::world_rank == 0) {
-        printf("Found %d IB device(s)\n", ndev);
+    if (MPIEnvironment::world_rank == 0) {
+        TEST_INFO("Found %d IB device(s)", ndev);
     }
 }
 
-// ============================================================================
 // Device Properties Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, GetDeviceProperties) {
     ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI, MPITestConstants::kNoProcessLimit,
@@ -312,8 +362,8 @@ TEST_F(NetIbMPITest, GetDeviceProperties) {
         EXPECT_GT(props.speed, 0) << "Device " << i << " has invalid speed";
         EXPECT_NE(props.pciPath, nullptr) << "Device " << i << " has NULL pciPath";
 
-        if (RCCLMPIEnvironment::world_rank == 0) {
-            printf("Device %d: name=%s speed=%d pciPath=%s\n",
+        if (MPIEnvironment::world_rank == 0) {
+            TEST_INFO("Device %d: name=%s speed=%d pciPath=%s",
                    i, props.name, props.speed, props.pciPath);
         }
     }
@@ -332,17 +382,16 @@ TEST_F(NetIbMPITest, GetDevicePropertiesInvalidDevice) {
     ncclNetProperties_t props;
 
     // Invalid device ID (too large)
-    ncclResult_t result = GetDeviceProperties(ndev + 100, &props);
+    ncclResult_t result = GetDeviceProperties(ndev + kInvalidDeviceOffset, &props);
     EXPECT_NE(result, ncclSuccess) << "Should fail for invalid device ID";
 }
 
-// ============================================================================
 // Connection Setup Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, ListenAndConnect) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -351,7 +400,7 @@ TEST_F(NetIbMPITest, ListenAndConnect) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -393,13 +442,12 @@ TEST_F(NetIbMPITest, ConnectWithInvalidHandle) {
     EXPECT_EQ(result, ncclInternalError) << "Should fail with invalid handle";
 }
 
-// ============================================================================
 // Memory Registration Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, RegisterHostMemory) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -408,7 +456,7 @@ TEST_F(NetIbMPITest, RegisterHostMemory) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -422,10 +470,10 @@ TEST_F(NetIbMPITest, RegisterHostMemory) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 4096;
-    void* buffer = AllocateHostMemory(bufferSize);
+    const size_t bufferSize = kSmallBufferSize;
+    void* buffer = malloc(bufferSize);
     ASSERT_NE(buffer, nullptr);
-    BufferGuard bufferGuard(buffer, true);
+    auto bufferGuard = makeHostBufferAutoGuard(buffer);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
@@ -433,13 +481,12 @@ TEST_F(NetIbMPITest, RegisterHostMemory) {
     EXPECT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
     EXPECT_NE(mhandle, nullptr);
     NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
-
-    EXPECT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
 }
 
 TEST_F(NetIbMPITest, RegisterGpuMemory) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -448,7 +495,7 @@ TEST_F(NetIbMPITest, RegisterGpuMemory) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -462,10 +509,10 @@ TEST_F(NetIbMPITest, RegisterGpuMemory) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 4096;
-    void* buffer = AllocateGpuMemory(bufferSize);
-    ASSERT_NE(buffer, nullptr);
-    BufferGuard bufferGuard(buffer, false);  // false = device memory
+    const size_t bufferSize = kSmallBufferSize;
+    void* buffer = nullptr;
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, bufferSize));
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
@@ -474,12 +521,12 @@ TEST_F(NetIbMPITest, RegisterGpuMemory) {
     EXPECT_NE(mhandle, nullptr);
     NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
-    EXPECT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
 }
 
 TEST_F(NetIbMPITest, RegisterMemoryNullPointer) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -488,7 +535,7 @@ TEST_F(NetIbMPITest, RegisterMemoryNullPointer) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -511,8 +558,9 @@ TEST_F(NetIbMPITest, RegisterMemoryNullPointer) {
 }
 
 TEST_F(NetIbMPITest, DeregisterNullHandle) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -521,7 +569,7 @@ TEST_F(NetIbMPITest, DeregisterNullHandle) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -541,13 +589,12 @@ TEST_F(NetIbMPITest, DeregisterNullHandle) {
     EXPECT_EQ(DeregisterMemory(comm, nullptr), ncclSuccess);
 }
 
-// ============================================================================
 // Send/Recv Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, SimpleSendRecv) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -556,7 +603,7 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -570,10 +617,10 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 4096;
+    const size_t bufferSize = kSmallBufferSize;
     const int tag = 42;
 
-    void* buffer = AllocateHostMemory(bufferSize);
+    void* buffer = malloc(bufferSize);
     ASSERT_NE(buffer, nullptr);
     BufferGuard bufferGuard(buffer, true);
 
@@ -594,8 +641,11 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
         ASSERT_EQ(PostRecv(pair.recvComm, 1, recvBuffers, recvSizes, recvTags,
                           recvHandles, &request), ncclSuccess);
     } else {
-        // Sender
-        InitializeBuffer(buffer, bufferSize, rank);
+        // Sender - initialize host buffer directly
+        uint8_t* hostBuffer = static_cast<uint8_t*>(buffer);
+        for (size_t i = 0; i < bufferSize; i++) {
+            hostBuffer[i] = static_cast<uint8_t>((rank + i) % kBytePatternModulo);
+        }
 
         ASSERT_EQ(PostSend(pair.sendComm, buffer, bufferSize, tag, mhandle, &request), ncclSuccess);
     }
@@ -608,16 +658,27 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
 
     if (rank == 0) {
         EXPECT_EQ(sizes[0], bufferSize) << "Received size mismatch";
-    }
 
-    ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
+        // Verify received data
+        uint8_t* hostBuffer = static_cast<uint8_t*>(buffer);
+        bool dataValid = true;
+        int senderRank = 1;  // Data was sent by rank 1
+        for (size_t i = 0; i < bufferSize && dataValid; i++) {
+            uint8_t expected = static_cast<uint8_t>((senderRank + i) % kBytePatternModulo);
+            if (hostBuffer[i] != expected) {
+                dataValid = false;
+            }
+        }
+        EXPECT_TRUE(dataValid) << "Data validation failed";
+    }
 }
 
 TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -645,9 +706,9 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
         const int tag = 100;
         const int seed = 2000 + static_cast<int>(size);  // Unique seed per size
 
-        void* buffer = AllocateHostMemory(size);
+        void* buffer = malloc(size);
         ASSERT_NE(buffer, nullptr);
-        BufferGuard bufferGuard(buffer, true);  // Local guard for loop iteration
+        auto bufferGuard = makeHostBufferAutoGuard(buffer);  // Local guard for loop iteration
 
         void* mhandle = nullptr;
         void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
@@ -668,12 +729,15 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
                               recvHandles, &request), ncclSuccess);
             ASSERT_NE(request, nullptr) << "Recv request should never be NULL";
         } else {
-            InitializeBuffer(buffer, size, seed);
+            // Initialize host buffer directly (not using InitializeBuffer which expects device memory)
+            uint8_t* hostBuffer = static_cast<uint8_t*>(buffer);
+            for (size_t i = 0; i < size; i++) {
+                hostBuffer[i] = static_cast<uint8_t>((seed + i) % kBytePatternModulo);
+            }
 
             // NET IB isend can return success with NULL request if FIFO isn't ready
             // This means the receiver hasn't posted recv yet - retry until ready
             int attempts = 0;
-            const int maxAttempts = 1000;  // 10 seconds max
             do {
                 ncclResult_t result = PostSend(pair.sendComm, buffer, size, tag, mhandle, &request);
                 ASSERT_EQ(result, ncclSuccess);
@@ -683,10 +747,10 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
                 }
 
                 // NULL request means "not ready yet", wait and retry
-                if (++attempts >= maxAttempts) {
-                    FAIL() << "PostSend returned NULL request after " << maxAttempts << " attempts";
+                if (++attempts >= kMaxRetryAttempts) {
+                    FAIL() << "PostSend returned NULL request after " << kMaxRetryAttempts << " attempts";
                 }
-                usleep(10000);  // 10ms between retries
+                usleep(kPollIntervalUs);
             } while (request == nullptr);
         }
 
@@ -705,8 +769,15 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
         if (rank == 0) {
             EXPECT_EQ(sizes[0], size) << "Size mismatch for transfer of " << size << " bytes";
 
-            // Validate received data matches expected pattern
-            bool dataValid = VerifyBuffer(buffer, size, seed);
+            // Validate received data matches expected pattern (host buffer verification)
+            uint8_t* hostBuffer = static_cast<uint8_t*>(buffer);
+            bool dataValid = true;
+            for (size_t j = 0; j < size && dataValid; j++) {
+                uint8_t expected = static_cast<uint8_t>((seed + j) % kBytePatternModulo);
+                if (hostBuffer[j] != expected) {
+                    dataValid = false;
+                }
+            }
             EXPECT_TRUE(dataValid) << "Data validation failed for size " << size;
         }
 
@@ -715,8 +786,9 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
 }
 
 TEST_F(NetIbMPITest, SendRecvZeroSize) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -725,7 +797,7 @@ TEST_F(NetIbMPITest, SendRecvZeroSize) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -739,10 +811,10 @@ TEST_F(NetIbMPITest, SendRecvZeroSize) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 4096;
+    const size_t bufferSize = kSmallBufferSize;
     const int tag = 50;
 
-    void* buffer = AllocateHostMemory(bufferSize);
+    void* buffer = malloc(bufferSize);
     ASSERT_NE(buffer, nullptr);
     BufferGuard bufferGuard(buffer, true);
 
@@ -776,17 +848,14 @@ TEST_F(NetIbMPITest, SendRecvZeroSize) {
     if (rank == 0) {
         EXPECT_EQ(sizes[0], 0) << "Should receive zero bytes";
     }
-
-    ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
 }
 
-// ============================================================================
 // Flush Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, FlushAfterRecv) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -803,7 +872,7 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
     }
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -817,11 +886,11 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 4096;
+    const size_t bufferSize = kSmallBufferSize;
     const int tag = 200;
 
-    void* buffer = AllocateGpuMemory(bufferSize);
-    ASSERT_NE(buffer, nullptr);
+    void* buffer = nullptr;
+    HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, bufferSize));
     BufferGuard bufferGuard(buffer, false);  // false = device memory
 
     void* mhandle = nullptr;
@@ -842,12 +911,16 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
                           recvHandles, &request), ncclSuccess);
     } else {
         // Sender
-        void* hostBuffer = AllocateHostMemory(bufferSize);
+        void* hostBuffer = malloc(bufferSize);
         ASSERT_NE(hostBuffer, nullptr);
-        BufferGuard hostBufferGuard(hostBuffer, true);
+        auto hostBufferGuard = makeHostBufferAutoGuard(hostBuffer);
 
-        InitializeBuffer(hostBuffer, bufferSize, rank);
-        hipMemcpy(buffer, hostBuffer, bufferSize, hipMemcpyHostToDevice);
+        // Initialize host buffer directly (not using InitializeBuffer which expects device memory)
+        uint8_t* hostBuf = static_cast<uint8_t*>(hostBuffer);
+        for (size_t i = 0; i < bufferSize; i++) {
+            hostBuf[i] = static_cast<uint8_t>((rank + i) % kBytePatternModulo);
+        }
+        HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(buffer, hostBuffer, bufferSize, hipMemcpyHostToDevice));
 
         ASSERT_EQ(PostSend(pair.sendComm, buffer, bufferSize, tag, mhandle, &request), ncclSuccess);
     }
@@ -877,9 +950,7 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
 }
 
-// ============================================================================
 // Virtual Device Tests
-// ============================================================================
 
 TEST_F(NetIbMPITest, MakeVirtualDevice) {
     ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI, MPITestConstants::kNoProcessLimit,
@@ -908,8 +979,8 @@ TEST_F(NetIbMPITest, MakeVirtualDevice) {
     if (result == ncclSuccess) {
         EXPECT_GE(vdev, 0) << "Virtual device ID should be non-negative";
 
-        if (RCCLMPIEnvironment::world_rank == 0) {
-            printf("Created virtual device %d from physical devices 0 and 1\n", vdev);
+        if (MPIEnvironment::world_rank == 0) {
+            TEST_INFO("Created virtual device %d from physical devices 0 and 1", vdev);
         }
     }
 }
@@ -935,11 +1006,9 @@ TEST_F(NetIbMPITest, MakeVirtualDeviceInvalidProps) {
 
 }
 
-// ============================================================================
 // Stress and Edge Case Tests
-// ============================================================================
 
-    // Tests multiple sequential transfers on the same connection using host memory.
+// Tests multiple sequential transfers on the same connection using host memory.
 // This test validates that request objects can be properly reused across multiple
 // send/recv operations without resource exhaustion or state corruption.
 //
@@ -958,12 +1027,12 @@ TEST_F(NetIbMPITest, MakeVirtualDeviceInvalidProps) {
 // NOTE: Flush (iflush) is intentionally NOT called because:
 //   1. Flush is only needed for GPU Direct RDMA to ensure data visibility
 //   2. For NCCL_PTR_HOST transfers, flush is unnecessary
-//   3. Flush testing is covered by FlushRecvOnGpuBuffer test
 TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -984,22 +1053,22 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 4096;
-    const int numTransfers = 100;
+    const size_t bufferSize = kSmallBufferSize;
+    const int numTransfers = kNumSequentialTransfers;
 
     void* sendBuffer = nullptr;
     void* recvBuffer = nullptr;
-    BufferGuard sendBufferGuard(nullptr, true);
-    BufferGuard recvBufferGuard(nullptr, true);
+    HostBufferAutoGuard sendBufferGuard(nullptr);
+    HostBufferAutoGuard recvBufferGuard(nullptr);
 
     if (rank == 0) {
-        recvBuffer = AllocateHostMemory(bufferSize);
+        recvBuffer = malloc(bufferSize);
         ASSERT_NE(recvBuffer, nullptr);
-        recvBufferGuard.reset(recvBuffer);
+        recvBufferGuard = makeHostBufferAutoGuard(recvBuffer);
     } else {
-        sendBuffer = AllocateHostMemory(bufferSize);
+        sendBuffer = malloc(bufferSize);
         ASSERT_NE(sendBuffer, nullptr);
-        sendBufferGuard.reset(sendBuffer);
+        sendBufferGuard = makeHostBufferAutoGuard(sendBuffer);
     }
 
     void* mhandle = nullptr;
@@ -1009,8 +1078,8 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
     NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     for (int i = 0; i < numTransfers; i++) {
-        const int tag = 300 + i;
-        const int seed = 1000 + i;  // Unique seed for each transfer
+        const int tag = kTransferTagBase + i;
+        const int seed = kBaseSeedOffset + i;  // Unique seed for each transfer
         void* request = nullptr;
 
         if (rank == 0) {
@@ -1025,12 +1094,15 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
                               recvHandles, &request), ncclSuccess);
             ASSERT_NE(request, nullptr) << "Recv request should never be NULL";
         } else {
-            InitializeBuffer(sendBuffer, bufferSize, seed);
+            // Initialize host buffer directly (not using InitializeBuffer which expects device memory)
+            uint8_t* hostBuffer = static_cast<uint8_t*>(sendBuffer);
+            for (size_t j = 0; j < bufferSize; j++) {
+                hostBuffer[j] = static_cast<uint8_t>((seed + j) % kBytePatternModulo);
+            }
 
             // NET IB isend can return success with NULL request if FIFO isn't ready
             // This means the receiver hasn't posted recv yet - retry until ready
             int attempts = 0;
-            const int maxAttempts = 1000;  // 10 seconds max
             do {
                 ncclResult_t result = PostSend(pair.sendComm, sendBuffer, bufferSize, tag, mhandle, &request);
                 ASSERT_EQ(result, ncclSuccess);
@@ -1040,10 +1112,10 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
                 }
 
                 // NULL request means "not ready yet", wait and retry
-                if (++attempts >= maxAttempts) {
-                    FAIL() << "PostSend returned NULL request after " << maxAttempts << " attempts";
+                if (++attempts >= kMaxRetryAttempts) {
+                    FAIL() << "PostSend returned NULL request after " << kMaxRetryAttempts << " attempts";
                 }
-                usleep(10000);  // 10ms between retries
+                usleep(kPollIntervalUs);
             } while (request == nullptr);
         }
 
@@ -1062,21 +1134,26 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
         if (rank == 0) {
             EXPECT_EQ(sizes[0], bufferSize) << "Transfer " << i << " size mismatch";
 
-            // Validate received data matches expected pattern
-            bool dataValid = VerifyBuffer(recvBuffer, bufferSize, seed);
+            // Validate received data matches expected pattern (host buffer verification)
+            uint8_t* hostBuffer = static_cast<uint8_t*>(recvBuffer);
+            bool dataValid = true;
+            for (size_t j = 0; j < bufferSize && dataValid; j++) {
+                uint8_t expected = static_cast<uint8_t>((seed + j) % kBytePatternModulo);
+                if (hostBuffer[j] != expected) {
+                    dataValid = false;
+                }
+            }
             EXPECT_TRUE(dataValid) << "Transfer " << i << " data validation failed (seed=" << seed << ")";
 
             if (!dataValid) {
                 // Print first few mismatched values for debugging
-                uint32_t* recvData = static_cast<uint32_t*>(recvBuffer);
-                printf("Rank %d: Transfer %d data mismatch. First 4 values:\n", rank, i);
-                for (int j = 0; j < 4 && j < (int)(bufferSize / sizeof(uint32_t)); j++) {
-                    uint32_t expected = seed + j;
-                    printf("  [%d] expected=%u, got=%u %s\n",
-                           j, expected, recvData[j],
-                           (recvData[j] == expected) ? "✓" : "✗");
+                TEST_WARN("Rank %d: Transfer %d data mismatch. First %d values:", rank, i, kNumDebugSamples);
+                for (size_t j = 0; j < kNumDebugSamples && j < bufferSize; j++) {
+                    uint8_t expected = static_cast<uint8_t>((seed + j) % kBytePatternModulo);
+                    TEST_WARN("  [%zu] expected=%u, got=%u %s",
+                           j, expected, hostBuffer[j],
+                           (hostBuffer[j] == expected) ? "PASS" : "FAIL");
                 }
-                fflush(stdout);
             }
 
             // NOTE: Flush is NOT called for host memory transfers
@@ -1091,8 +1168,9 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
 }
 
 TEST_F(NetIbMPITest, LargeTransfer) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -1101,7 +1179,7 @@ TEST_F(NetIbMPITest, LargeTransfer) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
@@ -1115,12 +1193,12 @@ TEST_F(NetIbMPITest, LargeTransfer) {
         connGuard.setSendComm(pair.sendComm);
     }
 
-    const size_t bufferSize = 16 * 1024 * 1024; // 16 MB
+    const size_t bufferSize = kLargeBufferSize; // 16 MB
     const int tag = 400;
 
-    void* buffer = AllocateHostMemory(bufferSize);
+    void* buffer = malloc(bufferSize);
     ASSERT_NE(buffer, nullptr);
-    BufferGuard bufferGuard(buffer, true);
+    auto bufferGuard = makeHostBufferAutoGuard(buffer);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
@@ -1139,8 +1217,11 @@ TEST_F(NetIbMPITest, LargeTransfer) {
         ASSERT_EQ(PostRecv(pair.recvComm, 1, recvBuffers, recvSizes, recvTags,
                           recvHandles, &request), ncclSuccess);
     } else {
-        // Sender
-        InitializeBuffer(buffer, bufferSize, rank);
+        // Sender - Initialize host buffer directly (not using InitializeBuffer which expects device memory)
+        uint8_t* hostBuffer = static_cast<uint8_t*>(buffer);
+        for (size_t i = 0; i < bufferSize; i++) {
+            hostBuffer[i] = static_cast<uint8_t>((rank + i) % kBytePatternModulo);
+        }
 
         ASSERT_EQ(PostSend(pair.sendComm, buffer, bufferSize, tag, mhandle, &request), ncclSuccess);
     }
@@ -1149,18 +1230,44 @@ TEST_F(NetIbMPITest, LargeTransfer) {
 
     // Wait for completion with longer timeout for large transfer
     int sizes[1] = {0};
-    ASSERT_EQ(WaitForCompletion(request, sizes, 30000), ncclSuccess);
+    ASSERT_EQ(WaitForCompletion(request, sizes, kLargeTransferTimeout), ncclSuccess);
 
     if (rank == 0) {
         EXPECT_EQ(sizes[0], bufferSize) << "Large transfer size mismatch";
+
+        // Verify received data
+        uint8_t* hostBuffer = static_cast<uint8_t*>(buffer);
+        bool dataValid = true;
+        int senderRank = 1;  // Data was sent by rank 1
+        size_t errorsFound = 0;
+        const size_t maxErrorsToReport = 10;
+
+        for (size_t i = 0; i < bufferSize && errorsFound < maxErrorsToReport; i++) {
+            uint8_t expected = static_cast<uint8_t>((senderRank + i) % kBytePatternModulo);
+            if (hostBuffer[i] != expected) {
+                if (errorsFound == 0) {
+                    TEST_WARN("Rank %d: Data validation errors found in large transfer:", rank);
+                }
+                TEST_WARN("  Index %zu: expected=%u, got=%u", i, expected, hostBuffer[i]);
+                dataValid = false;
+                errorsFound++;
+            }
+        }
+
+        if (!dataValid && errorsFound >= maxErrorsToReport) {
+            TEST_WARN("  ... (showing first %zu errors only)", maxErrorsToReport);
+        }
+
+        EXPECT_TRUE(dataValid) << "Large transfer data validation failed";
     }
 
     ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
 }
 
 TEST_F(NetIbMPITest, CloseWithoutWaitingForCompletion) {
-    ASSERT_TRUE(validateTestPrerequisites(2, 2, false, 1, kNoNodeLimit))
-        << "Test requires exactly 2 processes";
+    ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
+                                         false, kMinGpusPerNode, kNoNodeLimit))
+        << "Test requires exactly " << kExactTwoProcesses << " processes";
 
     ASSERT_EQ(InitNetIb(), ncclSuccess);
 
@@ -1169,7 +1276,7 @@ TEST_F(NetIbMPITest, CloseWithoutWaitingForCompletion) {
     ASSERT_GT(ndev, 0);
 
     ConnectionPair pair;
-    int rank = RCCLMPIEnvironment::world_rank;
+    int rank = MPIEnvironment::world_rank;
     int peerRank = (rank + 1) % 2;
 
     ASSERT_EQ(SetupConnection(0, pair, rank, peerRank), ncclSuccess);
