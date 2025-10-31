@@ -53,7 +53,7 @@ struct MPIContext
  * @return MPIContext with rank, size, and thread support info
  *
  * @note Must be called before any other MPI operations
- * @note Automatically sets RCCLMPIEnvironment static variables
+ * @note Automatically sets MPIEnvironment static variables
  */
 MPIContext initializeMPI(int* argc, char*** argv);
 

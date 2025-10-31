@@ -9,7 +9,7 @@
 #ifdef MPI_TESTS_ENABLED
 
     #include "MPITestCore.hpp"
-    #include "RCCLMPIEnvironment.hpp"
+    #include "MPIEnvironment.hpp"
     #include <cerrno>
     #include <cstring>
     #include <fcntl.h>
@@ -127,9 +127,9 @@ MPIContext initializeMPI(int* argc, char*** argv)
     MPI_Comm_size(MPI_COMM_WORLD, &ctx.world_size);
 
     // Update global environment
-    RCCLMPIEnvironment::world_rank      = ctx.world_rank;
-    RCCLMPIEnvironment::world_size      = ctx.world_size;
-    RCCLMPIEnvironment::mpi_initialized = true;
+    MPIEnvironment::world_rank      = ctx.world_rank;
+    MPIEnvironment::world_size      = ctx.world_size;
+    MPIEnvironment::mpi_initialized = true;
 
     return ctx;
 }
@@ -156,7 +156,7 @@ void setupGPU(int world_rank)
         // Cache multi-node detection result for isMultiNodeTest()
         int world_size;
         MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-        RCCLMPIEnvironment::cached_multi_node_result = (local_size < world_size) ? 1 : 0;
+        MPIEnvironment::cached_multi_node_result = (local_size < world_size) ? 1 : 0;
 
         // Assign GPU in round-robin fashion
         int device_id = local_rank % device_count;

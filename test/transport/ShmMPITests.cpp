@@ -4,8 +4,9 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "RCCLTestBufferHelpers.hpp"
-#include "RCCLTestResourceGuards.hpp"
+#include "DeviceBufferHelpers.hpp"
+#include "TestChecks.hpp"
+#include "ResourceGuards.hpp"
 #include "TransportMPIBase.hpp"
 
 #include <cmath>
@@ -369,7 +370,7 @@ public:
         const char* shm_memcpy_env = getenv("NCCL_SHM_USE_CUDA_MEMCPY");
         if(!shm_memcpy_env || strcmp(shm_memcpy_env, "1") != 0)
         {
-            if(RCCLMPIEnvironment::world_rank == 0)
+            if(MPIEnvironment::world_rank == 0)
             {
                 TEST_INFO("Skipping CE memcpy test - NCCL_SHM_USE_CUDA_MEMCPY not set to '1'");
                 TEST_INFO("To enable this test, set: export NCCL_SHM_USE_CUDA_MEMCPY=1");

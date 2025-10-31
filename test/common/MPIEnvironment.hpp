@@ -5,13 +5,13 @@
  ************************************************************************/
 
 /**
- * @file RCCLMPIEnvironment.hpp
+ * @file MPIEnvironment.hpp
  * @brief Global MPI environment and error checking macros for RCCL testing
  *
  * Provides a Google Test Environment for managing MPI initialization/finalization
  * and error checking macros for MPI, NCCL, and HIP operations in tests.
  *
- * @see RCCLMPIEnvironment for the main environment class
+ * @see MPIEnvironment for the main environment class
  * @see MPICHECK for MPI error checking
  * @see NCCLCHECK for NCCL error checking
  * @see HIPCHECK for HIP error checking
@@ -340,13 +340,13 @@
  * // Automatic cleanup on scope exit
  * @endcode
  *
- * @see RCCLGenericScopeGuard.hpp for full documentation and examples
+ * @see GenericScopeGuard.hpp for full documentation and examples
  * @see RAII_CLEANUP_PATTERNS.md for comprehensive usage guide
  */
-    #include "RCCLGenericScopeGuard.hpp"
+    #include "GenericScopeGuard.hpp"
 
 /**
- * @class RCCLMPIEnvironment
+ * @class MPIEnvironment
  * @brief Google Test Environment for global MPI setup and teardown
  *
  * Manages the global MPI state for all MPI-based tests:
@@ -358,7 +358,7 @@
  * @code
  * int main(int argc, char** argv) {
  *   ::testing::InitGoogleTest(&argc, argv);
- *   ::testing::AddGlobalTestEnvironment(new RCCLMPIEnvironment());
+ *   ::testing::AddGlobalTestEnvironment(new MPIEnvironment());
  *   return RUN_ALL_TESTS();
  * }
  * @endcode
@@ -367,7 +367,7 @@
  * @note Each MPI rank is assigned to a unique GPU
  * @see MPITestBase for test-level functionality
  */
-class RCCLMPIEnvironment : public ::testing::Environment
+class MPIEnvironment : public ::testing::Environment
 {
 public:
     /**
