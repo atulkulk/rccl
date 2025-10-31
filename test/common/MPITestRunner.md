@@ -98,7 +98,7 @@ TEST_F(MyMPITest, AllReduce) {
 
 ```cpp
 #include "MPITestBase.hpp"
-#include "RCCLTestResourceGuards.hpp"
+#include "ResourceGuards.hpp"
 
 // Import constants and guards
 using namespace MPITestConstants;
@@ -130,7 +130,7 @@ TEST_F(MyMPITest, BasicAllReduce) {
   auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
 
   // Initialize with rank-specific data
-  float value = RCCLMPIEnvironment::world_rank + 1.0f;
+  float value = MPIEnvironment::world_rank + 1.0f;
   HIP_TEST_CHECK_GTEST_FAIL(hipMemset(d_send, value, N * sizeof(float)));
 
   // Perform AllReduce
@@ -147,8 +147,8 @@ TEST_F(MyMPITest, BasicAllReduce) {
   HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(result.data(), d_recv, N * sizeof(float),
                                        hipMemcpyDeviceToHost));
 
-  float expected = (RCCLMPIEnvironment::world_size *
-                    (RCCLMPIEnvironment::world_size + 1)) / 2.0f;
+  float expected = (MPIEnvironment::world_size *
+                    (MPIEnvironment::world_size + 1)) / 2.0f;
 
   for (int i = 0; i < N; i++) {
     EXPECT_FLOAT_EQ(result[i], expected);
@@ -214,15 +214,15 @@ validateTestPrerequisites(2);  // Uses defaults: no max processes, any nodes
 
 ## Core Concepts
 
-### 1. RCCLMPIEnvironment
+### 1. MPIEnvironment
 
 Global MPI environment that manages MPI initialization and cleanup.
 
 **Static Members:**
 ```cpp
-RCCLMPIEnvironment::world_rank  // Current process rank (0 to N-1)
-RCCLMPIEnvironment::world_size  // Total number of processes
-RCCLMPIEnvironment::retCode     // Initialization status (0 = success)
+MPIEnvironment::world_rank  // Current process rank (0 to N-1)
+MPIEnvironment::world_size  // Total number of processes
+MPIEnvironment::retCode     // Initialization status (0 = success)
 ```
 
 **Lifecycle:**
@@ -496,7 +496,7 @@ TEST_F(MyMPITest, DebugExample) {
   TEST_INFO("AllReduce completed, result=%f", result);
 
   // Only rank 0 prints summary
-  if (RCCLMPIEnvironment::world_rank == 0) {
+  if (MPIEnvironment::world_rank == 0) {
     TEST_INFO("Summary: All ranks completed successfully");
   }
 }
@@ -671,17 +671,17 @@ void cleanupTestCommunicator();
 
 **Note:** Automatically called in `TearDown()` - usually don't need to call manually.
 
-### RCCLMPIEnvironment Static Members
+### MPIEnvironment Static Members
 
 ```cpp
 // Current process rank (0 to world_size-1)
-int RCCLMPIEnvironment::world_rank;
+int MPIEnvironment::world_rank;
 
 // Total number of processes
-int RCCLMPIEnvironment::world_size;
+int MPIEnvironment::world_size;
 
 // Initialization return code (0 = success)
-int RCCLMPIEnvironment::retCode;
+int MPIEnvironment::retCode;
 ```
 
 ### MPITestConstants
@@ -749,7 +749,7 @@ TEST_F(UnifiedMPITest, BasicAllReduce) {
   const int N = 1024;
 
   // Each rank contributes its rank+1
-  std::vector<float> send_data(N, RCCLMPIEnvironment::world_rank + 1.0f);
+  std::vector<float> send_data(N, MPIEnvironment::world_rank + 1.0f);
   std::vector<float> recv_data(N);
 
   float *d_send = nullptr, *d_recv = nullptr;
@@ -771,8 +771,8 @@ TEST_F(UnifiedMPITest, BasicAllReduce) {
   HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
   // Verify: sum of (1 + 2 + 3 + ... + world_size)
-  float expected = (RCCLMPIEnvironment::world_size *
-                    (RCCLMPIEnvironment::world_size + 1)) / 2.0f;
+  float expected = (MPIEnvironment::world_size *
+                    (MPIEnvironment::world_size + 1)) / 2.0f;
 
   for (int i = 0; i < N; i++) {
     EXPECT_FLOAT_EQ(recv_data[i], expected);
@@ -793,7 +793,7 @@ TEST_F(UnifiedMPITest, Broadcast) {
   std::vector<float> data(N);
 
   // Only rank 0 initializes data
-  if (RCCLMPIEnvironment::world_rank == 0) {
+  if (MPIEnvironment::world_rank == 0) {
     std::iota(data.begin(), data.end(), 1.0f);  // 1, 2, 3, ..., N
   }
 
@@ -829,7 +829,7 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
   const int N = 1024;
-  const int peer_rank = 1 - RCCLMPIEnvironment::world_rank;  // 0↔1
+  const int peer_rank = 1 - MPIEnvironment::world_rank;  // 0↔1
 
   float* d_send = nullptr;
   float* d_recv = nullptr;
@@ -838,7 +838,7 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
 
   // Each rank sends unique data
   for (int i = 0; i < N; i++) {
-    h_send[i] = RCCLMPIEnvironment::world_rank * 1000 + i;
+    h_send[i] = MPIEnvironment::world_rank * 1000 + i;
   }
 
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
@@ -851,7 +851,7 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
                                        hipMemcpyHostToDevice));
 
   // Exchange data between ranks
-  if (RCCLMPIEnvironment::world_rank == 0) {
+  if (MPIEnvironment::world_rank == 0) {
     RCCL_TEST_CHECK_GTEST_FAIL(ncclSend(d_send, N, ncclFloat, 1,
                                          getActiveCommunicator(), getActiveStream()));
     RCCL_TEST_CHECK_GTEST_FAIL(ncclRecv(d_recv, N, ncclFloat, 1,
@@ -892,7 +892,7 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
 
   // Each rank sends rank*10 + index
   for (int i = 0; i < N; i++) {
-    h_send[i] = RCCLMPIEnvironment::world_rank * 10 + i;
+    h_send[i] = MPIEnvironment::world_rank * 10 + i;
   }
 
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
@@ -914,7 +914,7 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
 
   // Maximum should be from highest rank
   for (int i = 0; i < N; i++) {
-    float expected = (RCCLMPIEnvironment::world_size - 1) * 10 + i;
+    float expected = (MPIEnvironment::world_size - 1) * 10 + i;
     EXPECT_FLOAT_EQ(h_recv[i], expected);
   }
 
@@ -1267,11 +1267,11 @@ TEST_F(MyTest, Example) {
   ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI));
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
-  int rank = RCCLMPIEnvironment::world_rank;
+  int rank = MPIEnvironment::world_rank;
 
   if (rank == 0) {
     // Only rank 0 prints summary (TEST_INFO automatically adds rank prefix)
-    TEST_INFO("Starting test with %d processes", RCCLMPIEnvironment::world_size);
+    TEST_INFO("Starting test with %d processes", MPIEnvironment::world_size);
   }
 
   // All ranks execute this
@@ -1334,7 +1334,7 @@ TEST_F(MyTest, AllReduceSum) {
 
   // Each rank sends 1
   // Expected result depends on world_size
-  float expected = RCCLMPIEnvironment::world_size * 1.0f;
+  float expected = MPIEnvironment::world_size * 1.0f;
 
   // ✅ GOOD: Expectation adapts to process count
   EXPECT_FLOAT_EQ(result, expected);
@@ -1637,8 +1637,8 @@ auto guard = makeCustomGuard(file, [](FILE* f) {
 
 ### See Also
 
-- **RCCLTestResourceGuards.hpp** - Full guard implementation
-- **RCCLGenericScopeGuard.hpp** - Generic scope guard for arbitrary cleanup
+- **ResourceGuards.hpp** - Full guard implementation
+- **GenericScopeGuard.hpp** - Generic scope guard for arbitrary cleanup
 - **TransportMPIBase.hpp** - Transport test base with guarded resource management
 - **Best Practices** section above for RAII usage patterns
 
@@ -1648,7 +1648,7 @@ auto guard = makeCustomGuard(file, [](FILE* f) {
 
 ### MPI Initialization Failed
 
-**Symptom:** `RCCLMPIEnvironment::retCode != 0` or "Only X GPUs available for Y ranks"
+**Symptom:** `MPIEnvironment::retCode != 0` or "Only X GPUs available for Y ranks"
 
 **Causes:**
 - Insufficient GPUs for the number of **local** processes (per node)
@@ -1658,7 +1658,7 @@ auto guard = makeCustomGuard(file, [](FILE* f) {
 **Solutions:**
 ```cpp
 // Check in test
-if (RCCLMPIEnvironment::retCode != 0) {
+if (MPIEnvironment::retCode != 0) {
   GTEST_SKIP() << "MPI initialization failed";
 }
 
@@ -2031,7 +2031,7 @@ TEST_F(MyTest, MultipleComms) {
   ncclUniqueId id1, id2;
   ncclComm_t comm1 = nullptr, comm2 = nullptr;
 
-  if (RCCLMPIEnvironment::world_rank == 0) {
+  if (MPIEnvironment::world_rank == 0) {
     RCCL_TEST_CHECK_GTEST_FAIL(ncclGetUniqueId(&id1));
     RCCL_TEST_CHECK_GTEST_FAIL(ncclGetUniqueId(&id2));
   }
@@ -2039,12 +2039,12 @@ TEST_F(MyTest, MultipleComms) {
   ASSERT_MPI_SUCCESS(MPI_Bcast(&id1, sizeof(id1), MPI_BYTE, 0, MPI_COMM_WORLD));
   ASSERT_MPI_SUCCESS(MPI_Bcast(&id2, sizeof(id2), MPI_BYTE, 0, MPI_COMM_WORLD));
 
-  RCCL_TEST_CHECK_GTEST_FAIL(ncclCommInitRank(&comm1, RCCLMPIEnvironment::world_size, id1,
-                                               RCCLMPIEnvironment::world_rank));
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclCommInitRank(&comm1, MPIEnvironment::world_size, id1,
+                                               MPIEnvironment::world_rank));
   auto comm1_guard = makeCommAutoGuard(comm1);
 
-  RCCL_TEST_CHECK_GTEST_FAIL(ncclCommInitRank(&comm2, RCCLMPIEnvironment::world_size, id2,
-                                               RCCLMPIEnvironment::world_rank));
+  RCCL_TEST_CHECK_GTEST_FAIL(ncclCommInitRank(&comm2, MPIEnvironment::world_size, id2,
+                                               MPIEnvironment::world_rank));
   auto comm2_guard = makeCommAutoGuard(comm2);
 
   // Use both communicators...
@@ -2194,7 +2194,7 @@ mpirun -np 4 ./test_executable &
 gdb -p <rank_pid>
 
 # Method 4: Use TEST_INFO for conditional debugging
-if (RCCLMPIEnvironment::world_rank == 2) {
+if (MPIEnvironment::world_rank == 2) {
   TEST_INFO("Debug info from rank 2...");
   // Only appears when NCCL_DEBUG=INFO
 }
@@ -2297,8 +2297,8 @@ int main(int argc, char** argv) {
 - **MPITestCore.hpp** - Framework-agnostic base class
 - **MPITestBase.hpp** - Google Test adapter (full API documentation)
 - **MPIStandaloneTest.hpp** - Standalone test adapter
-- **RCCLMPIEnvironment.hpp** - MPI environment setup
-- **RCCLMPIEnvironment.cpp** - Multi-node GPU assignment implementation
+- **MPIEnvironment.hpp** - MPI environment setup
+- **MPIEnvironment.cpp** - Multi-node GPU assignment implementation
 
 **Test Examples:**
 - **transport/P2pMPITests.cpp** - P2P transport tests (demonstrate single-node validation)

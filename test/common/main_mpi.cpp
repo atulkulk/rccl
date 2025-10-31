@@ -21,7 +21,7 @@
 
     #include "MPIHelpers.hpp"
     #include "MPITestBase.hpp"
-    #include "RCCLMPIEnvironment.hpp"
+    #include "MPIEnvironment.hpp"
 
 int main(int argc, char* argv[])
 {
@@ -57,7 +57,7 @@ int main(int argc, char* argv[])
     }
 
     // Set up the RCCL MPI environment for all tests
-    ::testing::AddGlobalTestEnvironment(new RCCLMPIEnvironment());
+    ::testing::AddGlobalTestEnvironment(new MPIEnvironment());
 
     // Run all tests
     const auto ret_code = RUN_ALL_TESTS();
@@ -68,7 +68,7 @@ int main(int argc, char* argv[])
         MPIHelpers::restoreRankLogging(*rank_log_config);
     }
 
-    // MPI_Finalize called by RCCLMPIEnvironment destructor
+    // MPI_Finalize called by MPIEnvironment destructor
     return ret_code;
 }
 

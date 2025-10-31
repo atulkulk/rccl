@@ -17,8 +17,9 @@
 
 #ifdef MPI_TESTS_ENABLED
     #include "MPITestBase.hpp"
-    #include "RCCLMPIEnvironment.hpp"
-    #include "RCCLTestResourceGuards.hpp"
+    #include "MPIEnvironment.hpp"
+    #include "TestChecks.hpp"
+    #include "ResourceGuards.hpp"
     #include "comm.h"
     #include "core.h"
     #include "device.h"

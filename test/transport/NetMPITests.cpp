@@ -4,7 +4,8 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 
-#include "RCCLTestBufferHelpers.hpp"
+#include "DeviceBufferHelpers.hpp"
+#include "TestChecks.hpp"
 #include "TransportMPIBase.hpp"
 
 #ifdef MPI_TESTS_ENABLED

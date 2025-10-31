@@ -5,7 +5,7 @@
  ************************************************************************/
 
 /**
- * @file RCCLGenericScopeGuard.hpp
+ * @file GenericScopeGuard.hpp
  * @brief Generic RAII scope guard for automatic resource cleanup
  *
  * Provides a generic ScopeGuard template for exception-safe cleanup of any resource.
@@ -36,7 +36,7 @@
  *
  * @see makeScopeGuard for the recommended way to create guards
  * @see SCOPE_EXIT for quick one-liner cleanup
- * @see RCCLTestResourceGuards.hpp for dedicated resource guards
+ * @see ResourceGuards.hpp for dedicated resource guards
  */
 
 #ifndef RCCL_GENERIC_SCOPE_GUARD_HPP
@@ -152,7 +152,7 @@
  *
  * @note Cleanup function should be noexcept or handle exceptions internally
  * @note Use dismiss() to prevent cleanup when transferring ownership
- * @note For common resources, prefer dedicated guards from RCCLTestResourceGuards.hpp
+ * @note For common resources, prefer dedicated guards from ResourceGuards.hpp
  *
  * @tparam Func Callable type (lambda, function pointer, functor)
  */
