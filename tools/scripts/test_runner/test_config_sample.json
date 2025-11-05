@@ -1,0 +1,287 @@
+{
+  "system_configurations": {
+    "name": "rccl-test-system",
+    "description": "RCCL Unit Test and MPI Test Configuration"
+  },
+  "paths": {
+    "workdir": "${WORKDIR:-/home/AMD/atkulkar/code/rti/scripts/rccl}",
+    "rocm_path": "${ROCM_PATH:-/opt/rocm}",
+    "mpi_path": "${MPI_PATH:-/scratch/users/atkulkar/softwares/ompi}"
+  },
+  "env_variables": {
+    "HSA_NO_SCRATCH_RECLAIM": "1"
+  },
+  "test_configurations": {
+    "default": {
+      "env_variables": {
+        "NCCL_LAUNCH_MODE": "GROUP"
+      },
+      "tests": []
+    },
+    "shm_base": {
+      "extends": "default",
+      "env_variables": {
+        "NCCL_SHM_DISABLE": "0"
+      },
+      "tests": []
+    },
+    "shm_tests": {
+      "extends": "shm_base",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 1,
+      "timeout": 120,
+      "tests": [
+        {
+          "name": "SHM_ComprehensiveWorkflow",
+          "gtest_filter": "ShmMPITest.ShmWorkflow"
+        },
+        {
+          "name": "SHM_CEMemcpy_SendSide",
+          "gtest_filter": "ShmMPITest.ShmWithMemcpyTest",
+          "timeout": 180,
+          "env_variables": {
+            "NCCL_SHM_USE_CUDA_MEMCPY": "1",
+            "NCCL_SHM_MEMCPY_MODE": "1",
+            "NCCL_SHM_LOCALITY": "1"
+          }
+        },
+        {
+          "name": "SHM_CEMemcpy_RecvSide",
+          "gtest_filter": "ShmMPITest.ShmWithMemcpyTest",
+          "env_variables": {
+            "NCCL_SHM_USE_CUDA_MEMCPY": "1",
+            "NCCL_SHM_MEMCPY_MODE": "2",
+            "NCCL_SHM_LOCALITY": "2"
+          }
+        },
+        {
+          "name": "SHM_CompleteTestSuite",
+          "gtest_filter": "ShmMPITest.*",
+          "timeout": 300
+        }
+      ]
+    },
+    "p2p_base": {
+      "extends": "default",
+      "env_variables": {
+        "NCCL_P2P_DISABLE": "0"
+      },
+      "tests": []
+    },
+    "p2p_tests": {
+      "extends": "p2p_base",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 1,
+      "timeout": 120,
+      "tests": [
+        {
+          "name": "P2P_Workflow",
+          "gtest_filter": "P2pMPITest.P2pWorkflow",
+          "env_variables": {
+            "HSA_NO_SCRATCH_RECLAIM": "1"
+          }
+        },
+        {
+          "name": "P2P_SendRecvRegistration",
+          "gtest_filter": "P2pMPITest.P2pSendRecvRegistrationTest",
+          "env_variables": {
+            "NCCL_P2P_USE_CUDA_MEMCPY": "1",
+            "NCCL_LEGACY_CUDA_REGISTER": "1"
+          }
+        },
+        {
+          "name": "P2P_IpcReg_AllEdgeCases",
+          "gtest_filter": "P2pMPITest.P2pIpcBufferRegistration_*",
+          "timeout": 180,
+          "env_variables": {
+            "NCCL_SHM_DISABLE": "1",
+            "NCCL_P2P_USE_CUDA_MEMCPY": "1",
+            "NCCL_LOCAL_REGISTER": "1",
+            "NCCL_GRAPH_REGISTER": "1",
+            "NCCL_LEGACY_CUDA_REGISTER": "1"
+          }
+        },
+        {
+          "name": "P2P_AllTests",
+          "gtest_filter": "P2pMPITest.*",
+          "timeout": 300,
+          "env_variables": {
+            "NCCL_P2P_USE_CUDA_MEMCPY": "1",
+            "NCCL_LEGACY_CUDA_REGISTER": "1"
+          }
+        }
+      ]
+    },
+    "net_base": {
+      "extends": "default",
+      "env_variables": {
+        "NCCL_NET_SHARED_COMMS": "1",
+        "NCCL_NET_SHARED_BUFFERS": "1",
+        "NCCL_DEBUG": "INFO"
+      },
+      "tests": []
+    },
+    "net_tests_eth": {
+      "extends": "net_base",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 2,
+      "env_variables": {
+        "NCCL_SOCKET_IFNAME": "eth0,eth1",
+        "NCCL_IB_DISABLE": "1"
+      },
+      "tests": [
+        {
+          "name": "NET_AllTests_2Nodes_ETH",
+          "gtest_filter": "NetTransportMPITest.*",
+          "timeout": 600
+        },
+        {
+          "name": "NET_MultipleBufferSizes_2Nodes",
+          "gtest_filter": "NetTransportMPITest.MultipleBufferSizesTest",
+          "timeout": 180
+        },
+        {
+          "name": "NET_NetGraphRegister_2Nodes",
+          "gtest_filter": "NetTransportMPITest.NetGraphRegisterBufferTest",
+          "timeout": 120,
+          "env_variables": {
+            "NCCL_GRAPH_REGISTER": "1"
+          }
+        },
+        {
+          "name": "NET_LocalRegisterBuffer_2Nodes",
+          "gtest_filter": "NetTransportMPITest.NetLocalRegisterBufferTest",
+          "timeout": 120,
+          "env_variables": {
+            "NCCL_LOCAL_REGISTER": "1",
+            "NCCL_GRAPH_REGISTER": "1"
+          }
+        }
+      ]
+    },
+    "net_ib_single_node": {
+      "extends": "default",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 1,
+      "env_variables": {
+        "NCCL_DEBUG": "INFO",
+        "NCCL_DMABUF_ENABLE": "1"
+      },
+      "tests": [
+        {
+          "name": "NetIB_SimpleSendRecv",
+          "gtest_filter": "NetIbMPITest.SimpleSendRecv",
+          "timeout": 180,
+          "env_variables": {
+            "RCCL_MPI_LOG_ALL_RANKS": "1"
+          }
+        },
+        {
+          "name": "NetIB_Xfer_MultipleSizes",
+          "gtest_filter": "NetIbMPITest.SendRecvMultipleSizes",
+          "timeout": 300
+        },
+        {
+          "name": "NetIB_RegisterHostMemory",
+          "gtest_filter": "NetIbMPITest.RegisterHostMemory",
+          "timeout": 120
+        }
+      ]
+    },
+    "net_ib_multi_node": {
+      "extends": "default",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 2,
+      "env_variables": {
+        "NCCL_DEBUG": "INFO",
+        "NCCL_SOCKET_IFNAME": "eth1"
+      },
+      "tests": [
+        {
+          "name": "NetIB_MultiNode_SimpleSendRecv",
+          "gtest_filter": "NetIbMPITest.SimpleSendRecv",
+          "timeout": 240,
+          "env_variables": {
+            "RCCL_MPI_LOG_ALL_RANKS": "1"
+          }
+        },
+        {
+          "name": "NetIB_MultiNode_LargeTransfer",
+          "gtest_filter": "NetIbMPITest.LargeTransfer",
+          "timeout": 600
+        }
+      ]
+    },
+    "unit_tests": {
+      "binary": "rccl-UnitTests",
+      "num_ranks": 1,
+      "num_nodes": 1,
+      "timeout": 0,
+      "env_variables": {
+        "HSA_NO_SCRATCH_RECLAIM": "1"
+      },
+      "tests": [
+        {
+          "name": "UnitTests_AllReduce_InPlace",
+          "gtest_filter": "AllReduce.InPlace"
+        },
+        {
+          "name": "UnitTests_Broadcast",
+          "gtest_filter": "Broadcast.*"
+        },
+        {
+          "name": "Debug_ThreadName",
+          "gtest_filter": "AllToAll.OutOfPlaceGraph*",
+          "env_variables": {
+            "NCCL_SET_THREAD_NAME": "1",
+            "NCCL_DEBUG": "INFO",
+            "NCCL_DEBUG_SUBSYS": "ALL"
+          }
+        }
+      ]
+    }
+  },
+  "test_suites": [
+    {
+      "name": "SHM Transport Tests",
+      "description": "Shared Memory transport tests (single node, 2 ranks)",
+      "config": "shm_tests",
+      "enabled": true
+    },
+    {
+      "name": "P2P Transport Tests",
+      "description": "Peer-to-peer transport tests (single node, 2 ranks)",
+      "config": "p2p_tests",
+      "enabled": true
+    },
+    {
+      "name": "NET Transport Tests (Ethernet)",
+      "description": "Network transport tests over Ethernet (2 nodes, 2 ranks)",
+      "config": "net_tests_eth",
+      "enabled": false
+    },
+    {
+      "name": "NET IB Single Node Tests",
+      "description": "InfiniBand tests on single node",
+      "config": "net_ib_single_node",
+      "enabled": true
+    },
+    {
+      "name": "NET IB Multi-Node Tests",
+      "description": "InfiniBand tests across nodes",
+      "config": "net_ib_multi_node",
+      "enabled": false
+    },
+    {
+      "name": "Unit Tests",
+      "description": "Non-MPI unit tests",
+      "config": "unit_tests",
+      "enabled": true
+    }
+  ]
+}
