@@ -2,8 +2,7 @@
 
 A simple C++ testing framework for multi-process RCCL tests using MPI (Message Passing Interface) and **Google Test**.
 
-> **📝 Note:** This guide covers **Google Test-based** MPI testing. For **standalone tests** without
-> Google Test (performance, low-level API tests), see **[STANDALONE_TEST_GUIDE.md](STANDALONE_TEST_GUIDE.md)**.
+> **📝 Note:** This guide mostly covers **Google Test-based** MPI testing. For standalone tests refer to [Standalone Tests](#standalone-tests).
 
 ## Table of Contents
 - [Overview](#overview)
