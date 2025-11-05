@@ -435,6 +435,29 @@ ProcessIsolatedTestRunner::getTestResults() {
 
 // Clear test registry and results (thread-safe)
 void ProcessIsolatedTestRunner::clear() {
+  size_t registeredCount = 0;
+  size_t executedCount = 0;
+
+  // Check for unexecuted tests before clearing
+  {
+    std::lock_guard<std::mutex> lock(testConfigsMutex_);
+    registeredCount = testConfigs_.size();
+  }
+  {
+    std::lock_guard<std::mutex> lock(resultsMutex_);
+    executedCount = testResults_.size();
+  }
+
+  // Warn if tests were registered but not all executed
+  if (registeredCount > 0 && executedCount < registeredCount) {
+    std::cerr << "\n⚠️  WARNING: ProcessIsolatedTestRunner::clear() called with "
+              << (registeredCount - executedCount) << " unexecuted test(s)!\n"
+              << "   Registered: " << registeredCount << " test(s)\n"
+              << "   Executed:   " << executedCount << " test(s)\n"
+              << "   Did you forget to call executeAllTests()?\n" << std::endl;
+  }
+
+  // Clear the registrations and results
   {
     std::lock_guard<std::mutex> lock(testConfigsMutex_);
     testConfigs_.clear();

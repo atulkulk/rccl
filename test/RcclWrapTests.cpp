@@ -370,6 +370,11 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
             }
           })
           .withEnvironment({{"NCCL_THREAD_THRESHOLDS", "1"}}));
+
+  // Execute all registered tests
+  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests();
+  EXPECT_TRUE(allTestsPassed)
+      << "RcclUpdateThreadThreshold_UserEnvSet test failed";
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
@@ -406,6 +411,11 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
             }
           })
           .withEnvironment({{"NCCL_MIN_NCHANNELS", "1"}}));
+
+  // Execute all registered tests
+  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests();
+  EXPECT_TRUE(allTestsPassed)
+      << "RcclUpdateThreadThreshold_MinNChannelsSet test failed";
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MaxChannelsSet) {
@@ -442,6 +452,11 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_MaxChannelsSet) {
             }
           })
           .withEnvironment({{"NCCL_MAX_NCHANNELS", "1"}}));
+
+  // Execute all registered tests
+  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests();
+  EXPECT_TRUE(allTestsPassed)
+      << "RcclUpdateThreadThreshold_MaxChannelsSet test failed";
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_nNodesLessThan2) {
