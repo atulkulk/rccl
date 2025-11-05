@@ -1,0 +1,393 @@
+{
+  "system_configurations": {
+    "name": "RCCL-Tests-MI300X-Mellanox-IB",
+    "description": "Comprehensive RCCL Test Configuration - All Tests"
+  },
+  "paths": {
+    "workdir": "${WORKDIR:-$HOME/code/rti/scripts/rccl}",
+    "rocm_path": "${ROCM_PATH:-/opt/rocm}",
+    "mpi_path": "${MPI_PATH:-/scratch/users/atkulkar/softwares/ompi}"
+  },
+  "env_variables": {
+    "HSA_NO_SCRATCH_RECLAIM": "1",
+    "NCCL_SOCKET_IFNAME": "eth0,eth1"
+  },
+  "build_configuration": {
+    "cmake_options": {
+      "CMAKE_BUILD_TYPE": "Debug",
+      "ENABLE_CODE_COVERAGE": "ON",
+      "BUILD_TESTS": "ON",
+      "BUILD_LOCAL_GPU_TARGET_ONLY": "ON",
+      "TRACE": "ON",
+      "COLLTRACE": "ON"
+    },
+    "env_variables": {
+      "HIPCC_COMPILE_FLAGS_APPEND": "-g -Wno-format-nonliteral -Xarch_host -fprofile-instr-generate -Xarch_host -fcoverage-mapping -parallel-jobs=16"
+    },
+    "parallel_jobs": 64,
+    "generator": "Unix Makefiles"
+  },
+  "test_configurations": {
+    "default": {
+      "env_variables": {
+        "NCCL_LAUNCH_MODE": "GROUP"
+      }
+    },
+    "shm_comprehensive": {
+      "extends": "default",
+      "test_type": "gtest",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 1,
+      "timeout": 120,
+      "env_variables": {
+        "NCCL_SHM_DISABLE": "0",
+        "NCCL_SHM_USE_CUDA_MEMCPY": "1"
+      },
+      "tests": [
+        {
+          "name": "SHM_ComprehensiveWorkflow",
+          "description": "Comprehensive workflow test for shared memory transport",
+          "test_filter": "ShmMPITest.ShmWorkflow"
+        },
+        {
+          "name": "SHM_CEMemcpy_SendSide",
+          "description": "Shared memory test with compute engine memcpy on send side",
+          "test_filter": "ShmMPITest.ShmWithMemcpyTest",
+          "timeout": 180,
+          "env_variables": {
+            "NCCL_SHM_MEMCPY_MODE": "1",
+            "NCCL_SHM_LOCALITY": "1"
+          }
+        },
+        {
+          "name": "SHM_CEMemcpy_RecvSide",
+          "description": "Shared memory test with compute engine memcpy on receive side",
+          "test_filter": "ShmMPITest.ShmWithMemcpyTest",
+          "env_variables": {
+            "NCCL_SHM_MEMCPY_MODE": "2",
+            "NCCL_SHM_LOCALITY": "2"
+          }
+        },
+        {
+          "name": "SHM_CEMemcpy_BothSides",
+          "description": "Shared memory test with compute engine memcpy on both send and receive sides using simple protocol",
+          "test_filter": "ShmMPITest.ShmWithMemcpyTest",
+          "env_variables": {
+            "NCCL_PROTO": "SIMPLE",
+            "NCCL_SHM_MEMCPY_MODE": "3",
+            "NCCL_SHM_LOCALITY": "1"
+          }
+        }
+      ]
+    },
+    "p2p_comprehensive": {
+      "extends": "default",
+      "test_type": "gtest",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 1,
+      "timeout": 120,
+      "env_variables": {
+        "NCCL_P2P_USE_CUDA_MEMCPY": "1",
+        "NCCL_LEGACY_CUDA_REGISTER": "1"
+      },
+      "tests": [
+        {
+          "name": "P2P_Workflow",
+          "description": "Peer-to-peer transport workflow test between two GPUs",
+          "test_filter": "P2pMPITest.P2pWorkflow",
+          "env_variables": {
+            "NCCL_P2P_DISABLE": "0"
+          }
+        },
+        {
+          "name": "P2P_WithMemcpy",
+          "description": "Peer-to-peer test with CUDA memcpy and legacy buffer registration",
+          "test_filter": "P2pMPITest.P2pWithMemcpyTest"
+        },
+        {
+          "name": "P2P_SendRecvRegistration",
+          "description": "Test peer-to-peer send/receive buffer registration mechanisms",
+          "test_filter": "P2pMPITest.P2pSendRecvRegistrationTest"
+        },
+        {
+          "name": "P2P_IpcReg_VerySmallBuffer",
+          "description": "Test P2P IPC buffer registration with very small buffer sizes and SHM disabled",
+          "test_filter": "P2pMPITest.P2pIpcBufferRegistration_VerySmallBuffer",
+          "env_variables": {
+            "NCCL_SHM_DISABLE": "1",
+            "NCCL_LOCAL_REGISTER": "1"
+          }
+        }
+      ]
+    },
+    "net_transport_eth_multinode": {
+      "extends": "default",
+      "test_type": "gtest",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 2,
+      "env_variables": {
+        "NCCL_NET_SHARED_COMMS": "1",
+        "NCCL_NET_SHARED_BUFFERS": "1",
+        "NCCL_IB_DISABLE": "1"
+      },
+      "tests": [
+        {
+          "name": "NET_AllTests_2Nodes_ETH",
+          "description": "All network transport tests over Ethernet across two nodes",
+          "test_filter": "NetTransportMPITest.*",
+          "timeout": 600
+        },
+        {
+          "name": "NET_MultipleBufferSizes_2Nodes",
+          "description": "Network transport test with multiple buffer sizes across two nodes",
+          "test_filter": "NetTransportMPITest.MultipleBufferSizesTest",
+          "timeout": 180
+        },
+        {
+          "name": "NET_NetGraphRegister_2Nodes",
+          "description": "Network transport test with graph buffer registration across two nodes",
+          "test_filter": "NetTransportMPITest.NetGraphRegisterBufferTest",
+          "timeout": 120,
+          "env_variables": {
+            "NCCL_GRAPH_REGISTER": "1"
+          }
+        }
+      ]
+    },
+    "net_ib_base": {
+      "extends": "default",
+      "test_type": "gtest",
+      "binary": "rccl-UnitTestsMPI",
+      "num_ranks": 2,
+      "num_nodes": 1,
+      "env_variables": {
+        "NCCL_DEBUG": "INFO",
+        "NCCL_DMABUF_ENABLE": "1"
+      }
+    },
+    "net_ib_initialization": {
+      "extends": "net_ib_base",
+      "timeout": 60,
+      "tests": [
+        {
+          "name": "NetIB_Init_Plugin",
+          "description": "Initialize InfiniBand network plugin and verify basic setup",
+          "test_filter": "NetIbMPITest.InitializePlugin"
+        },
+        {
+          "name": "NetIB_Init_GetDeviceCount",
+          "description": "Query and validate InfiniBand device count",
+          "test_filter": "NetIbMPITest.GetDeviceCount"
+        }
+      ]
+    },
+    "net_ib_properties": {
+      "extends": "net_ib_base",
+      "timeout": 60,
+      "tests": [
+        {
+          "name": "NetIB_Props_GetProperties",
+          "description": "Query InfiniBand device properties and capabilities",
+          "test_filter": "NetIbMPITest.GetDeviceProperties"
+        },
+        {
+          "name": "NetIB_Props_InvalidDevice",
+          "description": "Test error handling when querying properties of invalid InfiniBand device",
+          "test_filter": "NetIbMPITest.GetDevicePropertiesInvalidDevice"
+        }
+      ]
+    },
+    "net_ib_memory": {
+      "extends": "net_ib_base",
+      "timeout": 120,
+      "tests": [
+        {
+          "name": "NetIB_Mem_RegisterHost",
+          "description": "Test InfiniBand registration of host memory buffers",
+          "test_filter": "NetIbMPITest.RegisterHostMemory"
+        },
+        {
+          "name": "NetIB_Mem_RegisterGpu",
+          "description": "Test InfiniBand registration of GPU device memory buffers",
+          "test_filter": "NetIbMPITest.RegisterGpuMemory"
+        }
+      ]
+    },
+    "net_ib_transfer": {
+      "extends": "net_ib_base",
+      "tests": [
+        {
+          "name": "NetIB_Xfer_SimpleSendRecv",
+          "description": "Basic InfiniBand send/receive data transfer test",
+          "test_filter": "NetIbMPITest.SimpleSendRecv",
+          "timeout": 180,
+          "env_variables": {
+            "RCCL_MPI_LOG_ALL_RANKS": "1"
+          }
+        },
+        {
+          "name": "NetIB_Xfer_MultipleSizes",
+          "description": "InfiniBand data transfer with multiple buffer sizes",
+          "test_filter": "NetIbMPITest.SendRecvMultipleSizes",
+          "timeout": 300
+        },
+        {
+          "name": "NetIB_Stress_LargeTransfer",
+          "description": "Stress test for large data transfers over InfiniBand",
+          "test_filter": "NetIbMPITest.LargeTransfer",
+          "timeout": 600
+        }
+      ]
+    },
+    "unit_tests_fixtures": {
+      "test_type": "gtest",
+      "binary": "rccl-UnitTestsFixtures",
+      "num_ranks": 1,
+      "num_nodes": 1,
+      "timeout": 0,
+      "env_variables": {
+        "NCCL_DEBUG": "INFO",
+        "NCCL_DEBUG_SUBSYS": "ALL"
+      },
+      "tests": [
+        {
+          "name": "NetIb_Debug",
+          "description": "InfiniBand unit tests with debug output using test fixtures",
+          "test_filter": "NetIbTests.*",
+          "env_variables": {
+            "NCCL_SOCKET_IFNAME": "eth1"
+          }
+        },
+        {
+          "name": "Rcclwrap_All",
+          "description": "RCCL wrapper API unit tests with trace-level debugging",
+          "test_filter": "Rcclwrap.*",
+          "env_variables": {
+            "NCCL_DEBUG": "TRACE"
+          }
+        }
+      ]
+    },
+    "unit_tests_standard": {
+      "test_type": "gtest",
+      "binary": "rccl-UnitTests",
+      "num_ranks": 1,
+      "num_nodes": 1,
+      "timeout": 0,
+      "tests": [
+        {
+          "name": "AllReduce_InPlace",
+          "description": "Test AllReduce collective operation with in-place buffers",
+          "test_filter": "AllReduce.InPlace"
+        },
+        {
+          "name": "Broadcast_OutOfPlace",
+          "description": "Test Broadcast collective operation with separate input/output buffers",
+          "test_filter": "Broadcast.OutOfPlace"
+        },
+        {
+          "name": "AllGather_OutOfPlace",
+          "description": "Test AllGather collective operation with separate input/output buffers",
+          "test_filter": "AllGather.OutOfPlace"
+        }
+      ]
+    },
+    "debug_tests": {
+      "test_type": "gtest",
+      "binary": "rccl-UnitTests",
+      "num_ranks": 1,
+      "num_nodes": 1,
+      "timeout": 0,
+      "env_variables": {
+        "NCCL_DEBUG": "VERSION",
+        "NCCL_DEBUG_SUBSYS": "ALL"
+      },
+      "tests": [
+        {
+          "name": "Debug_ThreadName",
+          "description": "Test thread naming functionality with AllToAll operation",
+          "test_filter": "AllToAll.OutOfPlaceGraph*",
+          "env_variables": {
+            "NCCL_SET_THREAD_NAME": "1",
+            "NCCL_DEBUG": "INFO"
+          }
+        },
+        {
+          "name": "Debug_AllSubsystems",
+          "description": "Test debug logging for all RCCL subsystems with trace-level output",
+          "test_filter": "AllToAll.OutOfPlaceGraph*",
+          "env_variables": {
+            "NCCL_DEBUG": "TRACE",
+            "NCCL_DEBUG_FILE": "cdcvg.dbg",
+            "NCCL_DEBUG_SUBSYS": "INIT,COLL,P2P,SHM,NET,GRAPH,TUNING,ENV,ALLOC,CALL,PROXY,NVLS,BOOTSTRAP,REG,PROFILE,RAS,VERBS"
+          }
+        }
+      ]
+    }
+  },
+  "test_suites": [
+    {
+      "name": "SHM Tests - Complete Suite",
+      "description": "All shared memory transport tests (single node)",
+      "config": "shm_comprehensive",
+      "enabled": true
+    },
+    {
+      "name": "P2P Tests - Complete Suite",
+      "description": "All peer-to-peer transport tests (single node)",
+      "config": "p2p_comprehensive",
+      "enabled": true
+    },
+    {
+      "name": "NET Transport - Ethernet (Multi-Node)",
+      "description": "Network transport tests over Ethernet",
+      "config": "net_transport_eth_multinode",
+      "enabled": false
+    },
+    {
+      "name": "NET IB - Initialization Tests",
+      "description": "InfiniBand plugin initialization and device enumeration",
+      "config": "net_ib_initialization",
+      "enabled": true
+    },
+    {
+      "name": "NET IB - Device Properties",
+      "description": "InfiniBand device property queries",
+      "config": "net_ib_properties",
+      "enabled": true
+    },
+    {
+      "name": "NET IB - Memory Registration",
+      "description": "InfiniBand memory registration tests",
+      "config": "net_ib_memory",
+      "enabled": true
+    },
+    {
+      "name": "NET IB - Data Transfer",
+      "description": "InfiniBand data transfer and stress tests",
+      "config": "net_ib_transfer",
+      "enabled": true
+    },
+    {
+      "name": "Unit Tests - Fixtures",
+      "description": "Non-MPI unit tests using fixtures",
+      "config": "unit_tests_fixtures",
+      "enabled": true
+    },
+    {
+      "name": "Unit Tests - Standard Collectives",
+      "description": "Basic collective operation tests",
+      "config": "unit_tests_standard",
+      "enabled": true
+    },
+    {
+      "name": "Debug and Logging Tests",
+      "description": "Tests for debug output and logging functionality",
+      "config": "debug_tests",
+      "enabled": true
+    }
+  ]
+}
