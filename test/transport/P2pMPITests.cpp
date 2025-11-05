@@ -42,14 +42,46 @@ struct P2PTestConfig
     size_t buffer_size{0};
 };
 
+// P2P-specific RAII guard for connector cleanup
+// NOTE: This must be declared BEFORE buffer allocations to ensure proper
+// destructor ordering. Connectors must be freed BEFORE buffers when CE memcpy is enabled.
+struct ConnectorCleanup
+{
+    ncclConnector* send_conn{nullptr};
+    ncclConnector* recv_conn{nullptr};
+    ncclTransport* transport{nullptr};
+
+    // Default constructor
+    ConnectorCleanup() = default;
+
+    ~ConnectorCleanup()
+    {
+        // Free connectors first (before buffers are freed by other guards)
+        // This is critical when CE memcpy is enabled (NCCL_P2P_USE_CUDA_MEMCPY=1)
+        // because CE memcpy creates proxy resources tied to the connector lifecycle
+        if(send_conn && send_conn->transportResources && transport)
+        {
+            transport->send.free(send_conn);
+            send_conn->transportResources = nullptr;
+        }
+        if(recv_conn && recv_conn->transportResources && transport)
+        {
+            transport->recv.free(recv_conn);
+            recv_conn->transportResources = nullptr;
+        }
+    }
+
+    // Prevent copying and moving
+    ConnectorCleanup(const ConnectorCleanup&) = delete;
+    ConnectorCleanup& operator=(const ConnectorCleanup&) = delete;
+    ConnectorCleanup(ConnectorCleanup&&) = delete;
+    ConnectorCleanup& operator=(ConnectorCleanup&&) = delete;
+};
+
 class P2pMPITest : public TransportTestBase
 {
 protected:
     P2PTestConfig p2p_config;
-
-    // Test data buffers
-    std::vector<uint32_t> host_send_data;
-    std::vector<uint32_t> host_recv_data;
 
     void SetUp() override
     {
@@ -57,7 +89,7 @@ protected:
         TransportTestBase::SetUp();
     }
 
-    // Helper: Allocate P2P-specific resources (call AFTER validation)
+    // Helper: Allocate P2P-specific resources
     void setupP2PBuffers()
     {
         // Set up P2P-specific test configuration
@@ -83,12 +115,15 @@ protected:
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to zero-initialize recv buffer";
 
-        // Synchronize stream to ensure all buffer operations complete
-        ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
+        // Synchronize default stream to ensure all buffer operations complete
+        // Note: This is called before createTestCommunicator(), so we use the default stream (0)
+        ASSERT_EQ(hipSuccess, hipStreamSynchronize(0))
             << "Rank " << config.world_rank
-            << ": Failed to synchronize stream after buffer initialization";
+            << ": Failed to synchronize default stream after buffer initialization";
 
-        // Release guards - buffers now managed by TearDown()
+        // Release guards - buffers must persist beyond setupP2PBuffers() scope
+        // They will be manually cleaned up in TearDown() BEFORE base class teardown
+        // to avoid "invalid resource handle" errors with proxy connections
         sendGuard.release();
         recvGuard.release();
 
@@ -100,7 +135,11 @@ protected:
 
     void TearDown() override
     {
-        // Cleanup P2P-specific test resources
+        // Cleanup P2P-specific test resources BEFORE calling base class TearDown
+        // Note: Buffers must be freed while the communicator and proxy connections
+        // are still valid. The base class TearDown() destroys the communicator, which
+        // triggers proxy thread shutdown and frees all proxy connections. If we free
+        // buffers after that, we get "invalid resource handle" errors.
         if(p2p_config.send_buffer)
         {
             HIP_TEST_CHECK_GTEST_FAIL(hipFree(p2p_config.send_buffer));
@@ -112,366 +151,41 @@ protected:
             p2p_config.recv_buffer = nullptr;
         }
 
-        // Call base class TearDown
+        // Call base class TearDown to cleanup communicator and proxy connections
         TransportTestBase::TearDown();
     }
 
 public:
-    // Test P2P capability detection
-    void testP2PCanConnect()
-    {
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Testing p2pCanConnect");
-        }
-
-        // Validate preconditions
-        ASSERT_NE(nullptr, comm_handle)
-            << "comm_handle is null - NCCL communicator not initialized";
-        ASSERT_NE(nullptr, local_peer_info)
-            << "local_peer_info is null - peer information not initialized";
-        ASSERT_NE(nullptr, remote_peer_info)
-            << "remote_peer_info is null - peer information not initialized";
-
-        int        can_connect = 0;
-        const auto result      = p2pTransport.canConnect(&can_connect,
-                                                    comm_handle,
-                                                    topology_graph,
-                                                    local_peer_info,
-                                                    remote_peer_info);
-
-        ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank
-                                       << ": p2pCanConnect failed: " << ncclGetErrorString(result);
-
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("p2pCanConnect result: %d", can_connect);
-        }
-
-        // Synchronize the stream to ensure all operations complete
-        ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
-            << "Rank " << config.world_rank << ": Stream synchronization failed";
-    }
-
-    // Test P2P setup phase
-    void testP2PSetup()
-    {
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Testing P2P setup");
-        }
-
-        ncclConnect peer_connect_info{};
-        const auto  result = p2p_config.is_sender ? p2pTransport.send.setup(comm_handle,
-                                                                           topology_graph,
-                                                                           local_peer_info,
-                                                                           remote_peer_info,
-                                                                           &peer_connect_info,
-                                                                           &send_connector,
-                                                                           0,
-                                                                           0)
-                                                  : p2pTransport.recv.setup(comm_handle,
-                                                                           topology_graph,
-                                                                           local_peer_info,
-                                                                           remote_peer_info,
-                                                                           &peer_connect_info,
-                                                                           &recv_connector,
-                                                                           0,
-                                                                           0);
-
-        ASSERT_EQ(ncclSuccess, result)
-            << "Rank " << config.world_rank << ": " << (p2p_config.is_sender ? "Send" : "Recv")
-            << " setup failed: " << ncclGetErrorString(result);
-    }
-
-    // Test P2P connection phase
-    void testP2PConnect()
-    {
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Testing P2P connect");
-        }
-
-        // Validate preconditions
-        ASSERT_NE(nullptr, comm_handle) << "Rank " << config.world_rank << ": comm_handle is null";
-        ASSERT_NE(nullptr, local_peer_info)
-            << "Rank " << config.world_rank << ": local_peer_info is null";
-        ASSERT_NE(nullptr, remote_peer_info)
-            << "Rank " << config.world_rank << ": remote_peer_info is null";
-
-        // Ensure all ranks are ready before connecting
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        // Create and initialize P2P connect info structures
-        ncclConnect send_connect_info{};
-        ncclConnect recv_connect_info{};
-
-        if(p2p_config.is_sender)
-        {
-            // Setup send connection info using P2P transport setup
-            auto result = p2pTransport.send.setup(comm_handle,
-                                                  topology_graph,
-                                                  local_peer_info,
-                                                  remote_peer_info,
-                                                  &send_connect_info,
-                                                  &send_connector,
-                                                  0,
-                                                  0);
-            ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank
-                                           << ": Send setup failed: " << ncclGetErrorString(result);
-
-            // Exchange connect info with receiver using MPI
-            ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Send(&send_connect_info,
-                               sizeof(ncclConnect),
-                               MPI_BYTE,
-                               config.peer_rank,
-                               0,
-                               MPI_COMM_WORLD))
-                << "Rank " << config.world_rank << ": MPI_Send failed";
-
-            ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Recv(&recv_connect_info,
-                               sizeof(ncclConnect),
-                               MPI_BYTE,
-                               config.peer_rank,
-                               0,
-                               MPI_COMM_WORLD,
-                               MPI_STATUS_IGNORE))
-                << "Rank " << config.world_rank << ": MPI_Recv failed";
-
-            // Perform the actual connection using the received info
-            result = p2pTransport.send.connect(comm_handle,
-                                               &recv_connect_info,
-                                               config.world_size,
-                                               config.world_rank,
-                                               &send_connector);
-            ASSERT_EQ(ncclSuccess, result)
-                << "Rank " << config.world_rank
-                << ": Send connect failed: " << ncclGetErrorString(result);
-        }
-        else
-        {
-            // Setup receive connection info using P2P transport setup
-            auto result = p2pTransport.recv.setup(comm_handle,
-                                                  topology_graph,
-                                                  local_peer_info,
-                                                  remote_peer_info,
-                                                  &recv_connect_info,
-                                                  &recv_connector,
-                                                  0,
-                                                  0);
-            ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank
-                                           << ": Recv setup failed: " << ncclGetErrorString(result);
-
-            // Exchange connect info with sender using MPI
-            ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Recv(&send_connect_info,
-                               sizeof(ncclConnect),
-                               MPI_BYTE,
-                               config.peer_rank,
-                               0,
-                               MPI_COMM_WORLD,
-                               MPI_STATUS_IGNORE))
-                << "Rank " << config.world_rank << ": MPI_Recv failed";
-
-            ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Send(&recv_connect_info,
-                               sizeof(ncclConnect),
-                               MPI_BYTE,
-                               config.peer_rank,
-                               0,
-                               MPI_COMM_WORLD))
-                << "Rank " << config.world_rank << ": MPI_Send failed";
-
-            // Perform the actual connection using the received info
-            result = p2pTransport.recv.connect(comm_handle,
-                                               &send_connect_info,
-                                               config.world_size,
-                                               config.world_rank,
-                                               &recv_connector);
-            ASSERT_EQ(ncclSuccess, result)
-                << "Rank " << config.world_rank
-                << ": Recv connect failed: " << ncclGetErrorString(result);
-        }
-
-        // Synchronize the stream to ensure all RCCL operations complete
-        ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
-            << "Rank " << config.world_rank << ": Stream synchronization failed";
-    }
-
-    // Test actual data transfer through P2P
-    void testP2PDataTransfer()
-    {
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Testing P2P data transfer...");
-        }
-
-        // Initialize host data vectors
-        const size_t num_elements = p2p_config.buffer_size / sizeof(uint32_t);
-        host_recv_data.resize(num_elements);
-        host_send_data.resize(num_elements);
-
-        // Use RCCL point-to-point operations to validate P2P transport
-        const size_t count  = p2p_config.buffer_size / sizeof(float);
-        const auto   result = p2p_config.is_sender ? ncclSend(p2p_config.send_buffer,
-                                                            count,
-                                                            ncclFloat,
-                                                            config.peer_rank,
-                                                            config.nccl_comm,
-                                                            config.stream)
-                                                   : ncclRecv(p2p_config.recv_buffer,
-                                                            count,
-                                                            ncclFloat,
-                                                            config.peer_rank,
-                                                            config.nccl_comm,
-                                                            config.stream);
-
-        ASSERT_EQ(ncclSuccess, result)
-            << "Rank " << config.world_rank << ": RCCL " << (p2p_config.is_sender ? "Send" : "Recv")
-            << " failed: " << ncclGetErrorString(result);
-
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Successfully %s data %s rank %d",
-                      p2p_config.is_sender ? "sent" : "received",
-                      p2p_config.is_sender ? "to" : "from",
-                      config.peer_rank);
-        }
-
-        ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
-            << "Rank " << config.world_rank << ": Stream synchronization failed";
-
-        // Only validate data on the receiver side
-        if(!p2p_config.is_sender)
-        {
-            ASSERT_FALSE(host_recv_data.empty())
-                << "Rank " << config.world_rank << ": host_recv_data is empty";
-            ASSERT_NE(nullptr, p2p_config.recv_buffer)
-                << "Rank " << config.world_rank << ": recv_buffer is null";
-
-            ASSERT_EQ(hipSuccess,
-                      hipMemcpy(host_recv_data.data(),
-                                p2p_config.recv_buffer,
-                                p2p_config.buffer_size,
-                                hipMemcpyDeviceToHost))
-                << "Rank " << config.world_rank << ": hipMemcpy DeviceToHost failed";
-
-            // Validate received data - should match sender's original pattern
-            const size_t validation_count = std::min(num_elements, kMaxValidationElements);
-            for(size_t i = 0; i < validation_count; i++)
-            {
-                const float expected_float
-                    = static_cast<float>(config.peer_rank * kDefaultPatternMultiplier + i);
-                const uint32_t expected_value = *reinterpret_cast<const uint32_t*>(&expected_float);
-
-                ASSERT_EQ(expected_value, host_recv_data[i])
-                    << "Rank " << config.world_rank << ": Data mismatch at index " << i;
-            }
-
-            if(config.world_rank == 0)
-            {
-                TEST_INFO(
-                    "P2P data transfer validation successful - received correct data from rank %d",
-                    config.peer_rank);
-            }
-        }
-        else if(config.world_rank == 0)
-        {
-            TEST_INFO("Send operation completed successfully");
-        }
-    }
-
-    // Test resource cleanup
-    void testP2PCleanup()
-    {
-        if(config.world_rank == 0)
-        {
-            TEST_INFO("Testing P2P cleanup");
-        }
-
-        // Ensure all stream operations complete before cleanup
-        if(auto err = syncStream(config.stream, config.world_rank); err != hipSuccess)
-        {
-            TEST_WARN("Stream sync failed during cleanup: %s", hipGetErrorString(err));
-            // Don't return error - continue with cleanup
-        }
-
-        auto* connector = p2p_config.is_sender ? &send_connector : &recv_connector;
-        if(connector->transportResources)
-        {
-            const auto result = p2p_config.is_sender ? p2pTransport.send.free(connector)
-                                                     : p2pTransport.recv.free(connector);
-
-            ASSERT_EQ(ncclSuccess, result)
-                << "Rank " << config.world_rank << ": " << (p2p_config.is_sender ? "Send" : "Recv")
-                << " cleanup failed: " << ncclGetErrorString(result);
-
-            // Mark as cleaned up to avoid double cleanup in TearDown
-            connector->transportResources = nullptr;
-        }
-    }
-
     // Test proxyConnect and proxyProgress specifically when useMemcpy is enabled
     void testProxyConnectProgressWithMemcpy()
     {
-        if(MPIEnvironment::world_rank == 0)
+        if(config.world_rank == 0)
         {
-            TEST_INFO("Testing proxyConnect and proxyProgress with CE memcpy support...");
+            TEST_INFO("Testing proxyConnect and proxyProgress with CE memcpy support (V2)...");
         }
 
         // Check if NCCL_P2P_USE_CUDA_MEMCPY is set externally - skip test if not
         const char* p2p_memcpy_env = getenv("NCCL_P2P_USE_CUDA_MEMCPY");
         if(!p2p_memcpy_env || strcmp(p2p_memcpy_env, "1") != 0)
         {
-            if(MPIEnvironment::world_rank == 0)
+            if(config.world_rank == 0)
             {
                 TEST_INFO("Skipping CE memcpy test - NCCL_P2P_USE_CUDA_MEMCPY not set to '1'");
                 TEST_INFO("To enable this test, set: export NCCL_P2P_USE_CUDA_MEMCPY=1");
-            } // Skip test gracefully
+            }
+            return; // Skip test gracefully
         }
 
-        if(MPIEnvironment::world_rank == 0)
+        if(config.world_rank == 0)
         {
             TEST_INFO("Found NCCL_P2P_USE_CUDA_MEMCPY=1 - CE memcpy mode enabled");
         }
 
-        // Create a separate NCCL communicator with memcpy mode enabled
-        // Use MPIEnvironment variables instead of duplicating them
-        ncclComm_t   memcpy_comm;
-        ncclUniqueId memcpy_id;
-
-        if(MPIEnvironment::world_rank == 0)
+        // Use the test communicator created by createTestCommunicator()
+        // This provides better isolation and automatic cleanup
+        if(config.world_rank == 0)
         {
-            const ncclResult_t id_result = ncclGetUniqueId(&memcpy_id);
-            ASSERT_EQ(ncclSuccess, id_result)
-                << "Rank " << MPIEnvironment::world_rank
-                << ": Failed to get unique ID for memcpy test, result: " << id_result << " ("
-                << ncclGetErrorString(id_result) << ")";
-        }
-
-        // Broadcast the unique ID to all ranks
-        int mpi_result = MPI_Bcast(&memcpy_id, sizeof(ncclUniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);
-        ASSERT_EQ(MPI_SUCCESS, mpi_result)
-            << "Rank " << MPIEnvironment::world_rank
-            << ": MPI_Bcast failed for memcpy test, result: " << mpi_result;
-
-        // Initialize communicator with memcpy mode - this will set up
-        // proxyConnect/proxyProgress
-        const ncclResult_t init_result = ncclCommInitRank(&memcpy_comm,
-                                                          MPIEnvironment::world_size,
-                                                          memcpy_id,
-                                                          MPIEnvironment::world_rank);
-        ASSERT_EQ(ncclSuccess, init_result)
-            << "Rank " << MPIEnvironment::world_rank
-            << ": Failed to initialize memcpy communicator, result: " << init_result << " ("
-            << ncclGetErrorString(init_result) << ")";
-        NcclCommAutoGuard commGuard(memcpy_comm); // Guard communicator for automatic cleanup
-
-        if(MPIEnvironment::world_rank == 0)
-        {
-            TEST_INFO("Initialized communicator with CE memcpy mode (enables proxyConnect)");
+            TEST_INFO("Using test communicator with CE memcpy mode");
         }
 
         // Test with a smaller buffer size to ensure successful operations
@@ -481,14 +195,14 @@ public:
 
         hipError_t hip_result = hipMalloc(&send_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << MPIEnvironment::world_rank
+            << "Rank " << config.world_rank
             << ": Failed to allocate send buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
         auto sendBufferGuard = makeDeviceBufferAutoGuard(send_buffer);
 
         hip_result = hipMalloc(&recv_buffer, buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << MPIEnvironment::world_rank
+            << "Rank " << config.world_rank
             << ": Failed to allocate recv buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
         auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
@@ -496,33 +210,32 @@ public:
         // Initialize send buffer with test pattern
         hip_result = initializeBufferWithPattern<float>(send_buffer,
                                                         1024,
-                                                        MPIEnvironment::world_rank,
+                                                        config.world_rank,
                                                         kSmallPatternMultiplier);
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << MPIEnvironment::world_rank
+            << "Rank " << config.world_rank
             << ": Failed to initialize send buffer for memcpy test, error: "
             << hipGetErrorString(hip_result);
 
-        if(MPIEnvironment::world_rank == 0)
+        if(config.world_rank == 0)
         {
             TEST_INFO("Allocated buffers for CE memcpy testing");
         }
 
         // Test: AllReduce operation - this triggers proxyConnect and proxyProgress
-        // in CE memcpy mode Use getActiveStream() instead of creating a
-        // separate stream
+        // in CE memcpy mode using the test communicator and stream
         const ncclResult_t allreduce_result = ncclAllReduce(send_buffer,
                                                             recv_buffer,
                                                             1024,
                                                             ncclFloat,
                                                             ncclSum,
-                                                            memcpy_comm,
+                                                            getActiveCommunicator(),
                                                             getActiveStream());
         ASSERT_EQ(ncclSuccess, allreduce_result)
-            << "Rank " << MPIEnvironment::world_rank
+            << "Rank " << config.world_rank
             << ": AllReduce with CE memcpy failed, result: " << allreduce_result << " ("
             << ncclGetErrorString(allreduce_result) << ")";
-        if(allreduce_result == ncclSuccess && MPIEnvironment::world_rank == 0)
+        if(allreduce_result == ncclSuccess && config.world_rank == 0)
         {
             TEST_INFO("AllReduce with CE memcpy successful (exercises proxyProgress)");
         }
@@ -530,11 +243,11 @@ public:
         // Synchronize stream using getActiveStream()
         hip_result = hipStreamSynchronize(getActiveStream());
         ASSERT_EQ(hipSuccess, hip_result)
-            << "Rank " << MPIEnvironment::world_rank
+            << "Rank " << config.world_rank
             << ": Stream sync failed after CE memcpy AllReduce, error: "
             << hipGetErrorString(hip_result);
 
-        if(MPIEnvironment::world_rank == 0)
+        if(config.world_rank == 0)
         {
             TEST_INFO("CE memcpy proxy test completed successfully");
             TEST_INFO("Summary of CE memcpy proxy functions exercised:");
@@ -912,7 +625,7 @@ TEST_F(P2pMPITest, P2pWorkflow)
                                           kRequireSingleNode))
         << "Test requirements not met - all ranks must meet requirements";
 
-    // Allocate P2P resources
+    // Setup P2P-specific buffers BEFORE creating communicator
     setupP2PBuffers();
 
     // Create test-specific communicator for isolation
@@ -920,14 +633,247 @@ TEST_F(P2pMPITest, P2pWorkflow)
 
     if(config.world_rank == 0)
     {
-        TEST_INFO("Starting comprehensive P2P workflow test with %d processes", config.world_size);
+        TEST_INFO("Starting comprehensive P2P transport workflow test with %d processes", config.world_size);
+        TEST_INFO("This test exercises the low-level P2P transport API");
     }
 
-    testP2PCanConnect();
-    testP2PSetup();
-    testP2PConnect();
-    testP2PDataTransfer();
-    testP2PCleanup();
+    // Note: for CE memcpy: Track connectors so we can free them BEFORE buffers
+    // Using the P2P-specific ConnectorCleanup RAII guard defined at file scope
+    ConnectorCleanup cleanup;
+    cleanup.transport = &p2pTransport;
+
+    // Step 1: Test P2P transport canConnect
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 1: Testing P2P canConnect capability");
+    }
+
+    int can_connect = 0;
+    auto result = p2pTransport.canConnect(&can_connect,
+                                         comm_handle,
+                                         topology_graph,
+                                         local_peer_info,
+                                         remote_peer_info);
+    ASSERT_EQ(ncclSuccess, result)
+        << "Rank " << config.world_rank << ": p2pCanConnect failed: " << ncclGetErrorString(result);
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("P2P canConnect result: %d (1=can connect)", can_connect);
+    }
+
+    // Step 2: Setup P2P transport connectors and exchange connection info
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 2: Setting up P2P transport connectors");
+    }
+
+    // Exchange connection information via MPI
+    ncclConnect send_connect_info{};
+    ncclConnect recv_connect_info{};
+
+    if(p2p_config.is_sender)
+    {
+        // Sender: setup send connector
+        result = p2pTransport.send.setup(comm_handle,
+                                        topology_graph,
+                                        local_peer_info,
+                                        remote_peer_info,
+                                        &send_connect_info,
+                                        &send_connector,
+                                        0,
+                                        0);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": P2P send setup failed: " << ncclGetErrorString(result);
+
+        cleanup.send_conn = &send_connector;
+
+        if(config.world_rank == 0)
+        {
+            TEST_INFO("Send connector setup complete");
+        }
+
+        // Exchange connect info with receiver
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Send(&send_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD))
+            << "Rank " << config.world_rank << ": MPI_Send failed";
+
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Recv(&recv_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD,
+                          MPI_STATUS_IGNORE))
+            << "Rank " << config.world_rank << ": MPI_Recv failed";
+    }
+    else
+    {
+        // Receiver: setup recv connector
+        result = p2pTransport.recv.setup(comm_handle,
+                                        topology_graph,
+                                        local_peer_info,
+                                        remote_peer_info,
+                                        &recv_connect_info,
+                                        &recv_connector,
+                                        0,
+                                        0);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": P2P recv setup failed: " << ncclGetErrorString(result);
+
+        cleanup.recv_conn = &recv_connector;
+
+        if(config.world_rank == 0)
+        {
+            TEST_INFO("Recv connector setup complete");
+        }
+
+        // Exchange connect info with sender
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Recv(&send_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD,
+                          MPI_STATUS_IGNORE))
+            << "Rank " << config.world_rank << ": MPI_Recv failed";
+
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Send(&recv_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD))
+            << "Rank " << config.world_rank << ": MPI_Send failed";
+    }
+
+    // Step 3: Connect P2P transport
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 3: Connecting P2P transport");
+    }
+
+    // Perform connect
+    if(p2p_config.is_sender)
+    {
+        result = p2pTransport.send.connect(comm_handle,
+                                          &recv_connect_info,
+                                          config.world_size,
+                                          config.world_rank,
+                                          &send_connector);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": P2P send connect failed: " << ncclGetErrorString(result);
+    }
+    else
+    {
+        result = p2pTransport.recv.connect(comm_handle,
+                                          &send_connect_info,
+                                          config.world_size,
+                                          config.world_rank,
+                                          &recv_connector);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": P2P recv connect failed: " << ncclGetErrorString(result);
+    }
+
+    ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
+        << "Rank " << config.world_rank << ": Stream synchronization failed after connect";
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("P2P transport connected successfully");
+    }
+
+    // Step 4: Perform data transfer using NCCL Send/Recv
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 4: Performing P2P data transfer");
+    }
+
+    const size_t count = p2p_config.buffer_size / sizeof(float);
+    result = p2p_config.is_sender
+        ? ncclSend(p2p_config.send_buffer,
+                  count,
+                  ncclFloat,
+                  config.peer_rank,
+                  config.nccl_comm,
+                  config.stream)
+        : ncclRecv(p2p_config.recv_buffer,
+                  count,
+                  ncclFloat,
+                  config.peer_rank,
+                  config.nccl_comm,
+                  config.stream);
+
+    ASSERT_EQ(ncclSuccess, result)
+        << "Rank " << config.world_rank << ": NCCL " << (p2p_config.is_sender ? "Send" : "Recv")
+        << " failed: " << ncclGetErrorString(result);
+
+    ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
+        << "Rank " << config.world_rank << ": Stream synchronization failed after transfer";
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Data transfer completed successfully");
+    }
+
+    // Step 5: Validate received data (receiver only)
+    if(!p2p_config.is_sender)
+    {
+        if(config.world_rank == 0)
+        {
+            TEST_INFO("Step 5: Validating received data");
+        }
+
+        size_t error_idx;
+        float  expected_val, actual_val;
+
+        // Validate received data using verifyBufferData template
+        // The data should match the SENDER's pattern (peer_rank is the sender's rank)
+        bool data_correct = verifyBufferData<float>(p2p_config.recv_buffer,
+                                                    count,
+                                                    config.peer_rank,  // Sender's rank
+                                                    kDefaultPatternMultiplier,
+                                                    kMaxValidationElements,
+                                                    1e-5,
+                                                    &error_idx,
+                                                    &expected_val,
+                                                    &actual_val);
+
+        EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
+                                  << ": Data validation failed at index " << error_idx
+                                  << ": expected " << expected_val << ", got " << actual_val;
+
+        if(data_correct && config.world_rank == 0)
+        {
+            TEST_INFO("P2P data transfer validation successful - received correct data from rank %d",
+                     config.peer_rank);
+        }
+        else if(!data_correct)
+        {
+            TEST_WARN("Rank %d: Failed to validate data received from rank %d",
+                     config.world_rank,
+                     config.peer_rank);
+        }
+    }
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("P2P transport workflow test completed successfully");
+        TEST_INFO("NOTE: Connectors will be automatically freed before buffers (CE memcpy safe)");
+    }
+
+    // NOTE: Cleanup order is critical for CE memcpy:
+    // 1. ConnectorCleanup destructor runs FIRST - frees transport connectors
+    // 2. Then setupP2PBuffers' guards in TearDown free the buffers
+    // This ensures CE memcpy proxy resources are released before buffers
 }
 
 TEST_F(P2pMPITest, P2pWithMemcpyTest)
@@ -942,7 +888,6 @@ TEST_F(P2pMPITest, P2pWithMemcpyTest)
         << "Test requirements not met - all ranks must meet requirements";
 
     // Allocate P2P resources
-
     setupP2PBuffers();
 
     // Create test-specific communicator for isolation
@@ -1763,3 +1708,4 @@ TEST_F(P2pMPITest, IpcGraphRegisterBufferTest)
 }
 
 #endif // MPI_TESTS_ENABLED
+
