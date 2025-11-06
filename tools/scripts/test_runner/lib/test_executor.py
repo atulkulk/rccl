@@ -476,8 +476,7 @@ class TestExecutor:
                     shell=True,
                     cwd=os.path.join(self.build_dir, "test"),
                     env=env,
-                    capture_output=True,
-                    text=True,
+                    capture_output=False,
                     timeout=timeout
                 )
             else:
@@ -486,30 +485,10 @@ class TestExecutor:
                     shell=True,
                     cwd=os.path.join(self.build_dir, "test"),
                     env=env,
-                    capture_output=True,
-                    text=True
+                    capture_output=False
                 )
 
             duration = time.time() - start_time
-
-            # Print output
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                # Filter MPI environment variable "SET" messages unless in verbose mode
-                stderr_lines = result.stderr.split('\n')
-                filtered_stderr = []
-                for line in stderr_lines:
-                    # Skip MPI "SET" messages unless verbose
-                    if 'SET ' in line and ('=' in line or 'LLVM_PROFILE_FILE' in line or 'LD_LIBRARY_PATH' in line):
-                        if self.args.verbose:
-                            filtered_stderr.append(line)
-                    else:
-                        filtered_stderr.append(line)
-
-                filtered_stderr_text = '\n'.join(filtered_stderr).strip()
-                if filtered_stderr_text:
-                    print("STDERR:", filtered_stderr_text)
 
             # Determine result
             if result.returncode == 0:
@@ -526,9 +505,7 @@ class TestExecutor:
                 "name": test_name,
                 "result": test_result,
                 "duration": duration,
-                "exit_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr
+                "exit_code": result.returncode
             }
 
         except subprocess.TimeoutExpired:
