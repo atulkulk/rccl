@@ -17,6 +17,8 @@
 #include <cstring>
 #include <algorithm>
 
+#ifdef MPI_TESTS_ENABLED
+
 // Import helper namespaces
 using namespace RCCLTestGuards;
 using namespace RCCLTestHelpers;
@@ -1290,3 +1292,5 @@ TEST_F(NetIbMPITest, CloseWithoutWaitingForCompletion) {
         connGuard.setSendComm(pair.sendComm);
     }
 }
+
+#endif // MPI_TESTS_ENABLED
