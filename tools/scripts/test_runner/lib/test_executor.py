@@ -419,8 +419,26 @@ class TestExecutor:
             # MPI test
             mpi_path = self.paths.get("mpi_path", "")
             mpi_cmd = f"{mpi_path}/bin/mpirun" if mpi_path else "mpirun"
+
+            # Check for hostfile (RCCL_TEST_MPI_HOSTFILE env var or default ~/.mpi_hostfile)
+            hostfile = os.environ.get('RCCL_TEST_MPI_HOSTFILE')
+            if hostfile and os.path.isfile(hostfile):
+                print(f"Using MPI hostfile from RCCL_TEST_MPI_HOSTFILE: {hostfile}")
+            elif not hostfile or not os.path.isfile(hostfile):
+                default_hostfile = os.path.expanduser('~/.mpi_hostfile')
+                if os.path.isfile(default_hostfile):
+                    hostfile = default_hostfile
+                    print(f"Using default MPI hostfile: {hostfile}")
+                else:
+                    hostfile = None
+                    if num_nodes > 1:
+                        print("WARNING: Multi-node test without hostfile - MPI will use default node discovery")
+
+            hostfile_arg = f"--hostfile {hostfile} " if hostfile else ""
+
             mpi_args = (
                 f"-np {num_ranks} "
+                f"{hostfile_arg}"
                 f"--mca btl ^vader,openib "
                 f"--mca pml ucx "
                 f"--bind-to none"
