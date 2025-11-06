@@ -498,18 +498,13 @@ Result: `NCCL_DEBUG=TRACE`, `NCCL_SHM_DISABLE=0`
 
 ### Setting Up Multi-Node Tests
 
-**Option 1: SLURM Allocation**
+**Option 1: MPI Hostfile**
 ```bash
-salloc -N 2 -n 4 python test_runner.py --config net_ib_test_config.json
-```
-
-**Option 2: MPI Hostfile**
-```bash
-export MPI_HOSTFILE=/path/to/hostfile
+export RCCL_TEST_MPI_HOSTFILE=/path/to/hostfile
 python test_runner.py --config net_ib_test_config.json
 ```
 
-**Option 3: Default Hostfile**
+**Option 2: Default Hostfile**
 Create `~/.mpi_hostfile` with node names (one per line):
 ```
 node01 slots=8
