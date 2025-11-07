@@ -482,6 +482,8 @@ TEST_F(NetIbMPITest, RegisterHostMemory) {
 
     EXPECT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
     EXPECT_NE(mhandle, nullptr);
+
+    // Use NetMHandleGuard for automatic deregistration before connection closes
     NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 }
 
@@ -521,8 +523,9 @@ TEST_F(NetIbMPITest, RegisterGpuMemory) {
 
     EXPECT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_CUDA, &mhandle), ncclSuccess);
     EXPECT_NE(mhandle, nullptr);
-    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
+    // Use NetMHandleGuard for automatic deregistration before connection closes
+    NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 }
 
 TEST_F(NetIbMPITest, RegisterMemoryNullPointer) {
@@ -592,7 +595,6 @@ TEST_F(NetIbMPITest, DeregisterNullHandle) {
 }
 
 // Send/Recv Tests
-
 TEST_F(NetIbMPITest, SimpleSendRecv) {
     ASSERT_TRUE(validateTestPrerequisites(kExactTwoProcesses, kExactTwoProcesses,
                                          false, kMinGpusPerNode, kNoNodeLimit))
@@ -629,6 +631,8 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
     ASSERT_EQ(RegisterMemory(comm, buffer, bufferSize, NCCL_PTR_HOST, &mhandle), ncclSuccess);
+
+    // Use NetMHandleGuard for automatic cleanup on failure (exception safety)
     NetMHandleGuard mhandleGuard(mhandle, NetMHandleDeleter(net_, comm));
 
     void* request = nullptr;
@@ -673,6 +677,12 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
         }
         EXPECT_TRUE(dataValid) << "Data validation failed";
     }
+
+    // NetMHandleGuard will automatically deregister memory when test scope ends
+    // Destructor order ensures MR is deregistered before connection closes:
+    //   1. mhandleGuard destructor (deregisters MR)
+    //   2. bufferGuard destructor (frees buffer)
+    //   3. connGuard destructor (closes connection)
 }
 
 TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
@@ -783,7 +793,7 @@ TEST_F(NetIbMPITest, SendRecvMultipleSizes) {
             EXPECT_TRUE(dataValid) << "Data validation failed for size " << size;
         }
 
-        ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
+        // NetMHandleGuard will automatically deregister at end of loop iteration
     }
 }
 
@@ -949,7 +959,7 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
         }
     }
 
-    ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
+    // NetMHandleGuard will automatically deregister at scope end
 }
 
 // Virtual Device Tests
@@ -1166,7 +1176,7 @@ TEST_F(NetIbMPITest, MultipleSequentialTransfers) {
         }
     }
 
-    ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
+    // NetMHandleGuard will automatically deregister at scope end
 }
 
 TEST_F(NetIbMPITest, LargeTransfer) {
@@ -1263,7 +1273,7 @@ TEST_F(NetIbMPITest, LargeTransfer) {
         EXPECT_TRUE(dataValid) << "Large transfer data validation failed";
     }
 
-    ASSERT_EQ(DeregisterMemory(comm, mhandle), ncclSuccess);
+    // NetMHandleGuard will automatically deregister at scope end
 }
 
 TEST_F(NetIbMPITest, CloseWithoutWaitingForCompletion) {

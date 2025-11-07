@@ -49,6 +49,42 @@ inline constexpr size_t kMinValidationSamples     = 100;
 
 } // namespace
 
+// SHM-specific RAII guard for connector cleanup
+// NOTE: This must be declared BEFORE buffer allocations to ensure proper
+// destructor ordering. Connectors must be freed BEFORE buffers when CE memcpy is enabled.
+struct ConnectorCleanup
+{
+    ncclConnector* send_conn{nullptr};
+    ncclConnector* recv_conn{nullptr};
+    ncclTransport* transport{nullptr};
+
+    // Default constructor
+    ConnectorCleanup() = default;
+
+    ~ConnectorCleanup()
+    {
+        // Free connectors first (before buffers are freed by other guards)
+        // This is critical when CE memcpy is enabled (NCCL_SHM_USE_CUDA_MEMCPY=1)
+        // because CE memcpy creates proxy resources tied to the connector lifecycle
+        if(send_conn && send_conn->transportResources && transport)
+        {
+            transport->send.free(send_conn);
+            send_conn->transportResources = nullptr;
+        }
+        if(recv_conn && recv_conn->transportResources && transport)
+        {
+            transport->recv.free(recv_conn);
+            recv_conn->transportResources = nullptr;
+        }
+    }
+
+    // Prevent copying and moving
+    ConnectorCleanup(const ConnectorCleanup&) = delete;
+    ConnectorCleanup& operator=(const ConnectorCleanup&) = delete;
+    ConnectorCleanup(ConnectorCleanup&&) = delete;
+    ConnectorCleanup& operator=(ConnectorCleanup&&) = delete;
+};
+
 // SHM-specific test configuration
 struct ShmTestConfig
 {
@@ -66,6 +102,10 @@ protected:
     // Test data buffers
     std::vector<uint32_t> host_send_data;
     std::vector<uint32_t> host_recv_data;
+
+    // Connection info structures for setup/connect phases
+    ncclConnect send_connect_info{};
+    ncclConnect recv_connect_info{};
 
     void SetUp() override
     {
@@ -93,10 +133,12 @@ protected:
         EXPECT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to zero-initialize recv buffer";
 
-        // Synchronize stream to ensure all buffer operations complete
-        EXPECT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
+        // Synchronize default stream to ensure all buffer operations complete
+        // Note: This is called in SetUp() before test starts, so we use the default stream (0)
+        // Using config.stream here causes "invalid resource handle" as it's not yet initialized
+        EXPECT_EQ(hipSuccess, hipStreamSynchronize(0))
             << "Rank " << config.world_rank
-            << ": Failed to synchronize stream after buffer initialization";
+            << ": Failed to synchronize default stream after buffer initialization";
     }
 
     void TearDown() override
@@ -150,12 +192,13 @@ public:
     // Test SHM setup phase
     void testShmSetup()
     {
-        ncclConnect peer_connect_info{};
-        const auto  result = shm_config.is_sender ? shmTransport.send.setup(comm_handle,
+        // Call setup() and save the connect_info to class members for later MPI exchange
+        const auto result = shm_config.is_sender
+                                ? shmTransport.send.setup(comm_handle,
                                                                            topology_graph,
                                                                            local_peer_info,
                                                                            remote_peer_info,
-                                                                           &peer_connect_info,
+                                                         &send_connect_info,  // Save to class member
                                                                            &send_connector,
                                                                            0,
                                                                            0)
@@ -163,7 +206,7 @@ public:
                                                                            topology_graph,
                                                                            local_peer_info,
                                                                            remote_peer_info,
-                                                                           &peer_connect_info,
+                                                         &recv_connect_info,  // Save to class member
                                                                            &recv_connector,
                                                                            0,
                                                                            0);
@@ -183,27 +226,14 @@ public:
         ASSERT_NE(nullptr, remote_peer_info)
             << "Rank " << config.world_rank << ": remote_peer_info is null";
 
-        // Create and initialize SHM connect info structures
-        ncclConnect send_connect_info{};
-        ncclConnect recv_connect_info{};
+        // NOTE: setup() was already called in testShmSetup() and saved connect_info to class members
+        // This method only does MPI exchange of connect_info and then calls connect()
 
         if(shm_config.is_sender)
         {
-            // Setup send connection info using SHM transport setup
-            auto result = shmTransport.send.setup(comm_handle,
-                                                  topology_graph,
-                                                  local_peer_info,
-                                                  remote_peer_info,
-                                                  &send_connect_info,
-                                                  &send_connector,
-                                                  0,
-                                                  0);
-            ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank
-                                           << ": Send setup failed: " << ncclGetErrorString(result);
-
             // Exchange connect info with receiver using MPI
             ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Send(&send_connect_info,
+                      MPI_Send(&send_connect_info,  // Use class member from testShmSetup()
                                sizeof(ncclConnect),
                                MPI_BYTE,
                                config.peer_rank,
@@ -212,7 +242,7 @@ public:
                 << "Rank " << config.world_rank << ": MPI_Send failed";
 
             ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Recv(&recv_connect_info,
+                      MPI_Recv(&recv_connect_info,  // Receive into class member
                                sizeof(ncclConnect),
                                MPI_BYTE,
                                config.peer_rank,
@@ -222,7 +252,7 @@ public:
                 << "Rank " << config.world_rank << ": MPI_Recv failed";
 
             // Perform the actual connection using the received info
-            result = shmTransport.send.connect(comm_handle,
+            auto result = shmTransport.send.connect(comm_handle,
                                                &recv_connect_info,
                                                config.world_size,
                                                config.world_rank,
@@ -233,21 +263,9 @@ public:
         }
         else
         {
-            // Setup receive connection info using SHM transport setup
-            auto result = shmTransport.recv.setup(comm_handle,
-                                                  topology_graph,
-                                                  local_peer_info,
-                                                  remote_peer_info,
-                                                  &recv_connect_info,
-                                                  &recv_connector,
-                                                  0,
-                                                  0);
-            ASSERT_EQ(ncclSuccess, result) << "Rank " << config.world_rank
-                                           << ": Recv setup failed: " << ncclGetErrorString(result);
-
             // Exchange connect info with sender using MPI
             ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Recv(&send_connect_info,
+                      MPI_Recv(&send_connect_info,  // Receive into class member
                                sizeof(ncclConnect),
                                MPI_BYTE,
                                config.peer_rank,
@@ -257,7 +275,7 @@ public:
                 << "Rank " << config.world_rank << ": MPI_Recv failed";
 
             ASSERT_EQ(MPI_SUCCESS,
-                      MPI_Send(&recv_connect_info,
+                      MPI_Send(&recv_connect_info,  // Use class member from testShmSetup()
                                sizeof(ncclConnect),
                                MPI_BYTE,
                                config.peer_rank,
@@ -266,7 +284,7 @@ public:
                 << "Rank " << config.world_rank << ": MPI_Send failed";
 
             // Perform the actual connection using the received info
-            result = shmTransport.recv.connect(comm_handle,
+            auto result = shmTransport.recv.connect(comm_handle,
                                                &send_connect_info,
                                                config.world_size,
                                                config.world_rank,
@@ -343,23 +361,31 @@ public:
     // Test resource cleanup
     void testShmCleanup()
     {
-        // Ensure all stream operations complete before cleanup
+        // Ensure all stream operations complete before validation
         [[maybe_unused]] auto err = syncStream(config.stream, config.world_rank);
-        // Don't return error on sync failure - continue with cleanup
+        // Don't return error on sync failure - continue with validation
 
+        // Validate that connector resources are still valid at this point
+        // The actual cleanup will be handled by ConnectorCleanup RAII guard
         auto* connector = shm_config.is_sender ? &send_connector : &recv_connector;
-        if(connector->transportResources)
+
+        EXPECT_NE(nullptr, connector)
+            << "Rank " << config.world_rank << ": Connector pointer is null";
+
+        if(connector)
         {
-            const auto result = shm_config.is_sender ? shmTransport.send.free(connector)
-                                                     : shmTransport.recv.free(connector);
-
-            EXPECT_EQ(ncclSuccess, result)
+            EXPECT_NE(nullptr, connector->transportResources)
                 << "Rank " << config.world_rank << ": " << (shm_config.is_sender ? "Send" : "Recv")
-                << " cleanup failed: " << ncclGetErrorString(result);
+                << " connector transport resources are null (premature cleanup)";
 
-            // Mark as cleaned up to avoid double cleanup in TearDown
-            connector->transportResources = nullptr;
+            if(config.world_rank == 0 && connector->transportResources)
+            {
+                TEST_INFO("Connector resources validated - still active (will be freed by RAII guard)");
         }
+        }
+
+        // NOTE: Connectors will be automatically freed by ConnectorCleanup destructor
+        // This happens BEFORE buffers are freed in TearDown, which is critical for CE memcpy
     }
 
     // Test SHM with memcpy mode enabled (CE - Copy Engine)
@@ -611,20 +637,338 @@ TEST_F(ShmMPITest, ShmWorkflow)
     // Use ASSERT_MPI_SUCCESS to prevent deadlock if creation fails on some ranks
     ASSERT_MPI_SUCCESS(createTestCommunicator());
 
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Starting comprehensive SHM transport workflow test with %d processes", config.world_size);
+        TEST_INFO("This test exercises the low-level SHM transport API");
+    }
+
+    // Note: Track connectors so we can free them BEFORE buffers (critical for CE memcpy)
+    // Using the SHM-specific ConnectorCleanup RAII guard defined at file scope
+    ConnectorCleanup cleanup;
+    cleanup.transport = &shmTransport;
+
     // Test 1: SHM Capability Detection
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 1: Testing SHM canConnect capability");
+    }
     testShmCanConnect();
 
     // Test 2: SHM Setup
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 2: Setting up SHM transport connectors");
+    }
     testShmSetup();
 
+    // Register connectors with cleanup guard after setup
+    cleanup.send_conn = shm_config.is_sender ? &send_connector : nullptr;
+    cleanup.recv_conn = shm_config.is_sender ? nullptr : &recv_connector;
+
     // Test 3: SHM Connection
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 3: Connecting SHM transport");
+    }
     testShmConnect();
 
     // Test 4: Data Transfer through SHM
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 4: Performing SHM data transfer");
+    }
     testShmDataTransfer();
 
     // Test 5: Resource Cleanup
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 5: Validating resource cleanup");
+    }
     testShmCleanup();
+
+    // CRITICAL: Synchronize device before freeing connectors
+    // The SHM proxy has its own internal stream for CE memcpy operations
+    // that must be idle before we can destroy it
+    ASSERT_EQ(hipSuccess, hipDeviceSynchronize())
+        << "Rank " << config.world_rank << ": Device synchronization failed before cleanup";
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("SHM transport workflow test completed successfully");
+        TEST_INFO("NOTE: Connectors will be automatically freed before buffers (CE memcpy safe)");
+    }
+
+    // NOTE: Cleanup order is critical for CE memcpy:
+    // 1. Device synchronization ensures all proxy operations complete
+    // 2. ConnectorCleanup destructor runs - frees transport connectors and proxy streams
+    // 3. Then TearDown() frees the buffers
+    // This ensures CE memcpy proxy resources are released before buffers
+}
+
+TEST_F(ShmMPITest, ShmWorkflow2)
+{
+    // This test follows the same pattern as P2pWorkflow test for consistency
+    ASSERT_TRUE(validateTestPrerequisites(kMinProcessesForMPI,
+                                          kNoProcessLimit,
+                                          kRequirePowerOfTwo,
+                                          1,
+                                          kRequireSingleNode))
+        << "Test requirements not met - all ranks must meet requirements";
+
+    // Create test-specific communicator for isolation
+    ASSERT_MPI_SUCCESS(createTestCommunicator());
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Starting comprehensive SHM transport workflow test (v2) with %d processes", config.world_size);
+        TEST_INFO("This test exercises the low-level SHM transport API with MPI exchange pattern");
+    }
+
+    // Note: Track connectors so we can free them BEFORE buffers (critical for CE memcpy)
+    // Using the SHM-specific ConnectorCleanup RAII guard defined at file scope
+    ConnectorCleanup cleanup;
+    cleanup.transport = &shmTransport;
+
+    // Step 1: Test SHM transport canConnect
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 1: Testing SHM canConnect capability");
+    }
+
+    int can_connect = 0;
+    auto result = shmTransport.canConnect(&can_connect,
+                                         comm_handle,
+                                         topology_graph,
+                                         local_peer_info,
+                                         remote_peer_info);
+    ASSERT_EQ(ncclSuccess, result)
+        << "Rank " << config.world_rank << ": shmCanConnect failed: " << ncclGetErrorString(result);
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("SHM canConnect result: %d (1=can connect)", can_connect);
+    }
+
+    // Step 2: Setup SHM transport connectors and exchange connection info
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 2: Setting up SHM transport connectors");
+    }
+
+    // Exchange connection information via MPI
+    ncclConnect send_connect_info{};
+    ncclConnect recv_connect_info{};
+
+    if(shm_config.is_sender)
+    {
+        // Sender: setup send connector
+        result = shmTransport.send.setup(comm_handle,
+                                        topology_graph,
+                                        local_peer_info,
+                                        remote_peer_info,
+                                        &send_connect_info,
+                                        &send_connector,
+                                        0,
+                                        0);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": SHM send setup failed: " << ncclGetErrorString(result);
+
+        cleanup.send_conn = &send_connector;
+
+        if(config.world_rank == 0)
+        {
+            TEST_INFO("Send connector setup complete");
+        }
+
+        // Exchange connect info with receiver
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Send(&send_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD))
+            << "Rank " << config.world_rank << ": MPI_Send failed";
+
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Recv(&recv_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD,
+                          MPI_STATUS_IGNORE))
+            << "Rank " << config.world_rank << ": MPI_Recv failed";
+    }
+    else
+    {
+        // Receiver: setup recv connector
+        result = shmTransport.recv.setup(comm_handle,
+                                        topology_graph,
+                                        local_peer_info,
+                                        remote_peer_info,
+                                        &recv_connect_info,
+                                        &recv_connector,
+                                        0,
+                                        0);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": SHM recv setup failed: " << ncclGetErrorString(result);
+
+        cleanup.recv_conn = &recv_connector;
+
+        if(config.world_rank == 0)
+        {
+            TEST_INFO("Recv connector setup complete");
+        }
+
+        // Exchange connect info with sender
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Recv(&send_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD,
+                          MPI_STATUS_IGNORE))
+            << "Rank " << config.world_rank << ": MPI_Recv failed";
+
+        ASSERT_EQ(MPI_SUCCESS,
+                  MPI_Send(&recv_connect_info,
+                          sizeof(ncclConnect),
+                          MPI_BYTE,
+                          config.peer_rank,
+                          0,
+                          MPI_COMM_WORLD))
+            << "Rank " << config.world_rank << ": MPI_Send failed";
+    }
+
+    // Step 3: Connect SHM transport
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 3: Connecting SHM transport");
+    }
+
+    // Perform connect
+    if(shm_config.is_sender)
+    {
+        result = shmTransport.send.connect(comm_handle,
+                                          &recv_connect_info,
+                                          config.world_size,
+                                          config.world_rank,
+                                          &send_connector);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": SHM send connect failed: " << ncclGetErrorString(result);
+    }
+    else
+    {
+        result = shmTransport.recv.connect(comm_handle,
+                                          &send_connect_info,
+                                          config.world_size,
+                                          config.world_rank,
+                                          &recv_connector);
+        ASSERT_EQ(ncclSuccess, result)
+            << "Rank " << config.world_rank << ": SHM recv connect failed: " << ncclGetErrorString(result);
+    }
+
+    ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
+        << "Rank " << config.world_rank << ": Stream synchronization failed after connect";
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("SHM transport connected successfully");
+    }
+
+    // Step 4: Perform data transfer using NCCL Send/Recv
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Step 4: Performing SHM data transfer");
+    }
+
+    const size_t count = shm_config.buffer_size / sizeof(float);
+    result = shm_config.is_sender
+        ? ncclSend(shm_config.send_buffer,
+                  count,
+                  ncclFloat,
+                  config.peer_rank,
+                  config.nccl_comm,
+                  config.stream)
+        : ncclRecv(shm_config.recv_buffer,
+                  count,
+                  ncclFloat,
+                  config.peer_rank,
+                  config.nccl_comm,
+                  config.stream);
+
+    ASSERT_EQ(ncclSuccess, result)
+        << "Rank " << config.world_rank << ": NCCL " << (shm_config.is_sender ? "Send" : "Recv")
+        << " failed: " << ncclGetErrorString(result);
+
+    ASSERT_EQ(hipSuccess, syncStream(config.stream, config.world_rank))
+        << "Rank " << config.world_rank << ": Stream synchronization failed after transfer";
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("Data transfer completed successfully");
+    }
+
+    // Step 5: Validate received data (receiver only)
+    if(!shm_config.is_sender)
+    {
+        if(config.world_rank == 0)
+        {
+            TEST_INFO("Step 5: Validating received data");
+        }
+
+        size_t error_idx;
+        float  expected_val, actual_val;
+
+        // Validate received data using verifyBufferData template
+        // The data should match the SENDER's pattern (peer_rank is the sender's rank)
+        bool data_correct = verifyBufferData<float>(shm_config.recv_buffer,
+                                                    count,
+                                                    config.peer_rank,  // Sender's rank
+                                                    kDefaultPatternMultiplier,
+                                                    kMaxValidationElements,
+                                                    1e-5,
+                                                    &error_idx,
+                                                    &expected_val,
+                                                    &actual_val);
+
+        EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
+                                  << ": Data validation failed at index " << error_idx
+                                  << ": expected " << expected_val << ", got " << actual_val;
+
+        if(data_correct && config.world_rank == 0)
+        {
+            TEST_INFO("SHM data transfer validation successful - received correct data from rank %d",
+                     config.peer_rank);
+        }
+        else if(!data_correct)
+        {
+            TEST_WARN("Rank %d: Failed to validate data received from rank %d",
+                     config.world_rank,
+                     config.peer_rank);
+        }
+    }
+
+    // CRITICAL: Synchronize device before freeing connectors
+    // The SHM proxy has its own internal stream for CE memcpy operations
+    // that must be idle before we can destroy it
+    ASSERT_EQ(hipSuccess, hipDeviceSynchronize())
+        << "Rank " << config.world_rank << ": Device synchronization failed before cleanup";
+
+    if(config.world_rank == 0)
+    {
+        TEST_INFO("SHM transport workflow test (v2) completed successfully");
+        TEST_INFO("NOTE: Connectors will be automatically freed before buffers (CE memcpy safe)");
+    }
+
+    // NOTE: Cleanup order is critical for CE memcpy:
+    // 1. Device synchronization ensures all proxy operations complete
+    // 2. ConnectorCleanup destructor runs FIRST - frees transport connectors and proxy streams
+    // 3. Then setupShmBuffers' guards in TearDown free the buffers
+    // This ensures CE memcpy proxy resources are released before buffers
 }
 
 TEST_F(ShmMPITest, ShmWithMemcpyTest)
