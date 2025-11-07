@@ -9,9 +9,13 @@ Handles test execution, build processes, and result tracking
 
 import os
 import subprocess
+import sys
 import time
 import datetime
 from pathlib import Path
+
+# Make stdout unbuffered to prevent output ordering issues with subprocesses
+sys.stdout.reconfigure(line_buffering=True)
 
 
 class TestExecutor:
@@ -48,10 +52,14 @@ class TestExecutor:
         # Setup directories
         self.setup_directories()
 
+        # Detect MPI hostfile once during initialization
+        self.mpi_hostfile = self._detect_mpi_hostfile()
+
         # Test tracking
         self.test_results = []
         self.test_names = []
         self.test_durations = []
+        self.test_suites = []
 
     def setup_directories(self):
         """Setup build and log directories"""
@@ -105,6 +113,29 @@ class TestExecutor:
                 print(f"  (Using custom library from RCCL_LIB_PATH/RCCL_BUILD_DIR)")
             print(f"Log directory:    {self.log_dir}")
             print(f"Report directory: {self.report_dir}")
+
+    def _detect_mpi_hostfile(self):
+        """
+        Detect MPI hostfile once during initialization.
+        Checks RCCL_TEST_MPI_HOSTFILE env var, then ~/.mpi_hostfile default.
+        Prints detection message only once.
+
+        Returns:
+            str: Path to hostfile, or None if not found
+        """
+        hostfile = os.environ.get('RCCL_TEST_MPI_HOSTFILE')
+        if hostfile and os.path.isfile(hostfile):
+            print(f"Using MPI hostfile from RCCL_TEST_MPI_HOSTFILE: {hostfile}")
+            return hostfile
+
+        # Check default hostfile
+        default_hostfile = os.path.expanduser('~/.mpi_hostfile')
+        if os.path.isfile(default_hostfile):
+            print(f"Using default MPI hostfile: {default_hostfile}")
+            return default_hostfile
+
+        # No hostfile found
+        return None
 
     def check_environment(self):
         """
@@ -354,6 +385,7 @@ class TestExecutor:
 
         num_ranks = test_config.get("num_ranks", 1)
         num_nodes = test_config.get("num_nodes", 1)
+        num_gpus = test_config.get("num_gpus", 8)  # GPUs per node (default: 8)
         timeout = test_config.get("timeout", 0)
         env_vars = test_config.get("env_variables", {})
 
@@ -378,6 +410,7 @@ class TestExecutor:
             print(f"  Filter:  {test_filter}")
             print(f"  Ranks:   {num_ranks}")
             print(f"  Nodes:   {num_nodes}")
+            print(f"  GPUs/node: {num_gpus}")
             print(f"  Timeout: {timeout if timeout > 0 else 'unlimited'}")
             print(f"  Started: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -439,25 +472,29 @@ class TestExecutor:
             mpi_path = self.paths.get("mpi_path", "")
             mpi_cmd = f"{mpi_path}/bin/mpirun" if mpi_path else "mpirun"
 
-            # Check for hostfile (RCCL_TEST_MPI_HOSTFILE env var or default ~/.mpi_hostfile)
-            hostfile = os.environ.get('RCCL_TEST_MPI_HOSTFILE')
-            if hostfile and os.path.isfile(hostfile):
-                print(f"Using MPI hostfile from RCCL_TEST_MPI_HOSTFILE: {hostfile}")
-            elif not hostfile or not os.path.isfile(hostfile):
-                default_hostfile = os.path.expanduser('~/.mpi_hostfile')
-                if os.path.isfile(default_hostfile):
-                    hostfile = default_hostfile
-                    print(f"Using default MPI hostfile: {hostfile}")
-                else:
-                    hostfile = None
-                    if num_nodes > 1:
-                        print("WARNING: Multi-node test without hostfile - MPI will use default node discovery")
+            # Use cached hostfile detected during initialization
+            hostfile = self.mpi_hostfile
+
+            # Warn if multi-node test without hostfile
+            if hostfile is None and num_nodes > 1:
+                print("WARNING: Multi-node test without hostfile")
 
             hostfile_arg = f"--hostfile {hostfile} " if hostfile else ""
+
+            # Determine mapping strategy based on num_gpus and num_nodes
+            # Use PPR (processes per resource) to place num_gpus ranks per node
+            # This ignores the slots specification in the hostfile
+            if num_nodes > 1:
+                # Multi-node test: use ppr to control ranks per node
+                map_by_arg = f"--map-by ppr:{num_gpus}:node "
+            else:
+                # Single node: use default mapping (no need for ppr)
+                map_by_arg = ""
 
             mpi_args = (
                 f"-np {num_ranks} "
                 f"{hostfile_arg}"
+                f"{map_by_arg}"
                 f"--mca btl ^vader,openib "
                 f"--mca pml ucx "
                 f"--bind-to none"
@@ -568,12 +605,6 @@ class TestExecutor:
             list: List of test results
         """
         suite_name = suite_config["suite_details"]["name"]
-        enabled = suite_config["suite_details"].get("enabled", True)
-
-        if not enabled:
-            if self.args.verbose:
-                print(f"\nSKIP: Test suite '{suite_name}' is disabled")
-            return []
 
         if self.args.verbose:
             print(f"\n{'='*80}")
@@ -599,6 +630,7 @@ class TestExecutor:
             self.test_names.append(test_name)
             self.test_results.append(result["result"])
             self.test_durations.append(result["duration"])
+            self.test_suites.append(suite_name)  # Track suite name
 
         return results
 
@@ -609,27 +641,27 @@ class TestExecutor:
         failed = self.test_results.count(self.RESULT_FAILED)
         timeout = self.test_results.count(self.RESULT_TIMEOUT)
 
-        print(f"\n{'='*80}")
-        print("TEST EXECUTION SUMMARY")
-        print(f"{'='*80}")
-        print(f"Total Tests:   {total_tests}")
-        print(f"Passed:        {passed}")
-        print(f"Failed:        {failed}")
-        print(f"Timeout:       {timeout}")
-        print()
+        # Get unique test suites that were run
+        unique_suites = sorted(set(self.test_suites)) if self.test_suites else []
 
         if total_tests > 0:
-            print("Detailed Results:")
-            print("-"*80)
-            print(f"{'Test Name':<50} {'Result':<10} {'Duration'}")
-            print("-"*80)
+            print("\nDetailed Results:")
+            print("-"*120)
+            print(f"{'Test Suite':<40} {'Test Name':<40} {'Result':<10} {'Duration'}")
+            print("-"*120)
             for i in range(total_tests):
                 print(
-                    f"{self.test_names[i]:<50} "
+                    f"{self.test_suites[i]:<40} "
+                    f"{self.test_names[i]:<40} "
                     f"{self.test_results[i]:<10} "
                     f"{self.test_durations[i]:.3f} seconds"
                 )
-            print("="*80)
+            print("-"*120)
+            print(f"Total Tests:   {total_tests}")
+            print(f"Passed:        {passed}")
+            print(f"Failed:        {failed}")
+            print(f"Timeout:       {timeout}")
+            print("="*120)
 
     def generate_coverage_report(self):
         """Generate code coverage report"""
