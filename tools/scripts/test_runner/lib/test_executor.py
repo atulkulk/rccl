@@ -58,28 +58,52 @@ class TestExecutor:
         """Setup build and log directories"""
         workdir = self.paths.get("workdir", os.getcwd())
 
+        # Determine workspace name (with or without timestamp)
+        suffix_part = f"_{self.args.report_suffix}" if self.args.report_suffix else ""
         if self.args.overwrite:
-            workspace_name = f"rccl_codecov_{self.args.report_suffix}"
+            workspace_name = f"rccl_test_artifacts{suffix_part}"
             timestamp_suffix = ""
         else:
             timestamp = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
-            workspace_name = f"rccl_codecov_{self.args.report_suffix}_{timestamp}"
+            workspace_name = f"rccl_test_artifacts{suffix_part}_{timestamp}"
             timestamp_suffix = f"_{timestamp}"
 
-        self.build_dir = os.path.join(
-            workdir,
-            f"build_debug_cov_on_tests_on{timestamp_suffix}"
-        )
-        self.log_dir = os.path.join(workdir, workspace_name)
-        self.report_dir = os.path.join(self.log_dir, f"{workspace_name}_report")
+        # Create workspace directory path
+        self.workspace_dir = os.path.join(workdir, workspace_name)
 
-        # Create directories
-        os.makedirs(self.build_dir, exist_ok=True)
+        # Check for custom RCCL library path from environment variable
+        custom_rccl_path = os.environ.get('RCCL_LIB_PATH') or os.environ.get('RCCL_BUILD_DIR')
+
+        if custom_rccl_path:
+            # Use custom library path from environment variable
+            self.build_dir = os.path.expanduser(os.path.expandvars(custom_rccl_path))
+            self.using_custom_lib = True
+            if self.args.verbose:
+                print(f"Using custom RCCL library path from environment: {self.build_dir}")
+        else:
+            # Use default build directory
+            self.using_custom_lib = False
+            self.build_dir = os.path.join(
+                workdir,
+                f"build_debug_cov_on_tests_on{timestamp_suffix}"
+            )
+
+        # Set log and report directories under workspace
+        self.log_dir = os.path.join(self.workspace_dir, "logs")
+        self.report_dir = os.path.join(self.workspace_dir, "report")
+
+        # Create directories (skip build_dir if using custom lib)
+        if not self.using_custom_lib:
+            os.makedirs(self.build_dir, exist_ok=True)
         os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.report_dir, exist_ok=True)
 
         if self.args.verbose:
             print(f"Work directory:   {workdir}")
+            print(f"Workspace directory: {self.workspace_dir}")
             print(f"Build directory:  {self.build_dir}")
+            if self.using_custom_lib:
+                print(f"  (Using custom library from RCCL_LIB_PATH/RCCL_BUILD_DIR)")
             print(f"Log directory:    {self.log_dir}")
             print(f"Report directory: {self.report_dir}")
 
@@ -105,11 +129,13 @@ class TestExecutor:
             elif not os.path.isfile(os.path.join(mpi_path, "bin", "mpirun")):
                 print(f"WARNING: mpirun not found in {mpi_path}/bin/")
 
-        # Check RCCL library (if not building)
-        if self.args.no_build:
+        # Check RCCL library (if not building or using custom lib)
+        if self.args.no_build or self.using_custom_lib:
             lib_path = os.path.join(self.build_dir, "librccl.so")
             if not os.path.isfile(lib_path):
                 errors.append(f"RCCL library not found: {lib_path}")
+            elif self.args.verbose:
+                print(f"Found RCCL library: {lib_path}")
 
         if errors:
             print("ERROR: Environment check failed:")
@@ -128,6 +154,12 @@ class TestExecutor:
         Returns:
             bool: True if build succeeded
         """
+        # Skip build if using custom library from environment variable
+        if self.using_custom_lib:
+            if self.args.verbose:
+                print("SKIP: Build step skipped (using custom RCCL library from environment)")
+            return True
+
         if self.args.no_build:
             if self.args.verbose:
                 print("SKIP: Build step skipped (--no-build)")

@@ -83,8 +83,8 @@ Examples:
         self.parser.add_argument(
             '--report-suffix',
             type=str,
-            default='test',
-            help="Suffix for report directory name (default: 'test')"
+            default='',
+            help="Suffix for report directory name (default: blank)"
         )
         self.parser.add_argument(
             '--json-output',

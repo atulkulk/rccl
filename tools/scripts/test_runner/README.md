@@ -12,6 +12,7 @@ This test runner provides a maintainable, extensible alternative to shell-based 
 - **Hierarchical Configuration**: Use `"extends"` directive to inherit and merge configurations
 - **Environment Variable Management**: Global, configuration, suite, and test-specific environment variables
 - **Path Variable Expansion**: Use environment variables in paths with nested default value expansion
+- **Custom Library Support**: Use pre-built RCCL libraries from custom locations via environment variables
 - **Configurable Build System**: Customize CMake options, environment variables, and parallel jobs via config
 - **MPI Support**: Full support for multi-rank and multi-node tests
 - **Flexible Test Filtering**: Run all tests, specific test suites, or individual tests
@@ -43,6 +44,71 @@ python test_runner.py --config test_config_sample.json --coverage-report --verbo
 
 # Use existing build and generate coverage
 python test_runner.py --config test_config_sample.json --no-build --coverage-report
+```
+
+### Use Custom RCCL Library
+
+```bash
+# Use pre-built RCCL library from custom location
+export RCCL_LIB_PATH=/path/to/custom/rccl/build
+python test_runner.py --config test_config_sample.json
+
+# Or use RCCL_BUILD_DIR (alternative name)
+export RCCL_BUILD_DIR=/path/to/custom/rccl/build
+python test_runner.py --config test_config_sample.json
+
+# When set, build step is automatically skipped
+# --no-build is not needed
+```
+
+## Environment Variables
+
+The test runner supports the following environment variables to customize behavior:
+
+### Library and Build Configuration
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RCCL_LIB_PATH` | Path to pre-built RCCL library directory (contains `librccl.so` and `test/` subdirectory). When set, the build step is automatically skipped. | `/path/to/rccl/build` |
+| `RCCL_BUILD_DIR` | Alternative name for `RCCL_LIB_PATH`. Either variable can be used. | `/path/to/rccl/build` |
+| `RCCL_TEST_MPI_HOSTFILE` | Path to MPI hostfile for multi-node tests. | `~/.mpi_hostfile` |
+
+### Configuration Path Variables
+
+These can be overridden via environment variables or specified in the JSON config:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `WORKDIR` | RCCL source and build directory | `$HOME/code/rti/scripts/rccl` |
+| `ROCM_PATH` | ROCm installation path | `/opt/rocm` |
+| `MPI_PATH` | MPI installation path | System default or config-specific |
+
+### Priority Order
+
+When determining which RCCL library to use, the test runner follows this priority:
+
+1. **`RCCL_LIB_PATH` or `RCCL_BUILD_DIR` environment variable** (highest priority)
+   - Skips build automatically
+   - Must contain `librccl.so` and `test/` subdirectory
+2. **`--no-build` flag with local build**
+   - Uses local `build_debug_cov_on_tests_on/` directory
+   - Requires prior build
+3. **Default build process** (lowest priority)
+   - Builds RCCL in timestamped directory
+   - Uses CMake configuration from JSON
+
+**Example Usage:**
+
+```bash
+# Priority 1: Use custom library (build skipped automatically)
+export RCCL_LIB_PATH=/path/to/prebuilt/rccl/build
+python test_runner.py --config my_tests.json
+
+# Priority 2: Use existing local build (no new build)
+python test_runner.py --config my_tests.json --no-build
+
+# Priority 3: Fresh build (default)
+python test_runner.py --config my_tests.json
 ```
 
 ## Configuration File Format
@@ -846,4 +912,91 @@ This simplified approach eliminates the need for multiple test type conditionals
 - Ensure `--coverage-report` flag is specified
 - Check that tests are actually executing (not skipped)
 - Verify environment variables with `--verbose`
+
+---
+
+## Appendix: Environment Variables Reference
+
+This section provides a quick reference for all environment variables supported by the test runner.
+
+### Library and Build Location
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RCCL_LIB_PATH` | Path to pre-built RCCL library directory. Automatically skips build. | `export RCCL_LIB_PATH=/path/to/rccl/build` |
+| `RCCL_BUILD_DIR` | Alternative name for `RCCL_LIB_PATH`. | `export RCCL_BUILD_DIR=/home/user/rccl_builds/debug` |
+
+**Requirements**: Directory must contain `librccl.so` and `test/` subdirectory.
+
+### Configuration Paths
+
+These override the paths specified in the JSON configuration file:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `WORKDIR` | RCCL source and build directory | `export WORKDIR=/home/user/code/rccl` |
+| `ROCM_PATH` | ROCm installation path | `export ROCM_PATH=/opt/rocm-6.0` |
+| `MPI_PATH` | MPI installation path | `export MPI_PATH=/usr/local/openmpi` |
+
+### Test Execution
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RCCL_TEST_MPI_HOSTFILE` | Path to MPI hostfile for multi-node tests | `export RCCL_TEST_MPI_HOSTFILE=~/.mpi_hostfile` |
+
+**Note**: Falls back to `~/.mpi_hostfile` if not set. For SLURM environments, hostfile is auto-generated from `SLURM_NODELIST`.
+
+### Test-Specific Variables
+
+These can be set globally or specified in the JSON configuration per test:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `NCCL_DEBUG` | NCCL debug level (VERSION, WARN, INFO, TRACE) | `export NCCL_DEBUG=INFO` |
+| `NCCL_DEBUG_SUBSYS` | NCCL debug subsystems to enable | `export NCCL_DEBUG_SUBSYS=INIT,COLL,NET` |
+| `HSA_NO_SCRATCH_RECLAIM` | Disable HIP scratch memory reclaim | `export HSA_NO_SCRATCH_RECLAIM=1` |
+| `NCCL_LAUNCH_MODE` | NCCL launch mode (GROUP, PARALLEL) | `export NCCL_LAUNCH_MODE=GROUP` |
+
+### Coverage and Profiling
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `LLVM_PROFILE_FILE` | LLVM coverage profile output pattern | `export LLVM_PROFILE_FILE=rccl_%p_%m.profraw` |
+
+**Note**: Automatically set by test runner to prevent collisions. Manual override not recommended.
+
+### Complete Example
+
+```bash
+#!/bin/bash
+# Configure paths
+export WORKDIR=/home/user/code/rccl
+export ROCM_PATH=/opt/rocm-6.0
+export MPI_PATH=/usr/local/openmpi
+
+# Use pre-built library
+export RCCL_LIB_PATH=/home/user/rccl_builds/instrumented
+
+# Configure MPI
+export RCCL_TEST_MPI_HOSTFILE=~/.mpi_hostfile
+
+# Enable debug output
+export NCCL_DEBUG=INFO
+export NCCL_DEBUG_SUBSYS=INIT,COLL,NET
+
+# Run tests
+python test_runner.py --config my_tests.json --verbose
+```
+
+### Variable Priority
+
+When the same configuration can be specified in multiple places, the priority is:
+
+1. **Environment variables** (highest priority)
+2. **Test-specific configuration** (in JSON)
+3. **Test suite configuration** (in JSON)
+4. **Test configuration defaults** (in JSON)
+5. **Built-in defaults** (lowest priority)
+
+**Example**: If `ROCM_PATH` is set as an environment variable, it overrides the `rocm_path` value in the JSON configuration file.
 
