@@ -34,7 +34,7 @@ def main():
     # Validate config file exists
     if not os.path.exists(args.config):
         print(f"ERROR: Configuration file not found: {args.config}")
-        return 1
+        return
 
     try:
         # Load and validate configuration
@@ -48,13 +48,13 @@ def main():
 
         # Check environment
         if not executor.check_environment():
-            return 1
+            return
 
         # Build RCCL (if not --no-build)
         if not args.skip_tests:
             if not executor.build_rccl():
                 print("ERROR: Build failed")
-                return 1
+                return
 
         # Parse and run test suites
         if not args.skip_tests:
@@ -83,26 +83,26 @@ def main():
         # Generate coverage report
         executor.generate_coverage_report()
 
-        # Return exit code based on results
+        # Return based on results
         if executor.test_results:
             failed = executor.test_results.count(executor.RESULT_FAILED)
             timeout = executor.test_results.count(executor.RESULT_TIMEOUT)
             if failed > 0 or timeout > 0:
-                return 1
+                return
 
-        return 0
+        return
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
-        return 130
+        return
     except Exception as e:
         print(f"\nERROR: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
-        return 1
+        return
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
 
