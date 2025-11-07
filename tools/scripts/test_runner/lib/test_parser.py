@@ -86,11 +86,6 @@ Examples:
             default='',
             help="Suffix for report directory name (default: blank)"
         )
-        self.parser.add_argument(
-            '--json-output',
-            action='store_true',
-            help="Output test summary in JSON format (pretty-printed)"
-        )
 
     def parse_arguments(self):
         """Parse command-line arguments"""
@@ -118,7 +113,6 @@ Examples:
             print(f"Coverage report:   {args.coverage_report}")
             print(f"Overwrite:         {args.overwrite}")
             print(f"Report suffix:     {args.report_suffix}")
-            print(f"JSON output:       {args.json_output}")
             print("="*80)
             print()
 

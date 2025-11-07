@@ -411,8 +411,7 @@ Optional:
   --skip-tests              Skip test execution (useful with --coverage-report)
   --coverage-report         Generate code coverage report (HTML + text)
   --overwrite               Overwrite previous workspace directories
-  --report-suffix SUFFIX    Suffix for report directory (default: 'test')
-  --json-output             Output test summary in JSON format (pretty-printed)
+  --report-suffix SUFFIX    Suffix for report directory (default: blank)
   -h, --help                Show help message and exit
 ```
 
@@ -494,46 +493,6 @@ python test_runner.py --config test_config_sample.json -o /path/to/output --verb
 
 ```bash
 python test_runner.py --config test_config_sample.json --overwrite --coverage-report
-```
-
-### Get JSON Output (for CI/CD Integration)
-
-```bash
-# Get test results in JSON format
-python test_runner.py --config test_config_sample.json --json-output
-
-# Save JSON output to file
-python test_runner.py --config test_config_sample.json --json-output > test_results.json
-
-# Use with jq for parsing
-python test_runner.py --config test_config_sample.json --json-output | jq '.passed'
-```
-
-**Example JSON Output:**
-```json
-{
-  "total_tests": 5,
-  "passed": 4,
-  "failed": 1,
-  "timeout": 0,
-  "tests": [
-    {
-      "name": "SHM_ComprehensiveWorkflow",
-      "result": "PASSED",
-      "duration": 12.345
-    },
-    {
-      "name": "P2P_Workflow",
-      "result": "PASSED",
-      "duration": 8.567
-    },
-    {
-      "name": "NET_Test",
-      "result": "FAILED",
-      "duration": 5.123
-    }
-  ]
-}
 ```
 
 ## Environment Variable Merging
