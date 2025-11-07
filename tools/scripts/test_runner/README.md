@@ -133,14 +133,22 @@ python test_runner.py --config test_config_sample.json
 
 ### Test Types Supported
 
-The test runner supports three types of tests:
+The test runner uses the `is_gtest` boolean flag to distinguish between test types:
 
-#### 1. GTest (Google Test)
+- **`is_gtest: true`** (default) - GTest-based unit tests using `--gtest_filter` syntax
+- **`is_gtest: false`** - Non-GTest tests (performance benchmarks, custom scripts, etc.)
+
+This simplified approach supports all test categories while reducing configuration complexity.
+
+#### GTest Tests (`is_gtest: true`)
+
+Used for unit tests with GTest framework. The `test_filter` field uses GTest filter syntax.
+
 ```json
 {
   "name": "AllReduce_InPlace",
   "description": "Test AllReduce collective operation with in-place buffers",
-  "test_type": "gtest",
+  "is_gtest": true,
   "binary": "rccl-UnitTests",
   "test_filter": "AllReduce.InPlace",
   "num_ranks": 1,
@@ -149,12 +157,20 @@ The test runner supports three types of tests:
 }
 ```
 
-#### 2. Performance Tests
+**Command generated:**
+```bash
+./rccl-UnitTests --gtest_filter=AllReduce.InPlace
+```
+
+#### Performance Tests (`is_gtest: false`)
+
+Used for performance benchmarks. Arguments are passed directly without GTest syntax.
+
 ```json
 {
   "name": "Perf_Bandwidth",
   "description": "Bandwidth benchmark for AllReduce",
-  "test_type": "perf",
+  "is_gtest": false,
   "binary": "all_reduce_perf",
   "command_args": "-b 8 -e 128M -f 2",
   "num_ranks": 2,
@@ -163,12 +179,20 @@ The test runner supports three types of tests:
 }
 ```
 
-#### 3. Custom Tests
+**Command generated:**
+```bash
+mpirun -np 2 ./all_reduce_perf -b 8 -e 128M -f 2
+```
+
+#### Custom Scripts (`is_gtest: false`)
+
+Used for custom validation scripts or any non-GTest executables.
+
 ```json
 {
   "name": "Custom_Validation",
   "description": "Custom GPU validation script",
-  "test_type": "custom",
+  "is_gtest": false,
   "binary": "validate_gpus.sh",
   "command_args": "--full-check --verbose",
   "num_ranks": 1,
@@ -177,15 +201,30 @@ The test runner supports three types of tests:
 }
 ```
 
+**Command generated:**
+```bash
+./validate_gpus.sh --full-check --verbose
+```
+
+**Key Differences:**
+
+| Feature | `is_gtest: true` | `is_gtest: false` |
+|---------|------------------|-------------------|
+| Test framework | GTest (Google Test) | Any executable |
+| Filter syntax | `--gtest_filter=<pattern>` | Plain arguments |
+| `test_filter` field | GTest pattern (e.g., `Suite.Test*`) | Passed as plain argument |
+| `command_args` field | Appended after filter | Primary argument method |
+| Typical use cases | Unit tests, functional tests | Performance tests, custom scripts |
+
 ### Test Definition Fields
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
 | `name` | Yes | string | Unique test identifier |
 | `description` | Recommended | string | Human-readable test description |
-| `test_type` | Yes | string | Test type: `gtest`, `perf`, or `custom` |
+| `is_gtest` | Optional | boolean | Whether test uses GTest framework (default: true). Set to false for perf or custom tests |
 | `binary` | Yes | string | Test binary name (relative to build/test/) |
-| `test_filter` | Optional | string | Test filter (GTest filter for gtest type) |
+| `test_filter` | Optional | string | Test filter (GTest filter syntax for gtest, plain argument for non-gtest) |
 | `command_args` | Optional | string | Additional command-line arguments |
 | `num_ranks` | Optional | integer | Number of MPI ranks (default: 1) |
 | `num_nodes` | Optional | integer | Number of nodes (default: 1) |
@@ -231,7 +270,7 @@ To reduce repetition, you can specify default values at multiple levels with a c
 3. **Configuration level** - base defaults for all tests in that config
 4. **Built-in defaults** - system fallback values
 
-**Supported default fields:** `test_type`, `binary`, `num_ranks`, `num_nodes`, `timeout`
+**Supported default fields:** `is_gtest`, `binary`, `num_ranks`, `num_nodes`, `timeout`
 
 #### Example with Three-Level Hierarchy
 
@@ -239,7 +278,7 @@ To reduce repetition, you can specify default values at multiple levels with a c
 {
   "test_configurations": {
     "p2p_tests": {
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
@@ -252,7 +291,7 @@ To reduce repetition, you can specify default values at multiple levels with a c
           "name": "P2P_Basic",
           "description": "Basic P2P test",
           "test_filter": "P2pMPITest.Basic"
-          // Uses config defaults: test_type, binary, num_ranks=2, num_nodes=1, timeout=120
+          // Uses config defaults: is_gtest=true, binary, num_ranks=2, num_nodes=1, timeout=120
         },
         {
           "name": "P2P_LongRunning",
@@ -756,17 +795,18 @@ python test_runner.py --config test_config_sample.json --skip-tests --verbose
 ### Adding New Tests
 
 1. Add test definition to appropriate configuration in JSON file
-2. Specify `test_type`, `description`, and required fields
+2. Specify `is_gtest`, `description`, and required fields
 3. Test with dry run first: `--skip-tests --verbose`
 4. Run actual test: `--test-name YourTest --verbose`
 
-### Adding New Test Types
+### Test Type Handling
 
-To add support for a new test type:
+The test runner uses a boolean `is_gtest` flag to distinguish between test types:
 
-1. Update `lib/test_executor.py` - modify command generation logic in `run_test()`
-2. Add examples to configuration file
-3. Update this README with new test type documentation
+- **`is_gtest: true`** (default): Uses GTest framework with `--gtest_filter=<filter>` syntax
+- **`is_gtest: false`**: Runs binary with plain arguments (for performance tests, custom scripts, etc.)
+
+This simplified approach eliminates the need for multiple test type conditionals while supporting all test categories (gtest, perf, custom).
 
 ## Troubleshooting
 

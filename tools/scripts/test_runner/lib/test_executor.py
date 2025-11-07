@@ -314,7 +314,7 @@ class TestExecutor:
             dict: Test result
         """
         test_name = test_config.get("name")
-        test_type = test_config.get("test_type", "gtest")
+        is_gtest = test_config.get("is_gtest", True)  # Default to True for backward compatibility
         description = test_config.get("description", "")
         binary = test_config.get("binary", "rccl-UnitTestsMPI")
 
@@ -342,7 +342,7 @@ class TestExecutor:
             print(f"{'='*80}")
             if description:
                 print(f"  Description: {description}")
-            print(f"  Type:    {test_type}")
+            print(f"  Type:    {'gtest' if is_gtest else 'non-gtest'}")
             print(f"  Binary:  {binary}")
             print(f"  Filter:  {test_filter}")
             print(f"  Ranks:   {num_ranks}")
@@ -387,8 +387,8 @@ class TestExecutor:
         # Build command based on test type
         if num_ranks == 1:
             # Non-MPI test
-            if test_type == "gtest":
-                # GTest-based test
+            if is_gtest:
+                # GTest-based test - use --gtest_filter syntax
                 if test_filter == "ALL" or test_filter == "*":
                     cmd = f"./{binary}"
                 else:
@@ -397,24 +397,12 @@ class TestExecutor:
                 # Add custom arguments if provided
                 if custom_args:
                     cmd += f" {custom_args}"
-            elif test_type == "perf":
-                # Performance test - typically doesn't need gtest filter
-                cmd = f"./{binary}"
-                if custom_args:
-                    cmd += f" {custom_args}"
-                elif test_filter and test_filter not in ["ALL", "*"]:
-                    # Some perf tests might support filters
-                    cmd += f" {test_filter}"
-            elif test_type == "custom":
-                # Custom test - use command_args or just run the binary
-                cmd = f"./{binary}"
-                if custom_args:
-                    cmd += f" {custom_args}"
             else:
-                # Default fallback
+                # Non-gtest test (perf, custom, etc.) - run binary with args
                 cmd = f"./{binary}"
                 if custom_args:
                     cmd += f" {custom_args}"
+
         else:
             # MPI test
             mpi_path = self.paths.get("mpi_path", "")
@@ -455,7 +443,8 @@ class TestExecutor:
             mpi_args += f" -x LLVM_PROFILE_FILE=rccl_tests_%p_%m.profraw"
 
             # Build test command based on type
-            if test_type == "gtest":
+            if is_gtest:
+                # GTest-based test - use --gtest_filter syntax
                 if test_filter == "ALL" or test_filter == "*":
                     cmd = f"{mpi_cmd} {mpi_args} ./{binary}"
                 else:
@@ -463,21 +452,12 @@ class TestExecutor:
 
                 if custom_args:
                     cmd += f" {custom_args}"
-            elif test_type == "perf":
-                cmd = f"{mpi_cmd} {mpi_args} ./{binary}"
-                if custom_args:
-                    cmd += f" {custom_args}"
-                elif test_filter and test_filter not in ["ALL", "*"]:
-                    cmd += f" {test_filter}"
-            elif test_type == "custom":
-                cmd = f"{mpi_cmd} {mpi_args} ./{binary}"
-                if custom_args:
-                    cmd += f" {custom_args}"
             else:
-                # Default fallback for unknown test types
+                # Non-gtest test (perf, custom, etc.) - run binary with args
                 cmd = f"{mpi_cmd} {mpi_args} ./{binary}"
                 if custom_args:
                     cmd += f" {custom_args}"
+
 
         if self.args.verbose:
             print(f"\n  Command: {cmd}")

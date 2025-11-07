@@ -1,12 +1,12 @@
 {
   "system_configurations": {
     "name": "RCCL-Tests-MI300X-Mellanox-IB",
-    "description": "Comprehensive RCCL Test Configuration - All Tests"
+    "description": "Comprehensive RCCL Test Configuration - All Tests (includes code coverage)"
   },
   "paths": {
     "workdir": "${WORKDIR:-$HOME/code/rti/scripts/rccl}",
     "rocm_path": "${ROCM_PATH:-/opt/rocm}",
-    "mpi_path": "${MPI_PATH:-/scratch/users/atkulkar/softwares/ompi}"
+    "mpi_path": "${MPI_PATH:-/opt/ompi}"
   },
   "env_variables": {
     "HSA_NO_SCRATCH_RECLAIM": "1",
@@ -35,7 +35,7 @@
     },
     "shm_comprehensive": {
       "extends": "default",
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
@@ -83,7 +83,7 @@
     },
     "p2p_comprehensive": {
       "extends": "default",
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
@@ -124,7 +124,7 @@
     },
     "net_transport_eth_multinode": {
       "extends": "default",
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 2,
@@ -159,7 +159,7 @@
     },
     "net_ib_base": {
       "extends": "default",
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
@@ -243,7 +243,7 @@
       ]
     },
     "unit_tests_fixtures": {
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTestsFixtures",
       "num_ranks": 1,
       "num_nodes": 1,
@@ -272,7 +272,7 @@
       ]
     },
     "unit_tests_standard": {
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTests",
       "num_ranks": 1,
       "num_nodes": 1,
@@ -296,7 +296,7 @@
       ]
     },
     "debug_tests": {
-      "test_type": "gtest",
+      "is_gtest": true,
       "binary": "rccl-UnitTests",
       "num_ranks": 1,
       "num_nodes": 1,
