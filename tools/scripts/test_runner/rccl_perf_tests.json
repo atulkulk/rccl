@@ -30,7 +30,7 @@
   },
   "test_configurations": {
     "perf_base": {
-      "test_type": "perf",
+      "is_gtest": false,
       "num_ranks": 8,
       "num_nodes": 1,
       "timeout": 300,

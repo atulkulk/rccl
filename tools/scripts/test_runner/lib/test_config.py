@@ -239,7 +239,7 @@ class TestConfigProcessor:
             list: Tests with defaults applied
         """
         # Fields that can have defaults at config level
-        default_fields = ["test_type", "binary", "num_ranks", "num_nodes", "timeout"]
+        default_fields = ["is_gtest", "binary", "num_ranks", "num_nodes", "timeout"]
 
         processed_tests = []
         for test in tests:
@@ -285,7 +285,7 @@ class TestConfigProcessor:
 
             # Extract configuration-level defaults
             config_defaults = {
-                "test_type": combined_config.get("test_type"),
+                "is_gtest": combined_config.get("is_gtest"),
                 "binary": combined_config.get("binary"),
                 "num_ranks": combined_config.get("num_ranks"),
                 "num_nodes": combined_config.get("num_nodes"),
@@ -296,7 +296,7 @@ class TestConfigProcessor:
 
             # Extract suite-level defaults (override config-level)
             suite_defaults = {
-                "test_type": suite.get("test_type"),
+                "is_gtest": suite.get("is_gtest"),
                 "binary": suite.get("binary"),
                 "num_ranks": suite.get("num_ranks"),
                 "num_nodes": suite.get("num_nodes"),
