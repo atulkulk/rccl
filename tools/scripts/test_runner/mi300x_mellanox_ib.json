@@ -4,7 +4,7 @@
     "description": "Comprehensive RCCL Test Configuration - All Tests (includes code coverage)"
   },
   "paths": {
-    "workdir": "${WORKDIR:-$HOME/code/rti/scripts/rccl}",
+    "workdir": "${WORKDIR:-$PWD}",
     "rocm_path": "${ROCM_PATH:-/opt/rocm}",
     "mpi_path": "${MPI_PATH:-/opt/ompi}"
   },
@@ -39,8 +39,10 @@
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
+      "num_gpus": 2,
       "timeout": 120,
       "env_variables": {
+        "NCCL_DEBUG": "INFO",
         "NCCL_SHM_DISABLE": "0",
         "NCCL_SHM_USE_CUDA_MEMCPY": "1"
       },
@@ -87,6 +89,7 @@
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
+      "num_gpus": 2,
       "timeout": 120,
       "env_variables": {
         "NCCL_P2P_USE_CUDA_MEMCPY": "1",
@@ -128,6 +131,7 @@
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 2,
+      "num_gpus": 1,
       "env_variables": {
         "NCCL_NET_SHARED_COMMS": "1",
         "NCCL_NET_SHARED_BUFFERS": "1",
@@ -163,6 +167,7 @@
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
+      "num_gpus": 2,
       "env_variables": {
         "NCCL_DEBUG": "INFO",
         "NCCL_DMABUF_ENABLE": "1"
@@ -218,6 +223,10 @@
     },
     "net_ib_transfer": {
       "extends": "net_ib_base",
+      "env_variables": {
+        "NCCL_DEBUG": "TRACE",
+        "NCCL_DEBUG_SUBSYS": "NET,INIT"
+      },
       "tests": [
         {
           "name": "NetIB_Xfer_SimpleSendRecv",
@@ -238,7 +247,7 @@
           "name": "NetIB_Stress_LargeTransfer",
           "description": "Stress test for large data transfers over InfiniBand",
           "test_filter": "NetIbMPITest.LargeTransfer",
-          "timeout": 600
+          "timeout": 300
         }
       ]
     },
@@ -247,6 +256,7 @@
       "binary": "rccl-UnitTestsFixtures",
       "num_ranks": 1,
       "num_nodes": 1,
+      "num_gpus": 8,
       "timeout": 0,
       "env_variables": {
         "NCCL_DEBUG": "INFO",
@@ -276,22 +286,13 @@
       "binary": "rccl-UnitTests",
       "num_ranks": 1,
       "num_nodes": 1,
+      "num_gpus": 8,
       "timeout": 0,
       "tests": [
         {
-          "name": "AllReduce_InPlace",
-          "description": "Test AllReduce collective operation with in-place buffers",
-          "test_filter": "AllReduce.InPlace"
-        },
-        {
-          "name": "Broadcast_OutOfPlace",
-          "description": "Test Broadcast collective operation with separate input/output buffers",
-          "test_filter": "Broadcast.OutOfPlace"
-        },
-        {
-          "name": "AllGather_OutOfPlace",
-          "description": "Test AllGather collective operation with separate input/output buffers",
-          "test_filter": "AllGather.OutOfPlace"
+          "name": "rccl_unit_tests_all",
+          "description": "All rccl unit tests",
+          "test_filter": "*"
         }
       ]
     },
@@ -300,6 +301,7 @@
       "binary": "rccl-UnitTests",
       "num_ranks": 1,
       "num_nodes": 1,
+      "num_gpus": 8,
       "timeout": 0,
       "env_variables": {
         "NCCL_DEBUG": "VERSION",
@@ -345,7 +347,7 @@
       "name": "NET Transport - Ethernet (Multi-Node)",
       "description": "Network transport tests over Ethernet",
       "config": "net_transport_eth_multinode",
-      "enabled": false
+      "enabled": true
     },
     {
       "name": "NET IB - Initialization Tests",

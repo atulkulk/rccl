@@ -294,6 +294,7 @@ Used for custom validation scripts or any non-GTest executables.
 | `command_args` | Optional | string | Additional command-line arguments |
 | `num_ranks` | Optional | integer | Number of MPI ranks (default: 1) |
 | `num_nodes` | Optional | integer | Number of nodes (default: 1) |
+| `num_gpus` | Optional | integer | GPUs per node - controls rank distribution (default: 8) |
 | `timeout` | Optional | integer | Timeout in seconds (0 = unlimited) |
 | `env_variables` | Optional | object | Test-specific environment variables |
 
@@ -336,7 +337,7 @@ To reduce repetition, you can specify default values at multiple levels with a c
 3. **Configuration level** - base defaults for all tests in that config
 4. **Built-in defaults** - system fallback values
 
-**Supported default fields:** `is_gtest`, `binary`, `num_ranks`, `num_nodes`, `timeout`
+**Supported default fields:** `is_gtest`, `binary`, `num_ranks`, `num_nodes`, `num_gpus`, `timeout`
 
 #### Example with Three-Level Hierarchy
 
@@ -348,6 +349,7 @@ To reduce repetition, you can specify default values at multiple levels with a c
       "binary": "rccl-UnitTestsMPI",
       "num_ranks": 2,
       "num_nodes": 1,
+      "num_gpus": 2,
       "timeout": 120,
       "env_variables": {
         "NCCL_P2P_DISABLE": "0"
@@ -357,7 +359,7 @@ To reduce repetition, you can specify default values at multiple levels with a c
           "name": "P2P_Basic",
           "description": "Basic P2P test",
           "test_filter": "P2pMPITest.Basic"
-          // Uses config defaults: is_gtest=true, binary, num_ranks=2, num_nodes=1, timeout=120
+          // Uses config defaults: is_gtest=true, binary, num_ranks=2, num_nodes=1, num_gpus=2, timeout=120
         },
         {
           "name": "P2P_LongRunning",
@@ -374,18 +376,20 @@ To reduce repetition, you can specify default values at multiple levels with a c
       "name": "P2P_Basic_Suite",
       "config": "p2p_tests",
       "num_ranks": 4,
+      "num_gpus": 4,
       "timeout": 180
-      // Suite-level: overrides config's num_ranks (4 instead of 2) and timeout (180 instead of 120)
-      // Tests in this suite will use: num_ranks=4, timeout=180
+      // Suite-level: overrides config's num_ranks, num_gpus, and timeout
+      // Tests in this suite will use: num_ranks=4, num_gpus=4, timeout=180
     },
     {
       "name": "P2P_Stress_Suite",
       "config": "p2p_tests",
       "num_nodes": 2,
-      "num_ranks": 8,
+      "num_ranks": 4,
+      "num_gpus": 2,
       "timeout": 600
-      // Suite-level: overrides config's num_nodes, num_ranks, and timeout
-      // Tests in this suite will use: num_nodes=2, num_ranks=8, timeout=600
+      // Suite-level: overrides config's num_nodes, num_ranks, num_gpus, and timeout
+      // Tests in this suite will use: num_nodes=2, num_ranks=4, num_gpus=2, timeout=600
     }
   ]
 }
@@ -550,15 +554,34 @@ Result: `NCCL_DEBUG=TRACE`, `NCCL_SHM_DISABLE=0`
 
 - Ranks distributed across multiple nodes via MPI
 - Requires SLURM allocation or hostfile configuration
+- Use `num_gpus` to control ranks per node (default: 8)
 - Examples: NET transport tests, InfiniBand tests
 
 ```json
 {
-  "name": "NET_Test",
-  "num_ranks": 4,
-  "num_nodes": 2
+  "name": "NET_Test_4Nodes_2GPUs",
+  "num_ranks": 8,
+  "num_nodes": 4,
+  "num_gpus": 2
 }
 ```
+
+**`num_gpus` Field:**
+- Controls how many MPI ranks are placed on each node
+- Overrides hostfile `slots` specification
+- For multi-node tests, uses `--map-by ppr:{num_gpus}:node`
+- Default value: 8 (matches typical 8-GPU nodes)
+
+**Example: 2 nodes, 1 GPU per node**
+```json
+{
+  "name": "NET_Test_2Nodes_1GPU",
+  "num_ranks": 2,
+  "num_nodes": 2,
+  "num_gpus": 1
+}
+```
+Command: `mpirun -np 2 --hostfile file --map-by ppr:1:node ...`
 
 ### Setting Up Multi-Node Tests
 

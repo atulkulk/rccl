@@ -9,20 +9,15 @@ import os
 import json
 import logging
 
-# Add the lib directory to the Python path
-sys.path.insert(0, os.path.dirname(__file__))
-
 from lib.test_parser import ArgumentParserInterface
 from lib.test_config import TestConfigProcessor
 from lib.test_executor import TestExecutor
-
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
-
 
 def main():
     """Main entry point for test runner"""
@@ -51,7 +46,7 @@ def main():
             return
 
         # Build RCCL (if not --no-build)
-        if not args.skip_tests:
+        if not args.no_build:
             if not executor.build_rccl():
                 print("ERROR: Build failed")
                 return
@@ -68,13 +63,23 @@ def main():
                 print()
                 print(f"Found {len(test_suites)} test suite(s)")
 
-            # Run each test suite
+            # Print skip messages for disabled test suites upfront
+            print()
+            for suite in test_suites:
+                suite_name = suite["suite_details"]["name"]
+                enabled = suite["suite_details"].get("enabled", True)
+                if not enabled:
+                    print(f"SKIP: Test suite '{suite_name}' is disabled")
+
+            # Run only enabled test suites
             all_results = []
             for suite in test_suites:
-                results = executor.run_test_suite(suite)
-                all_results.extend(results)
+                enabled = suite["suite_details"].get("enabled", True)
+                if enabled:
+                    results = executor.run_test_suite(suite)
+                    all_results.extend(results)
 
-            # Print summary
+            # Print summary once at the end
             executor.print_summary()
 
         # Generate coverage report

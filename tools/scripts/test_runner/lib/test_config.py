@@ -239,7 +239,7 @@ class TestConfigProcessor:
             list: Tests with defaults applied
         """
         # Fields that can have defaults at config level
-        default_fields = ["is_gtest", "binary", "num_ranks", "num_nodes", "timeout"]
+        default_fields = ["is_gtest", "binary", "num_ranks", "num_nodes", "num_gpus", "timeout"]
 
         processed_tests = []
         for test in tests:
@@ -289,6 +289,7 @@ class TestConfigProcessor:
                 "binary": combined_config.get("binary"),
                 "num_ranks": combined_config.get("num_ranks"),
                 "num_nodes": combined_config.get("num_nodes"),
+                "num_gpus": combined_config.get("num_gpus", 8),
                 "timeout": combined_config.get("timeout")
             }
             # Remove None values
@@ -300,6 +301,7 @@ class TestConfigProcessor:
                 "binary": suite.get("binary"),
                 "num_ranks": suite.get("num_ranks"),
                 "num_nodes": suite.get("num_nodes"),
+                "num_gpus": suite.get("num_gpus"),
                 "timeout": suite.get("timeout")
             }
             # Remove None values
@@ -319,6 +321,7 @@ class TestConfigProcessor:
                 "description": suite.get("description", ""),
                 "num_nodes": suite.get("num_nodes", 1),
                 "num_ranks": suite.get("num_ranks", 1),
+                "num_gpus": suite.get("num_gpus", 8),
                 "enabled": suite.get("enabled", True)
             }
 
