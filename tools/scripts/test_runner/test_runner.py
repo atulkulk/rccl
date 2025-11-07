@@ -75,10 +75,7 @@ def main():
                 all_results.extend(results)
 
             # Print summary
-            if args.json_output:
-                executor.print_summary_json()
-            else:
-                executor.print_summary()
+            executor.print_summary()
 
         # Generate coverage report
         executor.generate_coverage_report()

@@ -11,7 +11,6 @@ import os
 import subprocess
 import time
 import datetime
-import json
 from pathlib import Path
 
 
@@ -631,34 +630,6 @@ class TestExecutor:
                     f"{self.test_durations[i]:.3f} seconds"
                 )
             print("="*80)
-
-    def get_summary_json(self):
-        """Get test summary as JSON-formatted string
-
-        Returns:
-            str: Pretty-printed JSON string with test summary
-        """
-        summary = {
-            "total_tests": len(self.test_results),
-            "passed": self.test_results.count(self.RESULT_PASSED),
-            "failed": self.test_results.count(self.RESULT_FAILED),
-            "timeout": self.test_results.count(self.RESULT_TIMEOUT),
-            "tests": []
-        }
-
-        for i in range(len(self.test_results)):
-            summary["tests"].append({
-                "name": self.test_names[i],
-                "result": self.test_results[i],
-                "duration": round(self.test_durations[i], 3)
-            })
-
-        return json.dumps(summary, indent=2)
-
-    def print_summary_json(self):
-        """Print test execution summary in JSON format"""
-        print("\nTest Summary (JSON):")
-        print(self.get_summary_json())
 
     def generate_coverage_report(self):
         """Generate code coverage report"""
