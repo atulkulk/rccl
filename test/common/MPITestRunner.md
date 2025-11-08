@@ -1440,17 +1440,17 @@ guard.dismiss();
 
 ### Specialized Guards
 
-#### BufferGuard - Host or Device Memory
+#### DeviceBufferAutoGuard / HostBufferAutoGuard - Host or Device Memory
 
-Manages both host and device memory with runtime discrimination:
+Manages both host and device memory with type-safe guards:
 
 ```cpp
 void* device_buf;
 hipMalloc(&device_buf, size);
-BufferGuard dev_guard(device_buf, false);  // false = device memory
+auto dev_guard = makeDeviceBufferAutoGuard(device_buf);  // device memory
 
 void* host_buf = malloc(size);
-BufferGuard host_guard(host_buf, true);  // true = host memory
+auto host_guard = makeHostBufferAutoGuard(host_buf);  // host memory
 
 // Both automatically freed on scope exit with correct function
 ```

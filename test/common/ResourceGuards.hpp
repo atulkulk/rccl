@@ -22,7 +22,7 @@
  * - ScopeGuard: Generic cleanup for any action (with lambdas)
  * - AutoGuard: Typed guards for resources with simple cleanup functions
  * - ResourceGuard: Typed guards for resources with stateful deleters
- * - Specialized guards: BufferGuard, NcclRegHandleGuard, etc.
+ * - Specialized guards: NcclRegHandleGuard, etc.
  *
  * Guards ensure cleanup even when ASSERT_* fails in tests.
  * See MPITestRunner.md for detailed usage documentation.
@@ -400,113 +400,6 @@ using NcclCommAutoGuard     = AutoGuard<ncclComm_t, ncclCommDestroyWrapper>;
 
 // Type aliases for ResourceGuard-based guards (common/NCCL-specific)
 using NcclRegHandleGuard = ResourceGuard<void*, NcclRegHandleDeleter>;
-
-/**
- * @class BufferGuard
- * @brief RAII guard for host or device memory buffers
- */
-class BufferGuard
-{
-private:
-    void* buffer_;
-    bool  is_host_;
-    bool  owns_;
-
-public:
-    // Construct a buffer guard
-    // @param buffer Pointer to buffer (can be nullptr)
-    // @param is_host true for host memory, false for device memory
-    explicit BufferGuard(void* buffer = nullptr, bool is_host = true)
-        : buffer_(buffer), is_host_(is_host), owns_(true)
-    {}
-
-    ~BufferGuard()
-    {
-        if(owns_ && buffer_)
-        {
-            if(is_host_)
-            {
-                free(buffer_);
-            }
-            else
-            {
-                (void)hipFree(buffer_);
-            }
-        }
-    }
-
-    void* get() const
-    {
-        return buffer_;
-    }
-    void** ptr()
-    {
-        return &buffer_;
-    }
-    void set(void* buffer)
-    {
-        buffer_ = buffer;
-    }
-    bool isHost() const
-    {
-        return is_host_;
-    }
-
-    void reset(void* buffer = nullptr)
-    {
-        if(owns_ && buffer_ && buffer_ != buffer)
-        {
-            if(is_host_)
-            {
-                free(buffer_);
-            }
-            else
-            {
-                (void)hipFree(buffer_);
-            }
-        }
-        buffer_ = buffer;
-        owns_   = true;
-    }
-
-    void* release()
-    {
-        owns_ = false;
-        return buffer_;
-    }
-
-    BufferGuard(const BufferGuard&)            = delete;
-    BufferGuard& operator=(const BufferGuard&) = delete;
-
-    BufferGuard(BufferGuard&& other) noexcept
-        : buffer_(other.buffer_), is_host_(other.is_host_), owns_(other.owns_)
-    {
-        other.owns_ = false;
-    }
-
-    BufferGuard& operator=(BufferGuard&& other) noexcept
-    {
-        if(this != &other)
-        {
-            if(owns_ && buffer_)
-            {
-                if(is_host_)
-                {
-                    free(buffer_);
-                }
-                else
-                {
-                    (void)hipFree(buffer_);
-                }
-            }
-            buffer_     = other.buffer_;
-            is_host_    = other.is_host_;
-            owns_       = other.owns_;
-            other.owns_ = false;
-        }
-        return *this;
-    }
-};
 
 // Factory methods for ResourceGuard
 template<typename T, typename Deleter>

@@ -1017,7 +1017,7 @@ TEST_F(ShmMPITest, ShmTransfer_ZeroSizeBuffer)
     // Allocate minimal buffer
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1)); // Allocate 1 byte
-    BufferGuard bufferGuard(buffer, false); // Device memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // Device memory
 
     const bool is_sender = (config.world_rank == 0);
     const int  peer      = is_sender ? 1 : 0;
@@ -1090,7 +1090,7 @@ TEST_F(ShmMPITest, ShmTransfer_UnalignedBufferAddress)
     const size_t buffer_size    = 4096;
     void*        aligned_buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&aligned_buffer, buffer_size));
-    BufferGuard bufferGuard(aligned_buffer, false); // Device memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(aligned_buffer); // Device memory
 
     // Create unaligned pointer (offset by 1 byte)
     void* unaligned_buffer = static_cast<char*>(aligned_buffer) + 1;
