@@ -23,16 +23,16 @@
 #include "gtest/gtest.h"
 
 #ifdef MPI_TESTS_ENABLED
-    #include "MPIEnvironment.hpp"
-    #include "TestChecks.hpp"
-    #include "rccl/rccl.h"
-    #include "utils.h" // For getHostName() from RCCL
-    #include <cstdio>
-    #include <cstdlib>
-    #include <cstring>
-    #include <hip/hip_runtime.h>
-    #include <mpi.h>
-    #include <string>
+#include "MPIEnvironment.hpp"
+#include "TestChecks.hpp"
+#include "rccl/rccl.h"
+#include "utils.h" // For getHostName() from RCCL
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <hip/hip_runtime.h>
+#include <mpi.h>
+#include <string>
 
 /**
  * @class MPITestBase

@@ -18,12 +18,12 @@
 
 #ifdef MPI_TESTS_ENABLED
 
-    #include <array>
-    #include <atomic>
-    #include <memory>
-    #include <optional>
-    #include <string>
-    #include <thread>
+#include <array>
+#include <atomic>
+#include <memory>
+#include <optional>
+#include <string>
+#include <thread>
 
 /**
  * @namespace MPIHelpers

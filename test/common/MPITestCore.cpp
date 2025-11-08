@@ -7,7 +7,10 @@
 #include "MPITestCore.hpp"
 
 #ifdef MPI_TESTS_ENABLED
-    #include "GenericScopeGuard.hpp"
+#include "ResourceGuards.hpp"
+
+// Import commonly used guards into local scope
+using RCCLTestGuards::makeScopeGuard;
 
 // Detect the number of unique nodes
 int MPITestConstants::detectNodeCount()

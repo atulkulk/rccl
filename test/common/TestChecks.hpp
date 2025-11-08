@@ -9,6 +9,7 @@
  * @brief Centralized test error checking and logging macros
  *
  * Provides all test-related macros for error checking, logging, and assertions:
+ * - MPI error checking (MPICHECK with 3 overload variants)
  * - NCCL error checking (RCCL_TEST_CHECK, RCCL_TEST_CHECK_GTEST_FAIL)
  * - HIP error checking (HIPCHECK, HIP_TEST_CHECK, HIP_TEST_CHECK_GTEST_FAIL)
  * - MPI-aware assertions (ASSERT_MPI_*)
@@ -22,9 +23,14 @@
 
 #include "gtest/gtest.h"
 #include <cstdio>
+#include <cstring>
 #include <hip/hip_runtime.h>
 #include <mpi.h>
 #include <rccl/rccl.h>
+#include "utils.h" // For RCCL's getHostName utility
+
+// Forward declaration of MPIEnvironment class (defined in MPIEnvironment.hpp)
+class MPIEnvironment;
 
 // Forward declarations for helper functions
 extern int         ncclDebugLevel;
@@ -32,6 +38,47 @@ inline int         getTestDebugLevel();
 inline int         getTestMpiRank();
 inline const char* getTestHostname();
 inline bool        isMultiNodeTest();
+
+// Helper function implementations
+inline int getTestDebugLevel()
+{
+    return ncclDebugLevel;
+}
+
+inline int getTestMpiRank()
+{
+    int rank = -1;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    return rank;
+}
+
+inline const char* getTestHostname()
+{
+    static char hostname[256] = {0};
+    static bool initialized   = false;
+
+    if(!initialized)
+    {
+        // Use RCCL's getHostName utility to get short hostname (delimited by '.')
+        if(getHostName(hostname, sizeof(hostname), '.') != ncclSuccess)
+        {
+            strncpy(hostname, "unknown", sizeof(hostname) - 1);
+        }
+        initialized = true;
+    }
+    return hostname;
+}
+
+// Forward declaration of helper function to access MPIEnvironment state
+// (Defined in MPIEnvironment.cpp to avoid circular dependency)
+int getMPIEnvironmentCachedMultiNodeResult();
+
+inline bool isMultiNodeTest()
+{
+    // Return cached result from global environment
+    // If not yet computed (== -1), assume single node to be safe
+    return getMPIEnvironmentCachedMultiNodeResult() == 1;
+}
 
 // NCCL Error Checking Macros
 
@@ -445,6 +492,111 @@ inline bool        isMultiNodeTest();
                          << ": Skipping test due to MPI failure on at least one rank";         \
         }                                                                                      \
     }                                                                                          \
+    while(0)
+
+// MPI Error Checking Macros (MPICHECK)
+
+/**
+ * @def MPICHECK
+ * @brief Context-aware MPI error checking macro with overloaded behavior
+ *
+ * Provides three usage modes depending on context:
+ *
+ * @par Usage Modes:
+ * - `MPICHECK(cmd)` - Normal test code: Fails test with FAIL() on error
+ * - `MPICHECK(cmd, rank)` - Cleanup code: Calls MPI_Abort() on error
+ * - `MPICHECK(cmd, rank, true)` - MPI_Finalize: Calls std::exit() on error
+ *
+ * @par Example:
+ * @code
+ * // In test body
+ * MPICHECK(MPI_Barrier(MPI_COMM_WORLD));
+ *
+ * // In cleanup code
+ * MPICHECK(MPI_Barrier(MPI_COMM_WORLD), world_rank);
+ *
+ * // During finalization
+ * MPICHECK(MPI_Finalize(), world_rank, true);
+ * @endcode
+ *
+ * @note Prints detailed error message including file, line, and MPI error string
+ */
+
+// Helper macros for argument counting
+#define MPICHECK_GET_MACRO(_1, _2, _3, NAME, ...) NAME
+#define MPICHECK(...) \
+    MPICHECK_GET_MACRO(__VA_ARGS__, MPICHECK_3, MPICHECK_2, MPICHECK_1)(__VA_ARGS__)
+
+/**
+ * @def MPICHECK_1
+ * @brief 1-argument version: Normal test code (uses FAIL())
+ * @hideinitializer
+ */
+#define MPICHECK_1(cmd)                                                            \
+    do                                                                             \
+    {                                                                              \
+        int err = cmd;                                                             \
+        if(err != MPI_SUCCESS)                                                     \
+        {                                                                          \
+            char error_string[MPI_MAX_ERROR_STRING];                               \
+            int  length;                                                           \
+            MPI_Error_string(err, error_string, &length);                          \
+            printf("MPI Error at %s:%d - %s\n", __FILE__, __LINE__, error_string); \
+            FAIL() << "MPI Error: " << error_string;                               \
+        }                                                                          \
+    }                                                                              \
+    while(0)
+
+/**
+ * @def MPICHECK_2
+ * @brief 2-argument version: Cleanup code (uses MPI_Abort())
+ * @hideinitializer
+ */
+#define MPICHECK_2(cmd, rank)                                  \
+    do                                                         \
+    {                                                          \
+        int err = cmd;                                         \
+        if(err != MPI_SUCCESS)                                 \
+        {                                                      \
+            char error_string[MPI_MAX_ERROR_STRING];           \
+            int  length;                                       \
+            MPI_Error_string(err, error_string, &length);      \
+            std::fprintf(stderr,                               \
+                         "Rank %d: MPI Error at %s:%d - %s\n", \
+                         rank,                                 \
+                         __FILE__,                             \
+                         __LINE__,                             \
+                         error_string);                        \
+            std::fflush(stderr);                               \
+            MPI_Abort(MPI_COMM_WORLD, err);                    \
+        }                                                      \
+    }                                                          \
+    while(0)
+
+/**
+ * @def MPICHECK_3
+ * @brief 3-argument version: MPI_Finalize (uses std::exit())
+ * @hideinitializer
+ */
+#define MPICHECK_3(cmd, rank, is_finalize)                              \
+    do                                                                  \
+    {                                                                   \
+        int err = cmd;                                                  \
+        if(err != MPI_SUCCESS)                                          \
+        {                                                               \
+            char error_string[MPI_MAX_ERROR_STRING];                    \
+            int  length;                                                \
+            MPI_Error_string(err, error_string, &length);               \
+            std::fprintf(stderr,                                        \
+                         "Rank %d: MPI_Finalize Error at %s:%d - %s\n", \
+                         rank,                                          \
+                         __FILE__,                                      \
+                         __LINE__,                                      \
+                         error_string);                                 \
+            std::fflush(stderr);                                        \
+            std::exit(err);                                             \
+        }                                                               \
+    }                                                                   \
     while(0)
 
 #endif // MPI_TESTS_ENABLED
