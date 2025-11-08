@@ -107,13 +107,13 @@ protected:
                                                           config.world_rank);
         ASSERT_EQ(hipSuccess, send_err)
             << "Rank " << config.world_rank << ": Failed to allocate/initialize send buffer";
-        BufferGuard sendGuard(p2p_config.send_buffer, false);
+        auto sendGuard = makeDeviceBufferAutoGuard(p2p_config.send_buffer);
 
         // Allocate and zero-initialize receive buffer
         hipError_t hip_result = hipMalloc(&p2p_config.recv_buffer, p2p_config.buffer_size);
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to allocate recv buffer";
-        BufferGuard recvGuard(p2p_config.recv_buffer, false);
+        auto recvGuard = makeDeviceBufferAutoGuard(p2p_config.recv_buffer);
 
         hip_result = zeroInitializeBuffer<float>(p2p_config.recv_buffer, num_elements);
         ASSERT_EQ(hipSuccess, hip_result)
@@ -1115,7 +1115,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_ZeroSize)
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer with actual size (1024)
     void* reg_handle = nullptr;
@@ -1183,7 +1183,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_VerySmallBuffer)
     void*        buffer     = nullptr;
     const size_t small_size = 64;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, small_size));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer
     void* reg_handle = nullptr;
@@ -1254,7 +1254,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_LargeBuffer)
 
     if(hip_result == hipSuccess)
     {
-        BufferGuard bufferGuard(buffer, false); // GPU memory
+        auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
         // Pre-register buffer
         void* reg_handle = nullptr;
@@ -1333,7 +1333,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_InvalidPeerRank)
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer
     void* reg_handle = nullptr;
@@ -1403,7 +1403,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NegativePeerRank)
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer
     void* reg_handle = nullptr;
@@ -1471,7 +1471,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SameBufferMultipleTimes)
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 4096));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer
     void* reg_handle = nullptr;
@@ -1554,7 +1554,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_SelfPeerRank)
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 1024));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer
     void* reg_handle = nullptr;
@@ -1618,7 +1618,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_UnalignedBufferAddress)
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, 4096));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register the aligned buffer first
     void* reg_handle = nullptr;
@@ -1688,7 +1688,7 @@ TEST_F(P2pMPITest, P2pIpcBufferRegistration_NonPowerOfTwoSize)
     void*        buffer   = nullptr;
     const size_t odd_size = 12345;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, odd_size));
-    BufferGuard bufferGuard(buffer, false); // GPU memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer); // GPU memory
 
     // Pre-register buffer
     void* reg_handle = nullptr;

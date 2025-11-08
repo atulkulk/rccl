@@ -202,7 +202,7 @@ void TransportTestBase::preRegisterBuffers(void*  send_buffer,
 }
 
 // Buffer allocation with automatic RAII guards
-std::pair<BufferGuard, BufferGuard>
+std::pair<DeviceBufferAutoGuard, DeviceBufferAutoGuard>
     TransportTestBase::allocateAndInitBuffersGuarded(void** send_buffer,
                                                      void** recv_buffer,
                                                      size_t send_bytes,
@@ -213,8 +213,8 @@ std::pair<BufferGuard, BufferGuard>
     allocateAndInitBuffers(send_buffer, recv_buffer, send_bytes, recv_bytes);
 
     // Create guards
-    BufferGuard sendGuard(*send_buffer, false); // Device memory
-    BufferGuard recvGuard(*recv_buffer, false); // Device memory
+    auto sendGuard = makeDeviceBufferAutoGuard(*send_buffer); // Device memory
+    auto recvGuard = makeDeviceBufferAutoGuard(*recv_buffer); // Device memory
 
     if(store_in_base)
     {
@@ -223,7 +223,7 @@ std::pair<BufferGuard, BufferGuard>
         buffer_guards_.push_back(std::move(recvGuard));
 
         // Return empty guards (resources now managed by base class)
-        return {BufferGuard(nullptr, false), BufferGuard(nullptr, false)};
+        return {makeDeviceBufferAutoGuard(nullptr), makeDeviceBufferAutoGuard(nullptr)};
     }
     else
     {

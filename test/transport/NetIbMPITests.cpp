@@ -626,7 +626,7 @@ TEST_F(NetIbMPITest, SimpleSendRecv) {
 
     void* buffer = malloc(bufferSize);
     ASSERT_NE(buffer, nullptr);
-    BufferGuard bufferGuard(buffer, true);
+    auto bufferGuard = makeHostBufferAutoGuard(buffer);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
@@ -828,7 +828,7 @@ TEST_F(NetIbMPITest, SendRecvZeroSize) {
 
     void* buffer = malloc(bufferSize);
     ASSERT_NE(buffer, nullptr);
-    BufferGuard bufferGuard(buffer, true);
+    auto bufferGuard = makeHostBufferAutoGuard(buffer);
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
@@ -903,7 +903,7 @@ TEST_F(NetIbMPITest, FlushAfterRecv) {
 
     void* buffer = nullptr;
     HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&buffer, bufferSize));
-    BufferGuard bufferGuard(buffer, false);  // false = device memory
+    auto bufferGuard = makeDeviceBufferAutoGuard(buffer);  // false = device memory
 
     void* mhandle = nullptr;
     void* comm = (rank == 0) ? pair.recvComm : pair.sendComm;
