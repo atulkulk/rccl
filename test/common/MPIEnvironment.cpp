@@ -14,8 +14,8 @@
 
 #ifdef MPI_TESTS_ENABLED
 
-    #include <chrono>
-    #include <thread>
+#include <chrono>
+#include <thread>
 
 /**
  * @brief Initialize the global test environment
@@ -227,7 +227,7 @@ void MPIEnvironment::TearDown()
     // tries to do MPI collectives (like Allreduce) while rank 1 is doing different
     // MPI collectives (like Bcast in createTestCommunicator).
     //
-    // Solution: Use MPI_Ibarrier (non-blocking) with a timeout to detect if ranks
+    // Use MPI_Ibarrier (non-blocking) with a timeout to detect if ranks
     // are out of sync, then force cleanup with MPI_Abort if necessary.
 
     // Try a non-blocking barrier to check if all ranks are ready
@@ -343,6 +343,19 @@ void MPIEnvironment::cleanup_mpi()
 
     mpi_initialized     = false;
     devices_initialized = false;
+}
+
+/**
+ * @brief Accessor function to get cached multi-node detection result
+ *
+ * This function is defined here to avoid circular dependency between
+ * TestChecks.hpp and MPIEnvironment.hpp.
+ *
+ * @return The cached multi-node result: -1 (not computed), 0 (single node), 1 (multi-node)
+ */
+int getMPIEnvironmentCachedMultiNodeResult()
+{
+    return MPIEnvironment::cached_multi_node_result;
 }
 
 #endif // MPI_TESTS_ENABLED

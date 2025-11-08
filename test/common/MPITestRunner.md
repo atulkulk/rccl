@@ -1636,8 +1636,7 @@ auto guard = makeCustomGuard(file, [](FILE* f) {
 
 ### See Also
 
-- **ResourceGuards.hpp** - Full guard implementation
-- **GenericScopeGuard.hpp** - Generic scope guard for arbitrary cleanup
+- **ResourceGuards.hpp** - Full guard implementation (includes ScopeGuard, AutoGuard, ResourceGuard)
 - **TransportMPIBase.hpp** - Transport test base with guarded resource management
 - **Best Practices** section above for RAII usage patterns
 

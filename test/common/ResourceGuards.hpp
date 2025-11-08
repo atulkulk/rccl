@@ -16,15 +16,120 @@
 
 /**
  * @file ResourceGuards.hpp
- * @brief RAII resource guards for automatic cleanup in tests
+ * @brief Comprehensive RAII resource guards for automatic cleanup in tests
  *
- * Provides generic RAII guards using C++ templates for automatic resource
- * management. Guards ensure cleanup even when ASSERT_* fails in tests.
+ * Provides all RAII guard types for automatic resource management:
+ * - ScopeGuard: Generic cleanup for any action (with lambdas)
+ * - AutoGuard: Typed guards for resources with simple cleanup functions
+ * - ResourceGuard: Typed guards for resources with stateful deleters
+ * - Specialized guards: BufferGuard, NcclRegHandleGuard, etc.
+ *
+ * Guards ensure cleanup even when ASSERT_* fails in tests.
  * See MPITestRunner.md for detailed usage documentation.
  */
 
 namespace RCCLTestGuards
 {
+
+// ============================================================================
+// ScopeGuard - Generic cleanup for arbitrary actions
+// ============================================================================
+
+/**
+ * @class ScopeGuard
+ * @brief Generic RAII scope guard for custom cleanup logic
+ *
+ * Executes a cleanup function on scope exit (normal return, early return, or exception).
+ * Useful for resources that don't have dedicated RAII guards or for one-off cleanup needs.
+ *
+ * @par Example:
+ * @code
+ * void* buffer = nullptr;
+ * hipMalloc(&buffer, size);
+ * auto guard = makeScopeGuard([&]() { if(buffer) hipFree(buffer); });
+ * // Automatic cleanup on scope exit
+ * @endcode
+ *
+ * @tparam Func Callable type (lambda, function pointer, functor)
+ */
+template<typename Func>
+class ScopeGuard
+{
+    Func cleanup_;     ///< Cleanup function to execute on scope exit
+    bool dismissed_;   ///< If true, skip cleanup (for ownership transfer)
+
+public:
+    explicit ScopeGuard(Func f) noexcept : cleanup_(std::move(f)), dismissed_(false) {}
+
+    ~ScopeGuard() noexcept
+    {
+        if(!dismissed_)
+        {
+            cleanup_();
+        }
+    }
+
+    void dismiss() noexcept { dismissed_ = true; }
+    void restore() noexcept { dismissed_ = false; }
+
+    ScopeGuard(ScopeGuard&& other) noexcept
+        : cleanup_(std::move(other.cleanup_)), dismissed_(other.dismissed_)
+    {
+        other.dismissed_ = true;
+    }
+
+    ScopeGuard& operator=(ScopeGuard&& other) noexcept
+    {
+        if(this != &other)
+        {
+            if(!dismissed_)
+            {
+                cleanup_();
+            }
+            cleanup_   = std::move(other.cleanup_);
+            dismissed_ = other.dismissed_;
+            other.dismissed_ = true;
+        }
+        return *this;
+    }
+
+    ScopeGuard(const ScopeGuard&)            = delete;
+    ScopeGuard& operator=(const ScopeGuard&) = delete;
+};
+
+/**
+ * @brief Factory function to create ScopeGuard with type deduction
+ *
+ * @par Example:
+ * @code
+ * auto guard = makeScopeGuard([&]() { cleanup(); });
+ * @endcode
+ */
+template<typename Func>
+ScopeGuard<Func> makeScopeGuard(Func f)
+{
+    return ScopeGuard<Func>(std::move(f));
+}
+
+/**
+ * @def SCOPE_EXIT
+ * @brief Convenience macro for creating anonymous scope guards
+ *
+ * @par Example:
+ * @code
+ * void* buffer = nullptr;
+ * hipMalloc(&buffer, size);
+ * SCOPE_EXIT(if(buffer) hipFree(buffer));
+ * @endcode
+ */
+#define SCOPE_EXIT_CONCAT_IMPL(a, b) a##b
+#define SCOPE_EXIT_CONCAT(a, b) SCOPE_EXIT_CONCAT_IMPL(a, b)
+#define SCOPE_EXIT(code) \
+    auto SCOPE_EXIT_CONCAT(scope_guard_, __LINE__) = RCCLTestGuards::makeScopeGuard([&]() { code; })
+
+// ============================================================================
+// AutoGuard & ResourceGuard - Typed resource management
+// ============================================================================
 
 /**
  * @class AutoGuard
