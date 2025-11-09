@@ -33,7 +33,7 @@
 class MPIEnvironment;
 
 // Forward declarations for helper functions
-extern int         ncclDebugLevel;
+extern int         rcclTestDebugLevel;
 inline int         getTestDebugLevel();
 inline int         getTestMpiRank();
 inline const char* getTestHostname();
@@ -42,7 +42,7 @@ inline bool        isMultiNodeTest();
 // Helper function implementations
 inline int getTestDebugLevel()
 {
-    return ncclDebugLevel;
+    return rcclTestDebugLevel;
 }
 
 inline int getTestMpiRank()

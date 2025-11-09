@@ -225,6 +225,7 @@ if(BUILD_TESTS)
         common/MPIHelpers.cpp
         common/MPITestCore.cpp
         common/MPIEnvironment.cpp
+        common/TestChecks.cpp
         transport/TransportMPIBase.cpp
         transport/P2pMPITests.cpp
         transport/NetMPITests.cpp

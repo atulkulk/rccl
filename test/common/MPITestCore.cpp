@@ -8,6 +8,8 @@
 
 #ifdef MPI_TESTS_ENABLED
 #include "ResourceGuards.hpp"
+#include <cstdlib>
+#include <string>
 
 // Import commonly used guards into local scope
 using RCCLTestGuards::makeScopeGuard;
@@ -129,12 +131,9 @@ bool MPITestCore::validateTestPrerequisites(
     int world_rank = MPIEnvironment::world_rank;
     int world_size = MPIEnvironment::world_size;
 
-    // Only detect nodes if node constraints are specified
-    int actual_nodes = 1;
-    if(min_nodes > 1 || max_nodes > 0)
-    {
-        actual_nodes = MPITestConstants::detectNodeCount();
-    }
+    // Always detect nodes and display process distribution
+    // This provides valuable information for all tests
+    int actual_nodes = MPITestConstants::detectNodeCount();
 
     bool validation_passed = true;
 
@@ -178,14 +177,11 @@ bool MPITestCore::validateTestPrerequisites(
         TEST_INFO("");
         TEST_INFO("=== Current Environment ===");
         TEST_INFO("Processes:         %d", world_size);
+        TEST_INFO("Nodes:             %d", actual_nodes);
         if(require_power_of_two)
         {
             TEST_INFO("Power-of-two:      %s",
                       MPITestConstants::isPowerOfTwo(world_size) ? "yes" : "no");
-        }
-        if(min_nodes > 1 || max_nodes > 0)
-        {
-            TEST_INFO("Nodes:             %d", actual_nodes);
         }
         TEST_INFO("===========================");
         TEST_INFO("");

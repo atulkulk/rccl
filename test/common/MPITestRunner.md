@@ -333,7 +333,19 @@ validateTestPrerequisites(4, 16, kRequirePowerOfTwo, 1, kRequireSingleNode);
 ```
 
 **Node Detection:**
-The framework automatically detects the number of unique nodes by gathering hostnames from all MPI ranks. This works transparently with any job scheduler (SLURM, PBS, etc.) and both single-node and multi-node configurations.
+The framework automatically detects the number of unique nodes using `MPI_Comm_split_type()` with `MPI_COMM_TYPE_SHARED`, which groups ranks by shared memory domain (physical node).
+
+**The MPI Process Distribution, Test Requirements, and Current Environment are displayed for ALL tests** (when `NCCL_DEBUG=INFO`), providing visibility into your actual MPI configuration regardless of node constraints.
+
+**Important:** Node detection reports WHERE processes are actually running, not where you intended them to run. If your `mpirun` command doesn't properly distribute processes across nodes (missing hostfile, missing `--host`, or missing distribution policy like `--map-by ppr:N:node`), all processes will launch on the local node and detection will correctly report 1 node.
+
+**For multi-node testing, you MUST:**
+- Use `srun` with SLURM allocations (automatically distributes), OR
+- Provide hostfile: `mpirun --hostfile hostfile.txt`, OR
+- Specify hosts: `mpirun --host node1:N,node2:N`, OR
+- Use distribution policy: `mpirun --map-by ppr:N:node`
+
+Without proper process distribution, `mpirun -np 16` launches all 16 processes on the local node, and node detection correctly reports 1 node.
 
 **When to Use Node Validation:**
 - Use `kRequireSingleNode` when your test requires all processes to be on the same physical node
@@ -555,12 +567,12 @@ bool validateTestPrerequisites(
 - `false` if requirements not met (test should skip)
 
 **Behavior:**
-- Displays detailed requirements and current environment on rank 0
+- Displays detailed requirements and current environment on rank 0 (when `NCCL_DEBUG=INFO`)
+- **Always performs node detection and displays process distribution** for visibility into actual MPI configuration
 - If requirements not met: Returns false, typically used with `GTEST_SKIP()`
 - Provides clear error messages explaining what's wrong
-- Safe to call multiple times
-- Automatically detects node count by gathering hostnames from all ranks
-- Only performs node detection when node constraints are specified (min_nodes > 1 or max_nodes > 0)
+- Safe to call multiple times (though node detection runs each time)
+- Node count is always detected and displayed regardless of whether node constraints are specified
 
 **Process Validation:**
 - `min_processes`: Minimum processes needed (test skips if world_size < min)
@@ -701,17 +713,20 @@ namespace MPITestConstants {
 
   // Helper functions
   bool isPowerOfTwo(int n);
-  int detectNodeCount();  // Detects unique nodes via hostnames
+  int detectNodeCount();  // Detects unique nodes via MPI shared memory domains
 }
 ```
 
 **Node Detection:**
 The `detectNodeCount()` function automatically detects the number of unique physical nodes by:
-1. Each rank gets its hostname via `MPI_Get_processor_name()`
-2. All hostnames are gathered to rank 0
-3. Rank 0 counts unique hostnames
-4. Count is broadcast to all ranks
-5. Returns number of unique nodes
+1. Splitting MPI communicator by shared memory domain using `MPI_Comm_split_type()` with `MPI_COMM_TYPE_SHARED`
+2. Each rank determines its local rank and node size (ranks per node)
+3. All node sizes are gathered to rank 0
+4. Rank 0 analyzes the distribution to count unique nodes
+5. Node count is broadcast to all ranks
+6. Returns number of unique nodes
+
+This uses standard MPI-3 functionality to detect physical node boundaries based on shared memory accessibility, working automatically with any MPI implementation and job scheduler.
 
 **Usage Example:**
 ```cpp
@@ -1058,6 +1073,7 @@ TEST_F(MyTransportTest, TestMultipleSizes) {
 
   // All buffers already cleaned up, minimal memory footprint maintained
 }
+```
 
 ---
 
@@ -1878,6 +1894,77 @@ mpirun -np 4 ./test_executable --gtest_filter="MyTest.SomeTest"
 grep validateTestPrerequisites test_file.cpp
 ```
 
+### Test Requires Multi-Node But Detects Single Node
+
+**Symptom:** Test skipped with message:
+```
+Error: REQUIREMENT NOT MET: Need at least 2 node(s), detected 1 nodes
+```
+
+**Root Cause:** Your `mpirun` command launched all processes on the local node, so node detection correctly reports 1 node. **The detection is working correctly - your launch command needs fixing!**
+
+**Why this happens:**
+```bash
+# ❌ This launches ALL processes on the node where you run the command
+mpirun -np 16 ./test_executable
+# Even with a 2-node SLURM allocation, this puts all 16 processes on the local node
+```
+
+**Solutions - You MUST distribute processes across nodes:**
+
+**Option 1: Use SLURM's srun (Recommended)**
+```bash
+# SLURM's srun automatically distributes based on your allocation
+salloc -N 2 --ntasks-per-node=8
+srun -N 2 -n 16 ./test_executable
+# ✓ Node detection: 2 nodes
+```
+
+**Option 2: Use hostfile with proper node names**
+```bash
+# Create hostfile from SLURM allocation
+scontrol show hostnames $SLURM_JOB_NODELIST > hostfile.txt
+
+# Or create manually with actual node names:
+cat > hostfile.txt << EOF
+node-3 slots=8
+node-21 slots=8
+EOF
+
+mpirun -np 16 --hostfile hostfile.txt ./test_executable
+# ✓ Node detection: 2 nodes
+```
+
+**Option 3: Explicit host specification**
+```bash
+# Get your allocated node names
+NODE1=$(scontrol show hostnames $SLURM_JOB_NODELIST | sed -n '1p')
+NODE2=$(scontrol show hostnames $SLURM_JOB_NODELIST | sed -n '2p')
+
+# Distribute explicitly
+mpirun -np 16 --host ${NODE1}:8,${NODE2}:8 ./test_executable
+# ✓ Node detection: 2 nodes
+```
+
+**Option 4: Use distribution policy**
+```bash
+# Requires OpenMPI with SLURM support
+mpirun -np 16 --map-by ppr:8:node ./test_executable
+# ✓ Node detection: 2 nodes
+```
+
+**Verify your distribution before running tests:**
+```bash
+# This should show different hostnames
+mpirun -np 16 --host ${NODE1}:8,${NODE2}:8 hostname
+# Should print: 8 lines with node1, 8 lines with node2
+
+# Or with srun:
+srun -N 2 -n 16 hostname
+```
+
+**Key Point:** Node detection reports WHERE processes ARE running, not where you have nodes allocated. Fix your launch command to actually distribute processes!
+
 ### Test Skipped: Node Requirement Not Met
 
 **Symptom:** Test skipped with message like:
@@ -2136,13 +2223,41 @@ validateTestPrerequisites(2, kNoProcessLimit, kNoPowerOfTwoRequired, 1, kRequire
 
 **Q: How does node detection work?**
 
-A: Node detection uses MPI to gather hostnames from all ranks:
-1. Each rank gets its hostname via `MPI_Get_processor_name()`
-2. All hostnames are gathered to rank 0
-3. Rank 0 counts unique hostnames
-4. Count is broadcast to all ranks
+A: Node detection uses MPI's built-in shared memory domain detection:
+1. `MPI_Comm_split_type()` with `MPI_COMM_TYPE_SHARED` splits ranks by node (shared memory domain)
+2. Each rank determines its local rank and node size (ranks per node)
+3. Node sizes are gathered to rank 0
+4. Rank 0 analyzes the distribution to count unique nodes
+5. Node count is broadcast to all ranks
 
-This automatically works with any job scheduler (SLURM, PBS, etc.) and requires no configuration.
+**Critical: Node detection reports actual process placement, not intent.**
+
+The detection method is robust and works with any MPI implementation. However, it detects WHERE processes are actually running. If your `mpirun` command doesn't distribute processes across nodes, detection correctly reports 1 node.
+
+**Common mistake:**
+```bash
+# This launches all processes on the LOCAL node (where you run the command)
+mpirun -np 16 ./test_executable
+# Node detection: 1 node ✓ (correct - all on one node)
+```
+
+**Correct multi-node launch:**
+```bash
+# With SLURM (recommended - automatic distribution)
+srun -N 2 -n 16 ./test_executable
+
+# With hostfile
+mpirun -np 16 --hostfile hostfile.txt ./test_executable
+
+# With explicit hosts
+mpirun -np 16 --host node1:8,node2:8 ./test_executable
+
+# With distribution policy
+mpirun -np 16 --map-by ppr:8:node ./test_executable
+# Node detection: 2 nodes ✓ (processes actually on 2 nodes)
+```
+
+The detection method works transparently with any job scheduler (SLURM, PBS, etc.), but **you must launch processes correctly** for them to actually be distributed across nodes.
 
 **Q: When should I use `kRequireSingleNode` vs `kNoNodeLimit`?**
 
