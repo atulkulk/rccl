@@ -23,11 +23,6 @@ class TestExecutor:
     Executes tests and manages build/test workflows
     """
 
-    # Exit codes
-    EXIT_SUCCESS = 0
-    EXIT_FAILURE = 1
-    EXIT_TIMEOUT = 124
-
     # Test results
     RESULT_PASSED = "PASSED"
     RESULT_FAILED = "FAILED"

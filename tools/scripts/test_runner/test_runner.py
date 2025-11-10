@@ -29,6 +29,8 @@ def main():
     # Validate config file exists
     if not os.path.exists(args.config):
         print(f"ERROR: Configuration file not found: {args.config}")
+        if args.verbose:
+            print("Exiting: Missing configuration file")
         return
 
     try:
@@ -43,12 +45,16 @@ def main():
 
         # Check environment
         if not executor.check_environment():
+            if args.verbose:
+                print("Exiting: Environment check failed")
             return
 
         # Build RCCL (if not --no-build)
         if not args.no_build:
             if not executor.build_rccl():
                 print("ERROR: Build failed")
+                if args.verbose:
+                    print("Exiting: RCCL build failed")
                 return
 
         # Parse and run test suites
@@ -90,18 +96,25 @@ def main():
             failed = executor.test_results.count(executor.RESULT_FAILED)
             timeout = executor.test_results.count(executor.RESULT_TIMEOUT)
             if failed > 0 or timeout > 0:
+                if args.verbose:
+                    print(f"Exiting: Tests failed (failed={failed}, timeout={timeout})")
                 return
 
+        if args.verbose:
+            print("Exiting: Test run completed successfully")
         return
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
+        if args.verbose:
+            print("Exiting: User interrupted execution")
         return
     except Exception as e:
         print(f"\nERROR: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
+            print("Exiting: Unhandled exception occurred")
         return
 
 
