@@ -445,20 +445,24 @@ class TestExecutor:
 
         # Build command based on test type
         if num_ranks == 1:
-            # Non-MPI test
+            # Non-MPI test - prepend environment variables to the command
+            env_prefix = ""
+            for key, value in merged_env.items():
+                env_prefix += f"{key}={value} "
+
             if is_gtest:
                 # GTest-based test - use --gtest_filter syntax
                 if test_filter == "ALL" or test_filter == "*":
-                    cmd = f"./{binary}"
+                    cmd = f"{env_prefix}./{binary}"
                 else:
-                    cmd = f"./{binary} --gtest_filter={test_filter}"
+                    cmd = f"{env_prefix}./{binary} --gtest_filter={test_filter}"
 
                 # Add custom arguments if provided
                 if custom_args:
                     cmd += f" {custom_args}"
             else:
                 # Non-gtest test (perf, custom, etc.) - run binary with args
-                cmd = f"./{binary}"
+                cmd = f"{env_prefix}./{binary}"
                 if custom_args:
                     cmd += f" {custom_args}"
 
