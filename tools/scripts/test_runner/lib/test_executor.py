@@ -12,22 +12,32 @@ import subprocess
 import sys
 import time
 import datetime
+from enum import IntEnum, Enum
 from pathlib import Path
 
 # Make stdout unbuffered to prevent output ordering issues with subprocesses
 sys.stdout.reconfigure(line_buffering=True)
 
 
-class TestExecutor:
-    """
-    Executes tests and manages build/test workflows
-    """
+class ExitCode(IntEnum):
+    """Exit codes for processes"""
+    EXIT_SUCCESS = 0
+    EXIT_FAILURE = 1
+    EXIT_TIMEOUT = 124
 
-    # Test results
+
+class TestResult(str, Enum):
+    """Test result statuses"""
     RESULT_PASSED = "PASSED"
     RESULT_FAILED = "FAILED"
     RESULT_TIMEOUT = "TIMEOUT"
     RESULT_SKIPPED = "SKIPPED"
+
+
+class TestExecutor:
+    """
+    Executes tests and manages build/test workflows
+    """
 
     def __init__(self, config_processor, args):
         """
@@ -419,7 +429,7 @@ class TestExecutor:
             print(f"ERROR: Test binary not found: {test_binary_path}")
             return {
                 "name": test_name,
-                "result": self.RESULT_FAILED,
+                "result": TestResult.RESULT_FAILED.value,
                 "duration": 0,
                 "error": f"Binary not found: {test_binary_path}"
             }
@@ -556,12 +566,12 @@ class TestExecutor:
             duration = time.time() - start_time
 
             # Determine result
-            if result.returncode == 0:
-                test_result = self.RESULT_PASSED
-            elif result.returncode == self.EXIT_TIMEOUT:
-                test_result = self.RESULT_TIMEOUT
+            if result.returncode == ExitCode.EXIT_SUCCESS:
+                test_result = TestResult.RESULT_PASSED.value
+            elif result.returncode == ExitCode.EXIT_TIMEOUT:
+                test_result = TestResult.RESULT_TIMEOUT.value
             else:
-                test_result = self.RESULT_FAILED
+                test_result = TestResult.RESULT_FAILED.value
 
             if self.args.verbose:
                 print(f"\n  Result: {test_result} ({duration:.3f} seconds)")
@@ -576,10 +586,10 @@ class TestExecutor:
         except subprocess.TimeoutExpired:
             duration = time.time() - start_time
             if self.args.verbose:
-                print(f"\n  Result: {self.RESULT_TIMEOUT} after {timeout} seconds")
+                print(f"\n  Result: {TestResult.RESULT_TIMEOUT.value} after {timeout} seconds")
             return {
                 "name": test_name,
-                "result": self.RESULT_TIMEOUT,
+                "result": TestResult.RESULT_TIMEOUT.value,
                 "duration": duration,
                 "error": f"Test timed out after {timeout} seconds"
             }
@@ -588,7 +598,7 @@ class TestExecutor:
             print(f"\n  ERROR: {e}")
             return {
                 "name": test_name,
-                "result": self.RESULT_FAILED,
+                "result": TestResult.RESULT_FAILED.value,
                 "duration": duration,
                 "error": str(e)
             }
@@ -636,9 +646,9 @@ class TestExecutor:
     def print_summary(self):
         """Print test execution summary"""
         total_tests = len(self.test_results)
-        passed = self.test_results.count(self.RESULT_PASSED)
-        failed = self.test_results.count(self.RESULT_FAILED)
-        timeout = self.test_results.count(self.RESULT_TIMEOUT)
+        passed = self.test_results.count(TestResult.RESULT_PASSED.value)
+        failed = self.test_results.count(TestResult.RESULT_FAILED.value)
+        timeout = self.test_results.count(TestResult.RESULT_TIMEOUT.value)
 
         # Get unique test suites that were run
         unique_suites = sorted(set(self.test_suites)) if self.test_suites else []

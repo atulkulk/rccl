@@ -93,8 +93,9 @@ def main():
 
         # Return based on results
         if executor.test_results:
-            failed = executor.test_results.count(executor.RESULT_FAILED)
-            timeout = executor.test_results.count(executor.RESULT_TIMEOUT)
+            from lib.test_executor import TestResult
+            failed = executor.test_results.count(TestResult.RESULT_FAILED.value)
+            timeout = executor.test_results.count(TestResult.RESULT_TIMEOUT.value)
             if failed > 0 or timeout > 0:
                 if args.verbose:
                     print(f"Exiting: Tests failed (failed={failed}, timeout={timeout})")
