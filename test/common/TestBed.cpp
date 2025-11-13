@@ -636,12 +636,16 @@ namespace RcclUnitTesting
                                std::vector<bool>           const& inPlaceList,
                                std::vector<bool>           const& managedMemList,
                                std::vector<bool>           const& useHipGraphList,
-                               bool                        const& enableSweep)
+                               bool                        const& enableSweep,
+                               OptionalColArgs*            const  optionalArgsPtr)
   {
     // Sort numElements in descending order to cut down on # of allocations
     std::vector<int> sortedN = numElements;
     std::sort(sortedN.rbegin(), sortedN.rend());
-    OptionalColArgs optionalArgs;
+
+    // Use provided OptionalColArgs or create default one
+    OptionalColArgs defaultArgs;
+    OptionalColArgs& optionalArgs = (optionalArgsPtr != nullptr) ? *optionalArgsPtr : defaultArgs;
     // Filter out any unsupported datatypes, in case only subset has been compiled for
     std::vector<ncclDataType_t> const& supportedDataTypes = this->GetAllSupportedDataTypes();
     std::vector<ncclDataType_t> dataTypes;
@@ -718,6 +722,11 @@ namespace RcclUnitTesting
                                                     &numOutputElements);
           optionalArgs.redOp = redOps[rdIdx];
           optionalArgs.root = roots[rtIdx] % this->numActiveRanks;
+          // Set biasNumElements if bias is enabled
+          if (optionalArgs.useBias)
+          {
+            optionalArgs.biasNumElements = numOutputElements;
+          }
           this->SetCollectiveArgs(funcTypes[ftIdx],
                                   dataTypes[dtIdx],
                                   numInputElements,
