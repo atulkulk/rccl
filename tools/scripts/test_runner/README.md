@@ -609,6 +609,8 @@ Customize the RCCL build process through the `build_configuration` section in yo
 ```json
 {
   "build_configuration": {
+    "code_coverage_tool": "llvm",
+    "coverage_enablement_script": "",
     "cmake_options": {
       "CMAKE_BUILD_TYPE": "Debug",
       "ENABLE_CODE_COVERAGE": "ON",
@@ -623,7 +625,62 @@ Customize the RCCL build process through the `build_configuration` section in yo
 }
 ```
 
+#### Code Coverage Tool Selection
+
+The test runner supports two code coverage tools:
+
+- **`"llvm"`** (default): LLVM/Clang code coverage with automatic instrumentation
+- **`"rktracer"`**: AMD RKTracer code coverage and profiling tool
+
+When using LLVM coverage, instrumentation flags are automatically added. For RKTracer, you must provide all necessary compiler flags and environment variables.
+
+Each tool can have its own specific CMake options:
+- `llvm_cmake_options`: Applied only when using LLVM
+- `rktracer_cmake_options`: Applied only when using RKTracer
+
+See `CODE_COVERAGE_GUIDE.md` for detailed coverage configuration documentation.
+
 #### Examples
+
+**LLVM Coverage (Default):**
+```json
+{
+  "build_configuration": {
+    "code_coverage_tool": "llvm",
+    "cmake_options": {
+      "CMAKE_BUILD_TYPE": "Debug",
+      "ENABLE_CODE_COVERAGE": "ON"
+    }
+  }
+}
+```
+
+**RKTracer Coverage Tool (using command from PATH with arguments):**
+```json
+{
+  "build_configuration": {
+    "code_coverage_tool": "rktracer",
+    "coverage_enablement_script": "rkpatch --verbose",
+    "cmake_options": {
+      "CMAKE_BUILD_TYPE": "Debug",
+      "ENABLE_CODE_COVERAGE": "ON"
+    },
+    "rktracer_cmake_options": {
+      "ENABLE_RKTRACER": "ON",
+      "RKTRACER_INSTRUMENT_LEVEL": "full"
+    },
+    "env_variables": {
+      "_comment": "These RKTracer vars are exported after cmake config, before running rkpatch",
+      "RKTRACER": "${RKTRACER:-$HOME/softwares/rktracer/bin/rktracer}",
+      "CMAKE_CXX_COMPILER_LAUNCHER": "$RKTRACER",
+      "CMAKE_HIP_COMPILER_LAUNCHER": "$RKTRACER"
+    }
+  }
+}
+```
+
+**Note**: When using RKTracer, the environment variables `RKTRACER`, `CMAKE_CXX_COMPILER_LAUNCHER`, and `CMAKE_HIP_COMPILER_LAUNCHER` are automatically exported after CMake configuration and before the enablement script runs.
+
 
 **Fast Development Build (No Coverage):**
 ```json
@@ -662,12 +719,21 @@ Customize the RCCL build process through the `build_configuration` section in yo
 ```
 
 **All Options:**
-- `cmake_options` - Any CMake option (user values override defaults)
+- `code_coverage_tool` - Coverage tool: "llvm" (default) or "rktracer"
+- `coverage_enablement_script` - Command or script to run after cmake config, before build (optional, only for rktracer)
+  - Can be a command from PATH (e.g., `"rkpatch --verbose"`) or a file path with arguments
+- `cmake_options` - Common CMake options (applied to all tools)
+- `llvm_cmake_options` - LLVM-specific CMake options (optional)
+- `rktracer_cmake_options` - RKTracer-specific CMake options (optional)
 - `env_variables` - Build environment variables
 - `parallel_jobs` - Number of parallel build threads (default: 64)
 - `generator` - CMake generator: "Unix Makefiles", "Ninja", etc.
 
-See `BUILD_CONFIGURATION_GUIDE.md` for complete documentation.
+**CMake Options Priority:** defaults → `cmake_options` → tool-specific options
+
+**Note:** The `coverage_enablement_script` only runs when `code_coverage_tool` is set to `"rktracer"`. It can be a command available in PATH or a path to a script.
+
+See `CODE_COVERAGE_GUIDE.md` for complete coverage tool documentation.
 
 ### Enhanced Environment Variable Expansion
 

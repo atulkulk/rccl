@@ -8,6 +8,9 @@ Handles test execution, build processes, and result tracking
 """
 
 import os
+import shlex
+import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -59,6 +62,9 @@ class TestExecutor:
 
         # Detect MPI hostfile once during initialization
         self.mpi_hostfile = self._detect_mpi_hostfile()
+
+        # Get code coverage tool configuration
+        self.coverage_tool = self.build_config.get("code_coverage_tool", "llvm").lower()
 
         # Test tracking
         self.test_results = []
@@ -182,6 +188,97 @@ class TestExecutor:
             print("Environment validation passed")
         return True
 
+    def _parse_coverage_command(self, command_string):
+        """
+        Parse coverage enablement command string into command and arguments.
+
+        Args:
+            command_string: Command string with optional arguments
+
+        Returns:
+            tuple: (command_name, args_list)
+        """
+        # Expand environment variables
+        expanded_command = os.path.expandvars(command_string)
+        expanded_command = os.path.expanduser(expanded_command)
+
+        # Split command and arguments using shell-like parsing
+        command_parts = shlex.split(expanded_command)
+        command_name = command_parts[0]
+        command_args = command_parts[1:] if len(command_parts) > 1 else []
+
+        return command_name, command_args
+
+    def _resolve_command_path(self, command_name, workdir):
+        """
+        Resolve command to an executable path.
+
+        First checks if command exists in PATH, then treats as file path.
+
+        Args:
+            command_name: Command name or path
+            workdir: Working directory for relative paths
+
+        Returns:
+            str: Resolved path to executable, or None if not found
+        """
+        # First, check if it's a command available in PATH
+        which_result = shutil.which(command_name)
+        if which_result:
+            if self.args.verbose:
+                print(f"Found command in PATH: {which_result}")
+            return which_result
+
+        # Not in PATH, treat as a file path
+        if os.path.isabs(command_name):
+            script_path = command_name
+        else:
+            script_path = os.path.join(workdir, command_name)
+
+        if not os.path.exists(script_path):
+            return None
+
+        # Make script executable if it's a file and not already executable
+        st = os.stat(script_path)
+        if not (st.st_mode & stat.S_IXUSR):
+            os.chmod(script_path, st.st_mode | stat.S_IXUSR)
+            if self.args.verbose:
+                print(f"Made script executable: {script_path}")
+
+        return script_path
+
+    def _execute_coverage_enablement(self, script_path, command_args, env):
+        """
+        Execute coverage enablement command with arguments.
+
+        Args:
+            script_path: Path to executable
+            command_args: List of arguments
+            env: Environment dictionary
+
+        Returns:
+            bool: True if execution succeeded, False otherwise
+        """
+        full_command = [script_path] + command_args
+
+        if self.args.verbose:
+            print(f"RKTracer enablement command: {' '.join(full_command)}")
+            print(f"Working directory: {self.build_dir}")
+
+        result = subprocess.run(
+            full_command,
+            cwd=self.build_dir,
+            env=env,
+            capture_output=False
+        )
+
+        if result.returncode != 0:
+            print(f"ERROR: RKTracer coverage enablement script failed with exit code {result.returncode}")
+            return False
+
+        print("RKTracer coverage enablement script completed successfully")
+        return True
+
     def build_rccl(self):
         """
         Build RCCL with test support using configurable build settings
@@ -214,6 +311,18 @@ class TestExecutor:
         parallel_jobs = self.build_config.get("parallel_jobs", 64)
         generator = self.build_config.get("generator", "Unix Makefiles")
 
+        # Get code coverage tool configuration (only if --coverage-report is requested)
+        enable_coverage = self.args.coverage_report
+        coverage_enablement_script = self.build_config.get("coverage_enablement_script", None)
+
+        # Get tool-specific CMake options
+        llvm_cmake_options = self.build_config.get("llvm_cmake_options", {})
+        rktracer_cmake_options = self.build_config.get("rktracer_cmake_options", {})
+
+        # Get tool-specific environment variables (to be exported after CMake config)
+        llvm_post_cmake_env = self.build_config.get("llvm_env_variables", {})
+        rktracer_post_cmake_env = self.build_config.get("rktracer_env_variables", {})
+
         if self.args.verbose:
             print(f"Work directory:  {workdir}")
             print(f"ROCm path:       {rocm_path}")
@@ -221,12 +330,15 @@ class TestExecutor:
             print(f"Build directory: {self.build_dir}")
             print(f"Parallel jobs:   {parallel_jobs}")
             print(f"Generator:       {generator}")
+            print(f"Coverage tool:   {self.coverage_tool}")
+            if coverage_enablement_script:
+                print(f"Coverage enablement script: {coverage_enablement_script}")
 
         # Setup environment for build
         env = os.environ.copy()
 
-        # Apply default environment variables for code coverage
-        default_env = {
+        # Define LLVM coverage environment variables
+        llvm_coverage_env = {
             'HIPCC_COMPILE_FLAGS_APPEND': (
                 "-g -Wno-format-nonliteral -Xarch_host -fprofile-instr-generate "
                 "-Xarch_host -fcoverage-mapping -parallel-jobs=16"
@@ -238,18 +350,40 @@ class TestExecutor:
             'CXX': f"{rocm_path}/bin/amdclang++"
         }
 
+        # Apply code coverage environment variables based on selected tool (only if enabled)
+        if enable_coverage:
+            if self.coverage_tool == "llvm":
+                if self.args.verbose:
+                    print("Using LLVM code coverage configuration")
+                # Apply LLVM coverage defaults
+                for key, value in llvm_coverage_env.items():
+                    env[key] = value
+            elif self.coverage_tool == "rktracer":
+                # RKTracer-specific environment variables
+                if self.args.verbose:
+                    print("Using RKTracer code coverage tool")
+                    print("Note: User should provide RKTracer-specific environment variables in build_configuration.env_variables")
+                    print("      A coverage_enablement_script is typically required for RKTracer")
+                # RKTracer requires custom configuration - user provides env vars and enablement script
+            else:
+                print(f"WARNING: Unknown coverage tool '{self.coverage_tool}'. Defaulting to LLVM.")
+                # Apply LLVM defaults for unknown tools
+                for key, value in llvm_coverage_env.items():
+                    env[key] = value
+        else:
+            if self.args.verbose:
+                print("Code coverage instrumentation disabled (use --coverage-report to enable)")
+
         # Merge with user-provided build environment variables (user values override defaults)
-        for key, value in default_env.items():
-            env[key] = value
         for key, value in build_env_vars.items():
             env[key] = str(value)
+
 
         # Build CMake configuration command with defaults
         default_cmake_options = {
             "CMAKE_CXX_FLAGS": "-Wl,--build-id=sha1",
             "CMAKE_EXE_LINKER_FLAGS": "-Wl,--build-id=sha1",
             "CMAKE_BUILD_TYPE": "Debug",
-            "ENABLE_CODE_COVERAGE": "ON",
             "BUILD_TESTS": "ON",
             "BUILD_LOCAL_GPU_TARGET_ONLY": "ON",
             "TRACE": "ON",
@@ -260,8 +394,19 @@ class TestExecutor:
             "MPI_PATH": mpi_path
         }
 
-        # Merge with user-provided CMake options (user values override defaults)
+        # Merge CMake options in order: defaults -> common options -> tool-specific options
+        # Tool-specific options have highest priority and override common options
         merged_cmake_options = {**default_cmake_options, **cmake_options}
+
+        # Apply tool-specific CMake options based on selected coverage tool
+        if self.coverage_tool == "llvm" and llvm_cmake_options:
+            if self.args.verbose:
+                print(f"Applying LLVM-specific CMake options: {llvm_cmake_options}")
+            merged_cmake_options = {**merged_cmake_options, **llvm_cmake_options}
+        elif self.coverage_tool == "rktracer" and rktracer_cmake_options:
+            if self.args.verbose:
+                print(f"Applying RKTracer-specific CMake options: {rktracer_cmake_options}")
+            merged_cmake_options = {**merged_cmake_options, **rktracer_cmake_options}
 
         # Build CMake command
         cmake_cmd = [
@@ -295,6 +440,46 @@ class TestExecutor:
             if result.returncode != 0:
                 print(f"ERROR: CMake configuration failed")
                 return False
+
+            # Export tool-specific environment variables after CMake configuration (only if coverage enabled)
+            if enable_coverage:
+                tool_specific_env = {}
+                if self.coverage_tool == "llvm" and llvm_post_cmake_env:
+                    tool_specific_env = llvm_post_cmake_env
+                    tool_name = "LLVM"
+                elif self.coverage_tool == "rktracer" and rktracer_post_cmake_env:
+                    tool_specific_env = rktracer_post_cmake_env
+                    tool_name = "RKTracer"
+
+                if tool_specific_env:
+                    if self.args.verbose:
+                        print(f"\nExporting {tool_name} tool-specific environment variables:")
+
+                    for var_name, var_value in tool_specific_env.items():
+                        # Expand environment variables in the value
+                        expanded_value = os.path.expandvars(str(var_value))
+                        env[var_name] = expanded_value
+                        if self.args.verbose:
+                            print(f"  {var_name}={expanded_value}")
+
+                # Run coverage enablement script/binary if specified for rktracer (intermediate step)
+                if coverage_enablement_script and self.coverage_tool == "rktracer":
+                    print("\nRunning RKTracer coverage enablement script...")
+
+                    # Parse command and arguments
+                    command_name, command_args = self._parse_coverage_command(coverage_enablement_script)
+
+                    # Resolve command to executable path
+                    script_path = self._resolve_command_path(command_name, workdir)
+
+                    if not script_path:
+                        print(f"ERROR: RKTracer coverage enablement script not found: {command_name}")
+                        print(f"       Not found in PATH and not found as file: {coverage_enablement_script}")
+                        return False
+
+                    # Execute the coverage enablement command with updated environment
+                    if not self._execute_coverage_enablement(script_path, command_args, env):
+                        return False
 
             print("\nRunning CMake build...")
             build_cmd = f"cmake --build {self.build_dir} --parallel {parallel_jobs}"
@@ -446,8 +631,9 @@ class TestExecutor:
             ld_library_path_parts.append(env.get('LD_LIBRARY_PATH'))
         env['LD_LIBRARY_PATH'] = ":".join(ld_library_path_parts)
 
-        # Set LLVM_PROFILE_FILE for code coverage (prevents default.profraw collision)
-        env['LLVM_PROFILE_FILE'] = "rccl_tests_%p_%m.profraw"
+        # Set LLVM_PROFILE_FILE for code coverage only if LLVM coverage is enabled
+        if self.args.coverage_report and self.coverage_tool == "llvm":
+            env['LLVM_PROFILE_FILE'] = "rccl_tests_%p_%m.profraw"
 
         # Add test-specific env vars
         for key, value in merged_env.items():
@@ -516,8 +702,9 @@ class TestExecutor:
             # Pass the LD_LIBRARY_PATH
             mpi_args += f" -x LD_LIBRARY_PATH={env['LD_LIBRARY_PATH']}"
 
-            # Pass LLVM_PROFILE_FILE to MPI ranks for code coverage (prevents default.profraw collision)
-            mpi_args += f" -x LLVM_PROFILE_FILE=rccl_tests_%p_%m.profraw"
+            # Pass LLVM_PROFILE_FILE to MPI ranks for code coverage only if LLVM coverage is enabled
+            if self.args.coverage_report and self.coverage_tool == "llvm":
+                mpi_args += f" -x LLVM_PROFILE_FILE=rccl_tests_%p_%m.profraw"
 
             # Build test command based on type
             if is_gtest:
@@ -540,7 +727,14 @@ class TestExecutor:
             print(f"\n  Command: {cmd}")
             print(f"  Working directory: {os.path.join(self.build_dir, 'test')}")
             print(f"  LD_LIBRARY_PATH: {env.get('LD_LIBRARY_PATH', '')}")
-            print(f"  LLVM_PROFILE_FILE: {env.get('LLVM_PROFILE_FILE', 'Not set')}\n")
+            if self.args.coverage_report:
+                if self.coverage_tool == "llvm":
+                    print(f"  LLVM_PROFILE_FILE: {env.get('LLVM_PROFILE_FILE', 'Not set')}")
+                else:
+                    print(f"  Coverage: {self.coverage_tool.upper()}")
+            else:
+                print(f"  Coverage: Disabled")
+            print()
 
         # Execute test
         start_time = time.time()
