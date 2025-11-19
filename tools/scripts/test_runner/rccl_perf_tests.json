@@ -4,9 +4,9 @@
     "description": "RCCL Performance Test Suite - All Collective Operations"
   },
   "paths": {
-    "workdir": "${WORKDIR:-$HOME/code/rti/scripts/rccl}",
+    "workdir": "${WORKDIR:-/path/to/rccl}",
     "rocm_path": "${ROCM_PATH:-/opt/rocm}",
-    "mpi_path": "${MPI_PATH:-$HOME/softwares/ompi}",
+    "mpi_path": "${MPI_PATH:-/opt/ompi}",
     "test_binary_dir": "${RCCL_TEST_BIN_DIR}"
   },
   "env_variables": {
