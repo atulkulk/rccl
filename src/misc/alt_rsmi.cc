@@ -48,17 +48,25 @@ struct ARSMI_systemNode {
     std::string s_card;
 };
 
-static const char *kKFDNodesPathRoot = "/sys/class/kfd/kfd/topology/nodes";
+// Internal implementation details
+// When compiled into the test binary (ARSMI_TEST_BUILD defined), these have external linkage
+// so AltRsmiTestUtils.cpp can access them via extern declarations.
+// When compiled into the production library (ARSMI_TEST_BUILD not defined), these are static.
+#ifdef ARSMI_TEST_BUILD
+  // Test build: external linkage for cross-TU access
+  thread_local const char *kKFDNodesPathRoot = "/sys/class/kfd/kfd/topology/nodes";
+  thread_local std::vector<ARSMI_systemNode> ARSMI_orderedNodes;
+  thread_local std::vector<std::vector<ARSMI_linkInfo>> ARSMI_orderedLinks;
+  thread_local int ARSMI_num_devices=-1;
+#else
+  // Production build: static/internal linkage
+  static thread_local const char *kKFDNodesPathRoot = "/sys/class/kfd/kfd/topology/nodes";
+  static thread_local std::vector<ARSMI_systemNode> ARSMI_orderedNodes;
+  static thread_local std::vector<std::vector<ARSMI_linkInfo>> ARSMI_orderedLinks;
+  static thread_local int ARSMI_num_devices=-1;
+#endif
+
 static const uint32_t kAmdGpuId = 0x1002;
-
-// Vector containing data about each node, ordered by bdf ID
-static thread_local std::vector<ARSMI_systemNode> ARSMI_orderedNodes;
-
-// 2-D matrix with link information between each pair of nodes.
-static thread_local std::vector<std::vector<ARSMI_linkInfo>> ARSMI_orderedLinks;
-
-// Number of devices recognized
-static thread_local int ARSMI_num_devices=-1;
 
 
 // Public API functions
