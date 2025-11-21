@@ -108,9 +108,6 @@ TEST(MyTest, SecondTest) {
 #include "common/ProcessIsolatedTestRunner.hpp"
 
 TEST(Rcclwrap, MyIsolatedTests) {
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Register a test with environment variables
   ProcessIsolatedTestRunner::registerTest(
       ProcessIsolatedTestRunner::TestConfig(
@@ -195,7 +192,6 @@ bool passed = ProcessIsolatedTestRunner::executeAllTests(options);
 ```cpp
 // ❌ BAD: Tests registered but never executed!
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
   ProcessIsolatedTestRunner::registerTest("Test1", []() { /* ... */ });
   ProcessIsolatedTestRunner::registerTest("Test2", []() { /* ... */ });
   // Missing executeAllTests() - tests will NOT run!
@@ -203,7 +199,6 @@ TEST(MyTest, IsolatedTests) {
 
 // ✅ GOOD: Tests registered and executed
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
   ProcessIsolatedTestRunner::registerTest("Test1", []() { /* ... */ });
   ProcessIsolatedTestRunner::registerTest("Test2", []() { /* ... */ });
   bool passed = ProcessIsolatedTestRunner::executeAllTests();
@@ -266,6 +261,8 @@ static bool executeAllTests(
 
 **Returns:** `true` if all tests passed, `false` if any failed.
 
+**Note:** This method automatically clears all test registrations and results after execution, ensuring a clean state for the next test suite. Users do not need to call `clear()` manually.
+
 #### `getTestResults()`
 Retrieve detailed results from the last execution.
 
@@ -274,11 +271,13 @@ static std::vector<TestResult> getTestResults();
 ```
 
 #### `clear()`
-Clear all registered tests (call at the start of each TEST block).
+Clear all registered tests and results.
 
 ```cpp
 static void clear();
 ```
+
+**Note:** Calling this method manually is typically not necessary, as `executeAllTests()` automatically clears registrations after execution. This method is primarily useful for advanced use cases or when tests are registered but not executed.
 
 **⚠️ Automatic Warning:** If `clear()` is called when tests have been registered but not fully executed, it will automatically print a warning to stderr:
 
@@ -375,8 +374,6 @@ static void CleanupMockComm(ncclComm_t &mockComm);
 
 ```cpp
 TEST(Rcclwrap, EnvironmentVariableTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Test 1: With environment variable set
   ProcessIsolatedTestRunner::registerTest(
       ProcessIsolatedTestRunner::TestConfig(
@@ -431,8 +428,6 @@ TEST(Rcclwrap, EnvironmentVariableTests) {
 
 ```cpp
 TEST(Rcclwrap, ArchitectureTests) {
-  ProcessIsolatedTestRunner::clear();
-
   struct TestCase {
     std::string name;
     std::string arch;
@@ -482,8 +477,6 @@ TEST(Rcclwrap, ArchitectureTests) {
 
 ```cpp
 TEST(Rcclwrap, TimeoutHandling) {
-  ProcessIsolatedTestRunner::clear();
-
   // Test that completes quickly
   ProcessIsolatedTestRunner::registerTest(
       ProcessIsolatedTestRunner::TestConfig(
@@ -515,8 +508,6 @@ TEST(Rcclwrap, TimeoutHandling) {
 
 ```cpp
 TEST(Rcclwrap, CriticalTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Register multiple critical tests
   ProcessIsolatedTestRunner::registerTest(
       "CriticalTest1", []() { EXPECT_TRUE(checkCriticalCondition1()); });
@@ -540,13 +531,11 @@ TEST(Rcclwrap, CriticalTests) {
 
 ## Best Practices
 
-### 1. Always Clear Before Registration
+### 1. Always Execute Registered Tests
 
 ```cpp
 TEST(MyTest, IsolatedTests) {
-  // ✅ GOOD: Clear previous registrations
-  ProcessIsolatedTestRunner::clear();
-
+  // Register tests
   ProcessIsolatedTestRunner::registerTest(/* ... */);
 
   // ✅ IMPORTANT: Don't forget to execute!
@@ -555,25 +544,12 @@ TEST(MyTest, IsolatedTests) {
 }
 ```
 
-**⚠️ Automatic Warning for Unexecuted Tests:**
-
-As of the latest version, `clear()` automatically detects and warns about unexecuted tests! When `clear()` is called with registered but unexecuted tests, you'll see:
-
-```
-⚠️  WARNING: ProcessIsolatedTestRunner::clear() called with 2 unexecuted test(s)!
-   Registered: 2 test(s)
-   Executed:   0 test(s)
-   Did you forget to call executeAllTests()?
-```
-
 **Manual Verification (Optional but Recommended):**
 
-You can also manually verify using `getTestCount()`:
+You can verify that tests were registered and executed:
 
 ```cpp
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Register tests
   ProcessIsolatedTestRunner::registerTest("Test1", []() { /* ... */ });
   ProcessIsolatedTestRunner::registerTest("Test2", []() { /* ... */ });
@@ -582,11 +558,11 @@ TEST(MyTest, IsolatedTests) {
   size_t registeredCount = ProcessIsolatedTestRunner::getTestCount();
   EXPECT_EQ(registeredCount, 2) << "Expected 2 tests to be registered";
 
-  // Execute all tests
+  // Execute all tests (automatically clears after execution)
   bool passed = ProcessIsolatedTestRunner::executeAllTests();
   EXPECT_TRUE(passed);
 
-  // Verify execution count matches registration count
+  // Optional: Verify execution count matches registration count
   auto results = ProcessIsolatedTestRunner::getTestResults();
   EXPECT_EQ(results.size(), registeredCount)
       << "Registered " << registeredCount << " but executed " << results.size();
@@ -596,8 +572,6 @@ TEST(MyTest, IsolatedTests) {
 **Best Practice Pattern:**
 ```cpp
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Register all tests
   registerMyTests();  // Helper function that registers tests
 
@@ -605,11 +579,11 @@ TEST(MyTest, IsolatedTests) {
   size_t registeredCount = ProcessIsolatedTestRunner::getTestCount();
   EXPECT_GT(registeredCount, 0) << "No tests were registered!";
 
-  // Execute
+  // Execute (automatically clears after execution)
   bool passed = ProcessIsolatedTestRunner::executeAllTests();
   EXPECT_TRUE(passed);
 
-  // Verify execution count matches registration count
+  // Optional: Verify execution count matches registration count
   auto results = ProcessIsolatedTestRunner::getTestResults();
   EXPECT_EQ(results.size(), registeredCount) << "Test count mismatch!";
 }
@@ -632,8 +606,6 @@ ProcessIsolatedTestRunner::registerTest(
 
 ```cpp
 TEST(Rcclwrap, AllP2PChunkSizeTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Register all related tests together
   registerGFX942Tests();
   registerGFX950Tests();
@@ -761,23 +733,19 @@ auto results = ProcessIsolatedTestRunner::getTestResults();
 **Detection:**
 ```cpp
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Register tests
   ProcessIsolatedTestRunner::registerTest("Test1", []() { EXPECT_TRUE(true); });
   ProcessIsolatedTestRunner::registerTest("Test2", []() { EXPECT_TRUE(true); });
 
   // ❌ FORGOT TO CALL executeAllTests()!
 
-  // Later, if clear() is called or test ends, registered tests are lost
+  // Later, when the test ends, registered tests are lost
 }
 ```
 
 **Solution:**
 ```cpp
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
-
   // Register tests
   ProcessIsolatedTestRunner::registerTest("Test1", []() { EXPECT_TRUE(true); });
   ProcessIsolatedTestRunner::registerTest("Test2", []() { EXPECT_TRUE(true); });
@@ -823,6 +791,10 @@ EXPECT_EQ(results.size(), expectedTestCount)
    - Exit codes are captured from child processes
    - Timing information is recorded
    - All results stored in static vector
+
+4. **Automatic Cleanup:**
+   - After execution completes, `executeAllTests()` automatically clears all test registrations and results
+   - This ensures a clean state for the next test suite without manual intervention
 
 ### Exit Codes
 
@@ -897,7 +869,6 @@ A: **You MUST call `executeAllTests()` explicitly.** Tests do NOT run automatica
 
 ```cpp
 TEST(MyTest, IsolatedTests) {
-  ProcessIsolatedTestRunner::clear();
   ProcessIsolatedTestRunner::registerTest("MyTest", []() { /* ... */ });
 
   // ✅ REQUIRED: Execute the tests
@@ -923,9 +894,9 @@ auto results = ProcessIsolatedTestRunner::getTestResults();
 EXPECT_EQ(results.size(), 2) << "Expected 2 tests to run";
 ```
 
-**Q: What happens if I call clear() without executing registered tests?**
+**Q: Do I need to call clear() manually?**
 
-A: As of the latest version, `clear()` will **automatically warn you** if tests were registered but not executed:
+A: No. The `clear()` method is only useful for advanced use cases where you need to clear tests that were registered but never executed. If you manually call `clear()` when tests were registered but not executed, it will warn you:
 
 ```
 ⚠️  WARNING: ProcessIsolatedTestRunner::clear() called with 2 unexecuted test(s)!
@@ -933,11 +904,6 @@ A: As of the latest version, `clear()` will **automatically warn you** if tests 
    Executed:   0 test(s)
    Did you forget to call executeAllTests()?
 ```
-
-This warning helps catch the common mistake of forgetting to call `executeAllTests()`. To avoid the warning:
-1. Call `clear()` at the **start** of each TEST block
-2. Call `executeAllTests()` at the **end** of each TEST block
-3. Optionally use `getTestCount()` to verify registration count matches expectation
 
 ---
 

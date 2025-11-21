@@ -339,9 +339,6 @@ TEST(Rcclwrap, validHsaScratchEnvSettingTest) {
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
 
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Register tests with appropriate environment variables
   ProcessIsolatedTestRunner::registerTest(
       ProcessIsolatedTestRunner::TestConfig(
@@ -378,9 +375,6 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
-
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
 
   // Register tests with appropriate environment variables
   ProcessIsolatedTestRunner::registerTest(
@@ -419,9 +413,6 @@ TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MaxChannelsSet) {
-
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
 
   // Register tests with appropriate environment variables
   ProcessIsolatedTestRunner::registerTest(
@@ -1105,9 +1096,6 @@ TEST(Rcclwrap, AllrcclSetP2pNetChunkSizeTests) {
   INFO(NCCL_LOG_INFO, "=== Starting Process-Isolated rcclSetP2pNetChunkSize "
                       "Tests Execution ===");
 
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Define test case structure
   struct P2PChunkSizeTestCase {
     std::string name;
@@ -1211,9 +1199,6 @@ TEST(Rcclwrap, AllrcclSetP2pNetChunkSizeTests) {
 }
 
 TEST(Rcclwrap, AllPxnTests) {
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Define test case structure
   struct PxnTestCase {
     std::string name;

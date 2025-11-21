@@ -131,7 +131,7 @@ private:
   static void applyEnvironmentVariables(const TestConfig &config);
 
   /**
-   * @brief Execute a single test in the current process
+   * @brief Execute a single test in the child process
    * @param config Test configuration
    * @return Exit code (0 for success, non-zero for failure)
    */
@@ -172,6 +172,8 @@ public:
    * @brief Execute all registered tests sequentially
    * @param options Execution options (defaults to continue on failure)
    * @return True if all tests passed, false otherwise
+   * @note This method automatically clears all test registrations and results
+   *       after execution, ensuring a clean state for the next test suite.
    */
   static bool
   executeAllTests(const ExecutionOptions &options = ExecutionOptions());
@@ -191,6 +193,10 @@ public:
 
   /**
    * @brief Clear test registry and results (thread-safe)
+   * @note Calling this method manually is typically not necessary, as
+   *       executeAllTests() automatically clears registrations after execution.
+   *       This method is primarily useful for advanced use cases or when tests
+   *       are registered but not executed.
    */
   static void clear();
 

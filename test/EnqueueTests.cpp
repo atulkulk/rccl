@@ -126,9 +126,6 @@ int EnqueueTests::abortFlagRefCount = 0;
 
 // Test ncclInitKernelsForDevice function
 TEST_F(EnqueueTests, ncclInitKernelsForDevice_ValidInput) {
-    // Clear any previous test registrations
-    ProcessIsolatedTestRunner::clear();
-
     // Configure execution options
     ProcessIsolatedTestRunner::ExecutionOptions options;
     options.stopOnFirstFailure = false; // Continue running all tests

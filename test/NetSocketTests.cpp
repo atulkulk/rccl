@@ -873,9 +873,6 @@ TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreationDefault) {
 // Test multiple concurrent operations to stress test task creation
 TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreation) {
 
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Configure execution options
   ProcessIsolatedTestRunner::ExecutionOptions options;
   options.stopOnFirstFailure = false; // Continue running all tests
@@ -1103,9 +1100,6 @@ TEST_F(NetSocketTests, TestNonHostMemoryRegMr) {
 
 // Test for excessive thread configuration warning
 TEST_F(NetSocketTests, TestExcessiveThreadConfig) {
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Configure execution options
   ProcessIsolatedTestRunner::ExecutionOptions options;
   options.stopOnFirstFailure = false; // Continue running all tests
@@ -1227,9 +1221,6 @@ TEST_F(NetSocketTests, TestExcessiveThreadConfig) {
 
 // Test for excessive socket configuration warning
 TEST_F(NetSocketTests, TestExcessiveSocketConfig) {
-  // Clear any previous test registrations
-  ProcessIsolatedTestRunner::clear();
-
   // Configure execution options
   ProcessIsolatedTestRunner::ExecutionOptions options;
   options.stopOnFirstFailure = false; // Continue running all tests

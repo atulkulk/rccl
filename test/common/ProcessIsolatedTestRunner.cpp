@@ -365,7 +365,21 @@ bool ProcessIsolatedTestRunner::executeAllTests(
     }
   }
 
-  return generateReport(options);
+  bool result = generateReport(options);
+
+  // Automatically clear test configurations and results after execution
+  // This ensures a clean state for the next test suite without requiring
+  // explicit clear() calls from test cases
+  {
+    std::lock_guard<std::mutex> lock(testConfigsMutex_);
+    testConfigs_.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(resultsMutex_);
+    testResults_.clear();
+  }
+
+  return result;
 }
 
 // Generate and display test report
