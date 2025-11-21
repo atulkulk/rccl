@@ -207,4 +207,101 @@ public:
   static size_t getTestCount();
 };
 
+// Macros for Simplified Usage
+
+/**
+ * @brief Register and execute a single isolated test with minimal boilerplate
+ *
+ * @param test_name Name of the test (string)
+ * @param test_body Lambda containing test logic
+ *
+ * Example:
+ *   RUN_ISOLATED_TEST("MyTest", []() {
+ *     EXPECT_TRUE(someFunction());
+ *   });
+ */
+#define RUN_ISOLATED_TEST(test_name, test_body)                                \
+  do {                                                                         \
+    ::RcclUnitTesting::ProcessIsolatedTestRunner::registerTest(test_name,     \
+                                                                test_body);    \
+    bool passed_ = ::RcclUnitTesting::ProcessIsolatedTestRunner::             \
+        executeAllTests();                                                     \
+    EXPECT_TRUE(passed_) << "Isolated test '" << test_name << "' failed";     \
+  } while (0)
+
+/**
+ * @brief Register and execute a single isolated test with environment variables
+ *
+ * @param test_name Name of the test (string)
+ * @param test_body Lambda containing test logic
+ * @param env_vars Map of environment variables
+ *
+ * Example:
+ *   RUN_ISOLATED_TEST_WITH_ENV("MyTest",
+ *     []() { EXPECT_TRUE(someFunction()); },
+ *     {{"VAR1", "value1"}, {"VAR2", "value2"}});
+ */
+#define RUN_ISOLATED_TEST_WITH_ENV(test_name, test_body, env_vars)            \
+  do {                                                                         \
+    ::RcclUnitTesting::ProcessIsolatedTestRunner::registerTest(               \
+        test_name, test_body, env_vars);                                       \
+    bool passed_ = ::RcclUnitTesting::ProcessIsolatedTestRunner::             \
+        executeAllTests();                                                     \
+    EXPECT_TRUE(passed_) << "Isolated test '" << test_name << "' failed";     \
+  } while (0)
+
+/**
+ * @brief Register and execute multiple isolated tests with default options
+ *
+ * This macro takes multiple TestConfig objects and executes them all.
+ * Tests are automatically cleaned up after execution.
+ *
+ * Example:
+ *   RUN_ISOLATED_TESTS(
+ *     ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... }),
+ *     ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+ *       .withEnvironment({{"VAR", "value"}}),
+ *     ProcessIsolatedTestRunner::TestConfig("Test3", []() { ... })
+ *       .withTimeout(std::chrono::seconds(60))
+ *   );
+ */
+#define RUN_ISOLATED_TESTS(...)                                                \
+  do {                                                                         \
+    ::RcclUnitTesting::ProcessIsolatedTestRunner::TestConfig configs_[] = {   \
+        __VA_ARGS__};                                                          \
+    for (const auto &config_ : configs_) {                                     \
+      ::RcclUnitTesting::ProcessIsolatedTestRunner::registerTest(config_);    \
+    }                                                                          \
+    bool passed_ = ::RcclUnitTesting::ProcessIsolatedTestRunner::             \
+        executeAllTests();                                                     \
+    EXPECT_TRUE(passed_) << "One or more isolated tests failed";              \
+  } while (0)
+
+/**
+ * @brief Register and execute multiple isolated tests with custom options
+ *
+ * This macro takes execution options and multiple TestConfig objects.
+ *
+ * Example:
+ *   ProcessIsolatedTestRunner::ExecutionOptions opts;
+ *   opts.stopOnFirstFailure = true;
+ *   opts.verboseLogging = true;
+ *
+ *   RUN_ISOLATED_TESTS_WITH_OPTIONS(opts,
+ *     ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... }),
+ *     ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+ *   );
+ */
+#define RUN_ISOLATED_TESTS_WITH_OPTIONS(options, ...)                         \
+  do {                                                                         \
+    ::RcclUnitTesting::ProcessIsolatedTestRunner::TestConfig configs_[] = {   \
+        __VA_ARGS__};                                                          \
+    for (const auto &config_ : configs_) {                                     \
+      ::RcclUnitTesting::ProcessIsolatedTestRunner::registerTest(config_);    \
+    }                                                                          \
+    bool passed_ = ::RcclUnitTesting::ProcessIsolatedTestRunner::             \
+        executeAllTests(options);                                              \
+    EXPECT_TRUE(passed_) << "One or more isolated tests failed";              \
+  } while (0)
+
 } // namespace RcclUnitTesting

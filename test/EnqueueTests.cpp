@@ -126,27 +126,23 @@ int EnqueueTests::abortFlagRefCount = 0;
 
 // Test ncclInitKernelsForDevice function
 TEST_F(EnqueueTests, ncclInitKernelsForDevice_ValidInput) {
-    // Configure execution options
     ProcessIsolatedTestRunner::ExecutionOptions options;
     options.stopOnFirstFailure = false; // Continue running all tests
     options.verboseLogging = true;
 
-    ProcessIsolatedTestRunner::registerTest(
-        ProcessIsolatedTestRunner::TestConfig(
-            "ncclInitKernelsForDevice_ValidInput",
-            [this]() {
+    RUN_ISOLATED_TESTS_WITH_OPTIONS(options,
+      ProcessIsolatedTestRunner::TestConfig(
+          "ncclInitKernelsForDevice_ValidInput",
+          [this]() {
             size_t maxStackSize = 0;
             ncclResult_t result =
                 ncclInitKernelsForDevice(906, 65536, &maxStackSize);
 
             EXPECT_TRUE(result == ncclSuccess);
-
             EXPECT_EQ(maxStackSize, 0);
           })
-          .withEnvironment(
-              {{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}));
+          .withEnvironment({{"NCCL_DEBUG", "TRACE"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}),
 
-  ProcessIsolatedTestRunner::registerTest(
       ProcessIsolatedTestRunner::TestConfig(
           "ncclInitKernelsForDevice_ValidInputCarveout",
           [this]() {
@@ -159,9 +155,8 @@ TEST_F(EnqueueTests, ncclInitKernelsForDevice_ValidInput) {
           })
           .withEnvironment({{"NCCL_L1_SHARED_MEMORY_CARVEOUT", "1"},
                             {"NCCL_DEBUG", "TRACE"},
-                            {"NCCL_DEBUG_SUBSYS", "ALL"}}));
-
-  EXPECT_TRUE(ProcessIsolatedTestRunner::executeAllTests(options));
+                            {"NCCL_DEBUG_SUBSYS", "ALL"}})
+    );
 }
 
 TEST_F(EnqueueTests, ncclInitKernelsForDevice_NullStackSize) {

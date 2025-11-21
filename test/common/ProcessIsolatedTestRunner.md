@@ -102,7 +102,45 @@ TEST(MyTest, SecondTest) {
 
 ## Quick Start
 
-### Basic Example
+### Basic Example (Using Macros)
+
+The simplest way to use ProcessIsolatedTestRunner is with the macros:
+
+```cpp
+#include "common/ProcessIsolatedTestRunner.hpp"
+
+TEST(Rcclwrap, MyIsolatedTest) {
+  // Single test with environment variables - all in one call!
+  RUN_ISOLATED_TEST_WITH_ENV("TestWithCleanEnvironment",
+    []() {
+      // This runs in a separate process
+      const char* value = getenv("MY_VARIABLE");
+      EXPECT_STREQ(value, "test_value");
+      EXPECT_TRUE(someFunction());
+    },
+    {{"MY_VARIABLE", "test_value"}}
+  );
+}
+
+TEST(Rcclwrap, MyIsolatedTests) {
+  // Multiple tests with different configurations
+  RUN_ISOLATED_TESTS(
+    ProcessIsolatedTestRunner::TestConfig("Test1", []() {
+      EXPECT_TRUE(checkCondition1());
+    }),
+    ProcessIsolatedTestRunner::TestConfig("Test2", []() {
+      EXPECT_TRUE(checkCondition2());
+    }).withEnvironment({{"VAR", "value"}}),
+    ProcessIsolatedTestRunner::TestConfig("Test3", []() {
+      EXPECT_TRUE(checkCondition3());
+    }).withTimeout(std::chrono::seconds(60))
+  );
+}
+```
+
+### Manual API (For Advanced Use Cases)
+
+You can also use the API directly for more control:
 
 ```cpp
 #include "common/ProcessIsolatedTestRunner.hpp"
@@ -227,7 +265,60 @@ struct TestResult {
 
 ## API Reference
 
-### Main Methods
+### Macros (Recommended)
+
+These macros provide the simplest way to use ProcessIsolatedTestRunner with minimal boilerplate.
+
+#### `RUN_ISOLATED_TEST(test_name, test_body)`
+Register and execute a single isolated test.
+
+```cpp
+RUN_ISOLATED_TEST("MySimpleTest", []() {
+  EXPECT_TRUE(someFunction());
+});
+```
+
+#### `RUN_ISOLATED_TEST_WITH_ENV(test_name, test_body, env_vars)`
+Register and execute a single isolated test with environment variables.
+
+```cpp
+RUN_ISOLATED_TEST_WITH_ENV("MyEnvTest",
+  []() {
+    const char* value = getenv("MY_VAR");
+    EXPECT_STREQ(value, "expected_value");
+  },
+  {{"MY_VAR", "expected_value"}}
+);
+```
+
+#### `RUN_ISOLATED_TESTS(...)`
+Register and execute multiple isolated tests with various configurations.
+
+```cpp
+RUN_ISOLATED_TESTS(
+  ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... }),
+  ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+    .withEnvironment({{"VAR", "value"}}),
+  ProcessIsolatedTestRunner::TestConfig("Test3", []() { ... })
+    .withTimeout(std::chrono::seconds(60))
+);
+```
+
+#### `RUN_ISOLATED_TESTS_WITH_OPTIONS(options, ...)`
+Register and execute multiple isolated tests with custom execution options.
+
+```cpp
+ProcessIsolatedTestRunner::ExecutionOptions opts;
+opts.stopOnFirstFailure = true;
+opts.verboseLogging = true;
+
+RUN_ISOLATED_TESTS_WITH_OPTIONS(opts,
+  ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... }),
+  ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+);
+```
+
+### Main Methods (For Manual Use)
 
 #### `registerTest()`
 Register a test for later execution.
@@ -531,7 +622,27 @@ TEST(Rcclwrap, CriticalTests) {
 
 ## Best Practices
 
-### 1. Always Execute Registered Tests
+### 1. Use Macros for Simple Cases
+
+```cpp
+// ✅ GOOD: Simple and clean using macros
+TEST(MyTest, SimpleIsolatedTest) {
+  RUN_ISOLATED_TEST("CheckSomething", []() {
+    EXPECT_TRUE(checkSomething());
+  });
+}
+
+// ❌ MORE VERBOSE: Manual registration (still valid for complex cases)
+TEST(MyTest, SimpleIsolatedTest) {
+  ProcessIsolatedTestRunner::registerTest("CheckSomething", []() {
+    EXPECT_TRUE(checkSomething());
+  });
+  bool passed = ProcessIsolatedTestRunner::executeAllTests();
+  EXPECT_TRUE(passed);
+}
+```
+
+### 2. Always Execute Registered Tests (When Using Manual API)
 
 ```cpp
 TEST(MyTest, IsolatedTests) {
@@ -544,7 +655,7 @@ TEST(MyTest, IsolatedTests) {
 }
 ```
 
-**Manual Verification (Optional but Recommended):**
+**When Using Manual API (Optional Verification):**
 
 You can verify that tests were registered and executed:
 
@@ -569,54 +680,33 @@ TEST(MyTest, IsolatedTests) {
 }
 ```
 
-**Best Practice Pattern:**
-```cpp
-TEST(MyTest, IsolatedTests) {
-  // Register all tests
-  registerMyTests();  // Helper function that registers tests
-
-  // Optional: Verify tests were registered
-  size_t registeredCount = ProcessIsolatedTestRunner::getTestCount();
-  EXPECT_GT(registeredCount, 0) << "No tests were registered!";
-
-  // Execute (automatically clears after execution)
-  bool passed = ProcessIsolatedTestRunner::executeAllTests();
-  EXPECT_TRUE(passed);
-
-  // Optional: Verify execution count matches registration count
-  auto results = ProcessIsolatedTestRunner::getTestResults();
-  EXPECT_EQ(results.size(), registeredCount) << "Test count mismatch!";
-}
-```
-
-### 2. Use Descriptive Test Names
+### 3. Use Descriptive Test Names
 
 ```cpp
 // ❌ BAD: Vague name
-ProcessIsolatedTestRunner::registerTest("Test1", []() { /* ... */ });
+RUN_ISOLATED_TEST("Test1", []() { /* ... */ });
 
 // ✅ GOOD: Descriptive name
-ProcessIsolatedTestRunner::registerTest(
-    "GFX942_LargeRanks_P2PChunkSize_ExpectHighValue",
-    []() { /* ... */ }
+RUN_ISOLATED_TEST("GFX942_LargeRanks_P2PChunkSize_ExpectHighValue",
+  []() { /* ... */ }
 );
 ```
 
-### 3. Group Related Tests
+### 4. Group Related Tests
 
 ```cpp
 TEST(Rcclwrap, AllP2PChunkSizeTests) {
-  // Register all related tests together
-  registerGFX942Tests();
-  registerGFX950Tests();
-  registerUnsupportedArchTests();
-
-  bool passed = ProcessIsolatedTestRunner::executeAllTests();
-  EXPECT_TRUE(passed);
+  // Using macros to group related tests
+  RUN_ISOLATED_TESTS(
+    ProcessIsolatedTestRunner::TestConfig("GFX942_Test1", []() { ... }),
+    ProcessIsolatedTestRunner::TestConfig("GFX942_Test2", []() { ... }),
+    ProcessIsolatedTestRunner::TestConfig("GFX950_Test1", []() { ... }),
+    ProcessIsolatedTestRunner::TestConfig("GFX950_Test2", []() { ... })
+  );
 }
 ```
 
-### 4. Use Options for Better Control
+### 5. Use Options for Better Control
 
 ```cpp
 // For debugging: verbose + stop on failure
@@ -624,28 +714,48 @@ ProcessIsolatedTestRunner::ExecutionOptions debugOptions;
 debugOptions.stopOnFirstFailure = true;
 debugOptions.verboseLogging = true;
 
+RUN_ISOLATED_TESTS_WITH_OPTIONS(debugOptions,
+  ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... }),
+  ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+);
+
 // For CI: run all tests, collect all failures
 ProcessIsolatedTestRunner::ExecutionOptions ciOptions;
 ciOptions.stopOnFirstFailure = false;
-debugOptions.verboseLogging = false;
+ciOptions.verboseLogging = false;
+
+RUN_ISOLATED_TESTS_WITH_OPTIONS(ciOptions,
+  ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... }),
+  ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+);
 ```
 
-### 5. Set Appropriate Timeouts
+### 6. Set Appropriate Timeouts
 
 ```cpp
 // ✅ GOOD: Different timeouts for different test types
-quickTest.withTimeout(std::chrono::seconds(5));
-normalTest.withTimeout(std::chrono::seconds(30));
-slowTest.withTimeout(std::chrono::seconds(120));
+RUN_ISOLATED_TESTS(
+  ProcessIsolatedTestRunner::TestConfig("QuickTest", []() { ... })
+    .withTimeout(std::chrono::seconds(5)),
+  ProcessIsolatedTestRunner::TestConfig("NormalTest", []() { ... })
+    .withTimeout(std::chrono::seconds(30)),
+  ProcessIsolatedTestRunner::TestConfig("SlowTest", []() { ... })
+    .withTimeout(std::chrono::seconds(120))
+);
 
 // ❌ BAD: Same long timeout for everything
-allTests.withTimeout(std::chrono::seconds(300));
+RUN_ISOLATED_TESTS(
+  ProcessIsolatedTestRunner::TestConfig("Test1", []() { ... })
+    .withTimeout(std::chrono::seconds(300)),
+  ProcessIsolatedTestRunner::TestConfig("Test2", []() { ... })
+    .withTimeout(std::chrono::seconds(300))
+);
 ```
 
-### 6. Clean Up Resources in Tests
+### 7. Clean Up Resources in Tests
 
 ```cpp
-ProcessIsolatedTestRunner::registerTest("ResourceTest", []() {
+RUN_ISOLATED_TEST("ResourceTest", []() {
   ncclComm_t comm = nullptr;
   struct ncclTopoSystem topo;
   struct ncclTopoNode gpuNode;
@@ -862,6 +972,13 @@ A: No, the current implementation only supports sequential execution.
 **Q: Does this work with CTest/CMake?**
 
 A: Yes! The tests are still Google Test cases, so they work with standard test runners.
+
+**Q: Should I use the macros or the manual API?**
+
+A: Use the macros (`RUN_ISOLATED_TEST`, `RUN_ISOLATED_TESTS`, etc.) for most cases - they're simpler and less error-prone. Use the manual API (`registerTest()` + `executeAllTests()`) only when you need more control over the registration/execution flow, such as:
+- Dynamically generating test configurations at runtime
+- Sharing test registration logic across multiple TEST blocks
+- Advanced control flow scenarios
 
 **Q: Do tests run automatically after registration, or do I need to call executeAllTests()?**
 

@@ -338,116 +338,92 @@ TEST(Rcclwrap, validHsaScratchEnvSettingTest) {
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_UserEnvSet) {
+  RUN_ISOLATED_TEST_WITH_ENV("RcclUpdateThreadThreshold_UserEnvSet",
+    []() {
+      const char *value = getenv("NCCL_THREAD_THRESHOLDS");
 
-  // Register tests with appropriate environment variables
-  ProcessIsolatedTestRunner::registerTest(
-      ProcessIsolatedTestRunner::TestConfig(
-          "RcclUpdateThreadThreshold_UserEnvSet",
-          []() {
-            const char *value = getenv("NCCL_THREAD_THRESHOLDS");
+      if (!value) {
+        INFO(NCCL_LOG_INFO,
+             "[Rcclwrap] Test skipped. Set environment variable "
+             "NCCL_THREAD_THRESHOLD");
+        GTEST_SKIP()
+            << "[Rcclwrap] Test skipped. Set environment variable "
+               "NCCL_THREAD_THRESHOLD\n";
+      } else {
+        ncclComm comm = {.nRanks = 8, .nNodes = 4};
+        ncclTaskColl info = {.func = ncclFuncReduceScatter,
+                             .protocol = 0};
+        memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
 
-            if (!value) {
-              INFO(NCCL_LOG_INFO,
-                   "[Rcclwrap] Test skipped. Set environment variable "
-                   "NCCL_THREAD_THRESHOLD");
-              GTEST_SKIP()
-                  << "[Rcclwrap] Test skipped. Set environment variable "
-                     "NCCL_THREAD_THRESHOLD\n";
-            } else {
-              ncclComm comm = {.nRanks = 8, .nNodes = 4};
-              ncclTaskColl info = {.func = ncclFuncReduceScatter,
-                                   .protocol = 0};
-              memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+        int threadThreshold = 5; // Any number should do, we should make
+                                 // sure this number does not change
+        rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
-              int threadThreshold = 5; // Any number should do, we should make
-                                       // sure this number does not change
-              rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
-
-              EXPECT_EQ(threadThreshold, 5);
-            }
-          })
-          .withEnvironment({{"NCCL_THREAD_THRESHOLDS", "1"}}));
-
-  // Execute all registered tests
-  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests();
-  EXPECT_TRUE(allTestsPassed)
-      << "RcclUpdateThreadThreshold_UserEnvSet test failed";
+        EXPECT_EQ(threadThreshold, 5);
+      }
+    },
+    {{"NCCL_THREAD_THRESHOLDS", "1"}}
+  );
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MinNChannelsSet) {
+  RUN_ISOLATED_TEST_WITH_ENV("RcclUpdateThreadThreshold_MinNChannelsSet",
+    []() {
+      const char *value = getenv("NCCL_MIN_NCHANNELS");
+      if (!value) {
+        INFO(NCCL_LOG_INFO, "[Rcclwrap] Test skipped. Set environment "
+                            "variable NCCL_MIN_NCHANNELS");
+        GTEST_SKIP()
+            << "[Rcclwrap] Test skipped. Set environment variable "
+               "NCCL_MIN_NCHANNELS\n";
+      } else {
+        ncclComm comm{};
+        ncclTaskColl info{};
+        int threadThreshold = 5;
 
-  // Register tests with appropriate environment variables
-  ProcessIsolatedTestRunner::registerTest(
-      ProcessIsolatedTestRunner::TestConfig(
-          "RcclUpdateThreadThreshold_MinNChannelsSet",
-          []() {
-            const char *value = getenv("NCCL_MIN_NCHANNELS");
-            if (!value) {
-              INFO(NCCL_LOG_INFO, "[Rcclwrap] Test skipped. Set environment "
-                                  "variable NCCL_MIN_NCHANNELS");
-              GTEST_SKIP()
-                  << "[Rcclwrap] Test skipped. Set environment variable "
-                     "NCCL_MIN_NCHANNELS\n";
-            } else {
-              ncclComm comm{};
-              ncclTaskColl info{};
-              int threadThreshold = 5;
+        comm.nRanks = 4;
+        comm.nNodes = 4;
+        info.func = ncclFuncAllGather;
+        info.protocol = 0;
+        memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
 
-              comm.nRanks = 4;
-              comm.nNodes = 4;
-              info.func = ncclFuncAllGather;
-              info.protocol = 0;
-              memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+        rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
-              rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
-
-              EXPECT_EQ(threadThreshold, 5);
-            }
-          })
-          .withEnvironment({{"NCCL_MIN_NCHANNELS", "1"}}));
-
-  // Execute all registered tests
-  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests();
-  EXPECT_TRUE(allTestsPassed)
-      << "RcclUpdateThreadThreshold_MinNChannelsSet test failed";
+        EXPECT_EQ(threadThreshold, 5);
+      }
+    },
+    {{"NCCL_MIN_NCHANNELS", "1"}}
+  );
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_MaxChannelsSet) {
+  RUN_ISOLATED_TEST_WITH_ENV("RcclUpdateThreadThreshold_MaxChannelsSet",
+    []() {
+      const char *value = getenv("NCCL_MAX_NCHANNELS");
+      if (!value) {
+        INFO(NCCL_LOG_INFO, "[Rcclwrap] Test skipped. Set environment "
+                            "variable NCCL_MAX_NCHANNELS");
+        GTEST_SKIP()
+            << "[Rcclwrap] Test skipped. Set environment variable "
+               "NCCL_MAX_NCHANNELS\n";
+      } else {
+        ncclComm comm{};
+        ncclTaskColl info{};
+        int threadThreshold = 5;
 
-  // Register tests with appropriate environment variables
-  ProcessIsolatedTestRunner::registerTest(
-      ProcessIsolatedTestRunner::TestConfig(
-          "RcclUpdateThreadThreshold_MaxChannelsSet",
-          []() {
-            const char *value = getenv("NCCL_MAX_NCHANNELS");
-            if (!value) {
-              INFO(NCCL_LOG_INFO, "[Rcclwrap] Test skipped. Set environment "
-                                  "variable NCCL_MAX_NCHANNELS");
-              GTEST_SKIP()
-                  << "[Rcclwrap] Test skipped. Set environment variable "
-                     "NCCL_MAX_NCHANNELS\n";
-            } else {
-              ncclComm comm{};
-              ncclTaskColl info{};
-              int threadThreshold = 5;
+        comm.nRanks = 4;
+        comm.nNodes = 4;
+        info.func = ncclFuncAllGather;
+        info.protocol = 0;
+        memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
 
-              comm.nRanks = 4;
-              comm.nNodes = 4;
-              info.func = ncclFuncAllGather;
-              info.protocol = 0;
-              memset(comm.minMaxLLRange, 0, sizeof(comm.minMaxLLRange));
+        rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
 
-              rcclUpdateThreadThreshold(&comm, 0, &info, threadThreshold);
-
-              EXPECT_EQ(threadThreshold, 5);
-            }
-          })
-          .withEnvironment({{"NCCL_MAX_NCHANNELS", "1"}}));
-
-  // Execute all registered tests
-  bool allTestsPassed = ProcessIsolatedTestRunner::executeAllTests();
-  EXPECT_TRUE(allTestsPassed)
-      << "RcclUpdateThreadThreshold_MaxChannelsSet test failed";
+        EXPECT_EQ(threadThreshold, 5);
+      }
+    },
+    {{"NCCL_MAX_NCHANNELS", "1"}}
+  );
 }
 
 TEST(Rcclwrap, RcclUpdateThreadThreshold_NoEnv_nNodesLessThan2) {

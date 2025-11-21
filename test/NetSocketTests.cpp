@@ -872,24 +872,19 @@ TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreationDefault) {
 
 // Test multiple concurrent operations to stress test task creation
 TEST_F(NetSocketTests, TestConcurrentOperationsTaskCreation) {
-
-  // Configure execution options
   ProcessIsolatedTestRunner::ExecutionOptions options;
   options.stopOnFirstFailure = false; // Continue running all tests
   options.verboseLogging = true;
 
-
-  ProcessIsolatedTestRunner::registerTest(
-      ProcessIsolatedTestRunner::TestConfig(
-          "TestConcurrentOperationsTaskCreation",
-          [this]() { RunConcurrentOperationsTaskCreationWithEnvVars(); })
-          .withEnvironment({{"NCCL_SOCKET_NTHREADS", "1"},
-                            {"NCCL_NSOCKS_PERTHREAD", "2"},
-                            {"NCCL_DEBUG", "TRACE"},
-                            {"NCCL_DEBUG_SUBSYS", "ALL"}}));
-
-  EXPECT_TRUE(ProcessIsolatedTestRunner::executeAllTests(options));
-
+  RUN_ISOLATED_TESTS_WITH_OPTIONS(options,
+    ProcessIsolatedTestRunner::TestConfig(
+        "TestConcurrentOperationsTaskCreation",
+        [this]() { RunConcurrentOperationsTaskCreationWithEnvVars(); })
+        .withEnvironment({{"NCCL_SOCKET_NTHREADS", "1"},
+                          {"NCCL_NSOCKS_PERTHREAD", "2"},
+                          {"NCCL_DEBUG", "TRACE"},
+                          {"NCCL_DEBUG_SUBSYS", "ALL"}})
+  );
 }
 
 // Test for invalid device index in listen function
@@ -1100,15 +1095,14 @@ TEST_F(NetSocketTests, TestNonHostMemoryRegMr) {
 
 // Test for excessive thread configuration warning
 TEST_F(NetSocketTests, TestExcessiveThreadConfig) {
-  // Configure execution options
   ProcessIsolatedTestRunner::ExecutionOptions options;
   options.stopOnFirstFailure = false; // Continue running all tests
   options.verboseLogging = true;
 
-  ProcessIsolatedTestRunner::registerTest(
-      ProcessIsolatedTestRunner::TestConfig(
-          "TestExcessiveThreadConfig",
-          [this]() {
+  RUN_ISOLATED_TESTS_WITH_OPTIONS(options,
+    ProcessIsolatedTestRunner::TestConfig(
+        "TestExcessiveThreadConfig",
+        [this]() {
             INFO(NCCL_LOG_INFO,
                  "Testing excessive thread configuration warning");
 
@@ -1209,27 +1203,24 @@ TEST_F(NetSocketTests, TestExcessiveThreadConfig) {
             }
 
             INFO(NCCL_LOG_INFO, "TestExcessiveThreadConfig completed");
-          })
-          .withEnvironment({{"NCCL_SOCKET_NTHREADS", "33"},
-                            {"NCCL_NSOCKS_PERTHREAD", "1"},
-                            {"NCCL_DEBUG", "TRACE"},
-                            {"NCCL_DEBUG_SUBSYS", "ALL"}}));
-
-  EXPECT_TRUE(ProcessIsolatedTestRunner::executeAllTests(options));
-
+        })
+        .withEnvironment({{"NCCL_SOCKET_NTHREADS", "33"},
+                          {"NCCL_NSOCKS_PERTHREAD", "1"},
+                          {"NCCL_DEBUG", "TRACE"},
+                          {"NCCL_DEBUG_SUBSYS", "ALL"}})
+  );
 }
 
 // Test for excessive socket configuration warning
 TEST_F(NetSocketTests, TestExcessiveSocketConfig) {
-  // Configure execution options
   ProcessIsolatedTestRunner::ExecutionOptions options;
   options.stopOnFirstFailure = false; // Continue running all tests
   options.verboseLogging = true;
 
-  ProcessIsolatedTestRunner::registerTest(
-      ProcessIsolatedTestRunner::TestConfig(
-          "TestExcessiveThreadConfig",
-          [this]() {
+  RUN_ISOLATED_TESTS_WITH_OPTIONS(options,
+    ProcessIsolatedTestRunner::TestConfig(
+        "TestExcessiveThreadConfig",
+        [this]() {
             INFO(NCCL_LOG_INFO,
                  "Testing excessive socket configuration warning");
 
@@ -1331,13 +1322,12 @@ TEST_F(NetSocketTests, TestExcessiveSocketConfig) {
             }
 
             INFO(NCCL_LOG_INFO, "TestExcessiveSocketConfig completed");
-          })
-          .withEnvironment({{"NCCL_SOCKET_NTHREADS", "10"},
-                            {"NCCL_NSOCKS_PERTHREAD", "10"},
-                            {"NCCL_DEBUG", "TRACE"},
-                            {"NCCL_DEBUG_SUBSYS", "ALL"}}));
-
-  EXPECT_TRUE(ProcessIsolatedTestRunner::executeAllTests(options));
+        })
+        .withEnvironment({{"NCCL_SOCKET_NTHREADS", "10"},
+                          {"NCCL_NSOCKS_PERTHREAD", "10"},
+                          {"NCCL_DEBUG", "TRACE"},
+                          {"NCCL_DEBUG_SUBSYS", "ALL"}})
+  );
 }
 
 // Test to trigger request allocation failure scenario
