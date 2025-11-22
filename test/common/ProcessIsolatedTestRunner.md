@@ -278,8 +278,10 @@ RUN_ISOLATED_TEST("MySimpleTest", []() {
 });
 ```
 
-#### `RUN_ISOLATED_TEST_WITH_ENV(test_name, test_body, env_vars)`
+#### `RUN_ISOLATED_TEST_WITH_ENV(test_name, test_body, ...)`
 Register and execute a single isolated test with environment variables.
+
+**Uses variadic macros** (`...` and `__VA_ARGS__`) to automatically handle commas in initializer lists without requiring extra parentheses.
 
 ```cpp
 RUN_ISOLATED_TEST_WITH_ENV("MyEnvTest",
@@ -289,7 +291,15 @@ RUN_ISOLATED_TEST_WITH_ENV("MyEnvTest",
   },
   {{"MY_VAR", "expected_value"}}
 );
+
+// Multiple environment variables work naturally:
+RUN_ISOLATED_TEST_WITH_ENV("MultiEnvTest",
+  []() { /* test code */ },
+  {{"VAR1", "val1"}, {"VAR2", "val2"}, {"VAR3", "val3"}}  // Commas handled automatically
+);
 ```
+
+**Note:** The macro uses `__VA_ARGS__` internally, which automatically handles commas in the environment variable initializer list. Users don't need to worry about preprocessor comma issues.
 
 #### `RUN_ISOLATED_TESTS(...)`
 Register and execute multiple isolated tests with various configurations.
@@ -772,6 +782,95 @@ RUN_ISOLATED_TEST("ResourceTest", []() {
     throw;
   }
 });
+```
+
+### 8. Use RAII for GPU Resource Management
+
+When tests allocate GPU memory, use RAII wrappers to ensure cleanup:
+
+```cpp
+// ✅ GOOD: RAII ensures cleanup even on failure
+struct GPUBuffer {
+  void* ptr = nullptr;
+  size_t size;
+
+  GPUBuffer(size_t s) : size(s) {
+    hipError_t err = hipMalloc(&ptr, size);
+    ASSERT_EQ(err, hipSuccess);
+  }
+
+  ~GPUBuffer() {
+    if (ptr) {
+      hipFree(ptr);
+      ptr = nullptr;
+    }
+  }
+
+  // Prevent copying
+  GPUBuffer(const GPUBuffer&) = delete;
+  GPUBuffer& operator=(const GPUBuffer&) = delete;
+};
+
+RUN_ISOLATED_TEST("GPUTest", []() {
+  GPUBuffer buffer(1024);  // Automatically cleaned up
+  // ... test logic ...
+  // No manual cleanup needed - destructor handles it
+});
+
+// ❌ BAD: Manual cleanup can be forgotten
+RUN_ISOLATED_TEST("GPUTest", []() {
+  void* buffer;
+  hipMalloc(&buffer, 1024);
+  // ... test logic ...
+  // If test fails before this line, buffer leaks!
+  hipFree(buffer);
+});
+```
+
+### 9. Avoid GPU Initialization in Test Fixtures
+
+When using process isolation, avoid initializing GPU resources in test fixture `SetUp()` methods:
+
+```cpp
+// ❌ BAD: GPU initialization in fixture (runs in parent process)
+class GPUTests : public ::testing::Test {
+protected:
+  void SetUp() override {
+    hipMalloc(&gpuBuffer, 1024);  // Parent process - will pollute fork()!
+  }
+  void* gpuBuffer;
+};
+
+// ✅ GOOD: GPU initialization inside isolated test
+class GPUTests : public ::testing::Test {
+  // Empty fixture or only CPU resources in SetUp()
+};
+
+TEST_F(GPUTests, MyTest) {
+  RUN_ISOLATED_TEST("GPUOperation", []() {
+    void* gpuBuffer;
+    hipMalloc(&gpuBuffer, 1024);  // Child process only - safe!
+    // ... test logic ...
+    hipFree(gpuBuffer);
+  });
+}
+
+// ✅ EVEN BETTER: Use RAII + helper structure
+struct GPUTestEnvironment {
+  void* buffer;
+  void setup() { hipMalloc(&buffer, 1024); }
+  void cleanup() { if (buffer) hipFree(buffer); }
+  ~GPUTestEnvironment() { cleanup(); }
+};
+
+TEST_F(GPUTests, MyTest) {
+  RUN_ISOLATED_TEST("GPUOperation", []() {
+    GPUTestEnvironment env;
+    env.setup();
+    // ... test logic ...
+    env.cleanup();  // Explicit + destructor cleanup
+  });
+}
 ```
 
 ---
