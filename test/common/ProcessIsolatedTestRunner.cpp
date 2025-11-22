@@ -409,20 +409,12 @@ bool ProcessIsolatedTestRunner::generateReport(
 
   // Report final results
   std::cout << "\n=== Process-Isolated Test Summary ===" << std::endl;
-  std::cout << "Total Tests: " << totalTests << std::endl;
-  std::cout << "Passed: " << passedTests << std::endl;
-  std::cout << "Skipped: " << skippedTests << std::endl;
-  std::cout << "Failed: " << failedTests << std::endl;
-  std::cout << "Success Rate: "
-            << (totalTests > 0 ? (100.0 * passedTests / totalTests) : 0.0)
-            << "%" << std::endl;
+  std::cout << "Total Tests: " << totalTests
+            << "  |  Passed: " << passedTests
+            << "  |  Skipped: " << skippedTests
+            << "  |  Failed: " << failedTests << std::endl;
   std::cout << "Total Duration: " << totalDuration.count() << " ms"
-            << std::endl;
-  std::cout << "Average Duration: "
-            << (totalTests > 0 ? (double)totalDuration.count() / totalTests
-                               : 0.0)
-            << " ms" << std::endl;
-  std::cout << "Execution Mode: Sequential" << std::endl;
+            << "  |  Execution Mode: Sequential" << std::endl;
 
   if (options.verboseLogging && failedTests > 0) {
     std::cout << "\nFailed Tests Details:" << std::endl;
