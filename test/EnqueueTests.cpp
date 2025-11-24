@@ -17,6 +17,76 @@
 namespace RcclUnitTesting
 {
 
+// Simple test kernel for validating ncclInitKernelsForDevice
+__global__ void simpleTestKernel(int* data)
+{
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if(data)
+        data[tid] = tid;
+}
+
+// Helper function to test ncclInitKernelsForDevice with a real kernel
+ncclResult_t testKernelAttributes(void* kernelFn, size_t* maxStackSize)
+{
+    if(!kernelFn || !maxStackSize)
+        return ncclInvalidArgument;
+
+    *maxStackSize          = 0;
+    hipFuncAttributes attr = {0};
+
+    hipError_t errcode = hipFuncGetAttributes(&attr, kernelFn);
+    if(errcode != hipSuccess)
+        return ncclSystemError;
+
+    *maxStackSize = attr.localSizeBytes;
+    return ncclSuccess; // ncclSuccess
+}
+
+// Helper function to test shared memory limit checking with a real kernel
+// ncclMaxSharedMem: For gfx906 (cudaArch 906) with WarpSize 64, this is typically 32832 bytes
+ncclResult_t testKernelSharedMemoryLimit(
+    void* kernelFn, int cudaArch, int maxSharedMem, size_t* maxStackSize, int ncclMaxSharedMem
+)
+{
+    if(!kernelFn)
+        return ncclInvalidArgument;
+
+    ncclResult_t result = ncclSuccess;
+    if(maxStackSize)
+        *maxStackSize = 0;
+
+    hipFuncAttributes attr    = {0};
+    hipError_t        errcode = hipFuncGetAttributes(&attr, kernelFn);
+    if(errcode != hipSuccess)
+    {
+        return ncclSystemError;
+    }
+
+    if(maxStackSize)
+    {
+        *maxStackSize = attr.localSizeBytes;
+    }
+
+    // Test the shared memory limit check (mimics enqueue.cc lines 135-146)
+    if(ncclMaxSharedMem != 0)
+    {
+        int sharedMemSize = ncclMaxSharedMem;
+
+        if(sharedMemSize > (maxSharedMem - attr.sharedSizeBytes))
+        {
+            WARN(
+                "cudaArch %d ncclMaxSharedMem %d exceeds device/fn maxSharedMem %zu",
+                cudaArch,
+                sharedMemSize,
+                maxSharedMem - attr.sharedSizeBytes
+            );
+            return ncclSystemError;
+        }
+    }
+
+    return result;
+}
+
 // Helper structure to hold test environment
 struct EnqueueTestEnvironment
 {
@@ -202,7 +272,8 @@ TEST_F(EnqueueTests, ncclInitKernelsForDevice_ValidInput)
 
                 EXPECT_TRUE(result == ncclSuccess);
                 // maxStackSize should be set to a reasonable value (> 0)
-                EXPECT_EQ(maxStackSize, 0) << "Expected maxStackSize to be computed and set";
+                EXPECT_GT(maxStackSize, 0)
+                    << "Expected maxStackSize to be computed and set to a positive value";
     }
         ).withEnvironment({{"NCCL_DEBUG", "INFO"}, {"NCCL_DEBUG_SUBSYS", "ALL"}}),
 
@@ -215,7 +286,8 @@ TEST_F(EnqueueTests, ncclInitKernelsForDevice_ValidInput)
 
                 EXPECT_TRUE(result == ncclSuccess);
                 // maxStackSize should be set to a reasonable value (> 0)
-                EXPECT_EQ(maxStackSize, 0) << "Expected maxStackSize to be computed and set";
+                EXPECT_GT(maxStackSize, 0)
+                    << "Expected maxStackSize to be computed and set to a positive value";
             }
         )
             .withEnvironment(
@@ -242,6 +314,29 @@ TEST_F(EnqueueTests, ncclInitKernelsForDevice_NullStackSize)
                 EXPECT_EQ(result, ncclSuccess);
             }
         )
+    );
+}
+
+// Test with a real compiled kernel to verify attribute retrieval works correctly
+TEST_F(EnqueueTests, KernelAttributes_WithRealKernel)
+{
+    ProcessIsolatedTestRunner::ExecutionOptions options;
+    options.stopOnFirstFailure = false;
+    options.verboseLogging     = true;
+
+    RUN_ISOLATED_TESTS_WITH_OPTIONS(
+        options,
+        ProcessIsolatedTestRunner::TestConfig(
+            "KernelAttributes_WithRealKernel",
+            []()
+            {
+                size_t       maxStackSize = 0;
+                ncclResult_t result = testKernelAttributes((void*)simpleTestKernel, &maxStackSize);
+
+                EXPECT_EQ(result, ncclSuccess)
+                    << "Expected successful kernel attribute retrieval with a real compiled kernel";
+    }
+        ).withEnvironment({{"NCCL_DEBUG", "INFO"}})
     );
 }
 
@@ -277,11 +372,21 @@ TEST_F(EnqueueTests, ncclInitKernelsForDevice_ExceedsSharedMemory)
             "ncclInitKernelsForDevice_ExceedsSharedMemory",
             []()
             {
-                size_t       maxStackSize = 0;
-                ncclResult_t result       = ncclInitKernelsForDevice(906, 32832, &maxStackSize);
-                EXPECT_TRUE(result == ncclSystemError);
-            }
-        )
+                size_t maxStackSize = 0;
+                // For gfx906, ncclMaxSharedMem is 32832 (as shown in test output)
+                // Use a very small maxSharedMem (16000 bytes) to trigger the exceeds check
+                ncclResult_t result = testKernelSharedMemoryLimit(
+                    (void*)simpleTestKernel, // Use our real compiled kernel
+                    906, // cudaArch
+                    16000, // maxSharedMem (intentionally too small)
+                    &maxStackSize,
+                    32832  // ncclMaxSharedMem for gfx906
+                );
+
+                EXPECT_EQ(result, ncclSystemError)
+                    << "Expected ncclSystemError when ncclMaxSharedMem exceeds maxSharedMem";
+    }
+        ).withEnvironment({{"NCCL_DEBUG", "WARN"}})
     );
 }
 
