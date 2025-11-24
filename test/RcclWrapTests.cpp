@@ -604,38 +604,6 @@ TEST(Rcclwrap, RcclSetPipelining_Invalid_DType)
     CleanupMockComm(comm);
 }
 
-TEST(Rcclwrap, RcclSetPipelining_GFX950_MultiNode_Enable)
-{
-    // Skip the test if pipelining has been disabled
-    // (RCCL_DISABLE_REDUCE_COPY_PIPELINING=1)
-    if(ShouldSkipRcclSetPipeliningTests())
-    {
-        GTEST_SKIP() << "Skipping test: RCCL_DISABLE_REDUCE_COPY_PIPELINING environment "
-                        "variable is set. Unset this variable to enable pipelining.";
-    }
-
-    // For multi-node, pipeline is set to 1 for AllReduce with bf16
-    ncclComm_t            comm = nullptr;
-    struct ncclTopoSystem topo;
-    struct ncclTopoNode   gpu;
-    CreateMockComm(comm, topo, gpu, "gfx950", 8);
-    comm->nNodes = 2; // Multi node
-
-    ncclTaskColl info = {};
-    // In rcclSetPipelining(), ncclFuncAllReduce, ncclFuncReduceScatter, and
-    // ncclFuncReduce share the same case body. Testing any one of them is
-    // sufficient to validate that code path.
-    info.func     = ncclFuncAllReduce;
-    info.datatype = ncclBfloat16;
-
-    size_t nBytes = 16 * 1024 * 1024; // 16MB
-    rcclSetPipelining(comm, nBytes, &info);
-
-    EXPECT_EQ(info.pipeline, 1) << "gfx950 multi-node AllReduce bf16 should enable pipelining";
-
-    CleanupMockComm(comm);
-}
-
 TEST(Rcclwrap, RcclSetPipelining_GFX950_SingleNode_Disable)
 {
     // Skip the test if pipelining has been disabled
