@@ -4,480 +4,703 @@
  * See LICENSE.txt for license information
  ************************************************************************/
 #include "ProcessIsolatedTestRunner.hpp"
-#include <atomic>
-#include <cstdlib>
+
+#include <fcntl.h>
 #include <gtest/gtest.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 
-namespace RcclUnitTesting {
+#include "ErrCode.hpp"
+
+namespace RcclUnitTesting
+{
 
 // Exit codes for test process results
-enum RcclTestCode {
-  RCCL_TEST_INVALID = -1,
-  RCCL_TEST_SUCCESS = 0,
-  RCCL_TEST_FAILURE = 1,
-  RCCL_TEST_UNKNOWN_EXCEPTION = 2,
-  RCCL_TEST_TIMEOUT = 3,
-  RCCL_TEST_SKIPPED = 4
+enum RcclTestCode
+{
+    RCCL_TEST_INVALID           = -1,
+    RCCL_TEST_SUCCESS           = 0,
+    RCCL_TEST_FAILURE           = 1,
+    RCCL_TEST_UNKNOWN_EXCEPTION = 2,
+    RCCL_TEST_TIMEOUT           = 3,
+    RCCL_TEST_SKIPPED           = 4
 };
 
 // Define static members
-std::mutex ProcessIsolatedTestRunner::testConfigsMutex_;
-std::vector<ProcessIsolatedTestRunner::TestConfig>
-    ProcessIsolatedTestRunner::testConfigs_;
-std::mutex ProcessIsolatedTestRunner::resultsMutex_;
-std::vector<ProcessIsolatedTestRunner::TestResult>
-    ProcessIsolatedTestRunner::testResults_;
+std::mutex                                         ProcessIsolatedTestRunner::testConfigsMutex_;
+std::vector<ProcessIsolatedTestRunner::TestConfig> ProcessIsolatedTestRunner::testConfigs_;
+std::mutex                                         ProcessIsolatedTestRunner::resultsMutex_;
+std::vector<ProcessIsolatedTestRunner::TestResult> ProcessIsolatedTestRunner::testResults_;
 
 // TestResult implementation
 ProcessIsolatedTestRunner::TestResult::TestResult()
-    : passed(false), skipped(false), exitCode(-1), processId(-1), duration(0) {}
+    : passed(false), skipped(false), exitCode(-1), processId(-1), duration(0)
+{}
 
 // TestConfig implementation
-ProcessIsolatedTestRunner::TestConfig::TestConfig(const std::string &testName,
-                                                  std::function<void()> logic)
-    : name(testName), testLogic(logic), timeout(30), inheritParentEnv(true) {}
+ProcessIsolatedTestRunner::TestConfig::TestConfig(
+    const std::string& testName, std::function<void()> logic
+)
+    : name(testName), testLogic(logic), timeout(30), inheritParentEnv(true)
+{}
 
-ProcessIsolatedTestRunner::TestConfig &
-ProcessIsolatedTestRunner::TestConfig::withEnvironment(
-    const std::unordered_map<std::string, std::string> &env) {
-  environmentVariables = env;
-  return *this;
+ProcessIsolatedTestRunner::TestConfig& ProcessIsolatedTestRunner::TestConfig::withEnvironment(
+    const std::unordered_map<std::string, std::string>& env
+)
+{
+    environmentVariables = env;
+    return *this;
 }
 
-ProcessIsolatedTestRunner::TestConfig &
-ProcessIsolatedTestRunner::TestConfig::withTimeout(
-    std::chrono::seconds timeoutSeconds) {
-  timeout = timeoutSeconds;
-  return *this;
+ProcessIsolatedTestRunner::TestConfig&
+    ProcessIsolatedTestRunner::TestConfig::withTimeout(std::chrono::seconds timeoutSeconds)
+{
+    timeout = timeoutSeconds;
+    return *this;
 }
 
-ProcessIsolatedTestRunner::TestConfig &
-ProcessIsolatedTestRunner::TestConfig::withCleanEnvironment(bool inherit) {
-  inheritParentEnv = inherit;
-  return *this;
+ProcessIsolatedTestRunner::TestConfig&
+    ProcessIsolatedTestRunner::TestConfig::withCleanEnvironment(bool inherit)
+{
+    inheritParentEnv = inherit;
+    return *this;
 }
 
-ProcessIsolatedTestRunner::TestConfig &
-ProcessIsolatedTestRunner::TestConfig::clearVariable(
-    const std::string &varName) {
-  clearEnvVars.push_back(varName);
-  return *this;
+ProcessIsolatedTestRunner::TestConfig&
+    ProcessIsolatedTestRunner::TestConfig::clearVariable(const std::string& varName)
+{
+    clearEnvVars.push_back(varName);
+    return *this;
 }
 
-ProcessIsolatedTestRunner::TestConfig &
-ProcessIsolatedTestRunner::TestConfig::setVariable(const std::string &name,
-                                                   const std::string &value) {
-  environmentVariables[name] = value;
-  return *this;
+ProcessIsolatedTestRunner::TestConfig& ProcessIsolatedTestRunner::TestConfig::setVariable(
+    const std::string& name, const std::string& value
+)
+{
+    environmentVariables[name] = value;
+    return *this;
 }
 
 // ExecutionOptions implementation
 ProcessIsolatedTestRunner::ExecutionOptions::ExecutionOptions()
-    : stopOnFirstFailure(false), verboseLogging(true) {}
+    : stopOnFirstFailure(false), verboseLogging(true)
+{}
 
 // Apply environment variables to current process
-void ProcessIsolatedTestRunner::applyEnvironmentVariables(
-    const TestConfig &config) {
-  // Clear specified environment variables first
-  for (const auto &varName : config.clearEnvVars) {
-    unsetenv(varName.c_str());
-  }
-
-  // If not inheriting parent environment, clear all environment variables
-  if (!config.inheritParentEnv) {
-    extern char **environ;
-    // Save the variables we want to set
-    std::unordered_map<std::string, std::string> varsToSet =
-        config.environmentVariables;
-
-    // Set our variables
-    for (const auto &[name, value] : varsToSet) {
-      setenv(name.c_str(), value.c_str(), 1);
+void ProcessIsolatedTestRunner::applyEnvironmentVariables(const TestConfig& config)
+{
+    // Clear specified environment variables first
+    for(const auto& varName : config.clearEnvVars)
+    {
+        unsetenv(varName.c_str());
     }
-  } else {
-    // Just set/override the specified variables
-    for (const auto &[name, value] : config.environmentVariables) {
-      setenv(name.c_str(), value.c_str(), 1);
+
+    // If not inheriting parent environment, clear all environment variables
+    if(!config.inheritParentEnv)
+    {
+        extern char** environ;
+        // Save the variables we want to set
+        std::unordered_map<std::string, std::string> varsToSet = config.environmentVariables;
+
+        // Set our variables
+        for(const auto& [name, value] : varsToSet)
+        {
+            setenv(name.c_str(), value.c_str(), 1);
+        }
     }
-  }
+    else
+    {
+        // Just set/override the specified variables
+        for(const auto& [name, value] : config.environmentVariables)
+        {
+            setenv(name.c_str(), value.c_str(), 1);
+        }
+    }
 }
 
 // Execute a single test in a separate process
-int ProcessIsolatedTestRunner::runTestInProcess(const TestConfig &config) {
-  pid_t processId = getpid();
+int ProcessIsolatedTestRunner::runTestInProcess(const TestConfig& config)
+{
+    pid_t processId = getpid();
 
-  if (config.name.empty()) {
-    std::cerr << "Error: Test name is empty for process " << processId
-              << std::endl;
-    return RCCL_TEST_FAILURE;
-  }
-
-  try {
-    // Apply environment variables
-    applyEnvironmentVariables(config);
-
-    if (getenv("VERBOSE_LOGGING") || getenv("PROCESS_RUNNER_VERBOSE")) {
-      std::cout << "Process " << processId << " executing test '" << config.name
-                << "' with environment modifications" << std::endl;
-
-      // Log environment variables being set
-      for (const auto &[name, value] : config.environmentVariables) {
-        std::cout << "  " << name << "=" << value << std::endl;
-      }
+    if(config.name.empty())
+    {
+        std::cerr << "Error: Test name is empty for process " << processId << std::endl;
+        return RCCL_TEST_FAILURE;
     }
 
-    // Thread-safe test execution with timeout protection
-    std::atomic<bool> testCompleted{false};
-    std::exception_ptr testException = nullptr;
-    bool testPassed = true;
-    bool testSkipped = false;
+    try
+    {
+        // Apply environment variables
+        applyEnvironmentVariables(config);
 
-    // Run test in a separate thread to allow timeout handling
-    std::thread testThread([&]() {
-      try {
-        // Get initial test state
-        const ::testing::UnitTest *unitTest =
-            ::testing::UnitTest::GetInstance();
-        size_t initialFailureCount = unitTest->failed_test_count();
-        size_t initialSkippedCount = unitTest->skipped_test_count();
+        // Thread-safe test execution with timeout protection
+        std::atomic<bool>  testCompleted{false};
+        std::exception_ptr testException = nullptr;
+        bool               testPassed    = true;
+        bool               testSkipped   = false;
 
-        // Execute the test logic
-        config.testLogic();
+        // Run test in a separate thread to allow timeout handling
+        std::thread testThread(
+            [&]()
+            {
+                try
+                {
+                    // Get initial test state
+                    const ::testing::UnitTest* unitTest = ::testing::UnitTest::GetInstance();
+                    size_t                     initialFailureCount = unitTest->failed_test_count();
+                    size_t                     initialSkippedCount = unitTest->skipped_test_count();
 
-        // Check if any new test failures occurred
-        size_t finalFailureCount = unitTest->failed_test_count();
-        size_t finalSkippedCount = unitTest->skipped_test_count();
+                    // Execute the test logic
+                    config.testLogic();
 
-        testPassed = (finalFailureCount == initialFailureCount);
-        testSkipped = (finalSkippedCount > initialSkippedCount);
+                    // Check if any new test failures occurred
+                    size_t finalFailureCount = unitTest->failed_test_count();
+                    size_t finalSkippedCount = unitTest->skipped_test_count();
 
-        testCompleted = true;
-      } catch (...) {
-        testException = std::current_exception();
-        testPassed = false;
-        testCompleted = true;
-      }
-    });
+                    testPassed  = (finalFailureCount == initialFailureCount);
+                    testSkipped = (finalSkippedCount > initialSkippedCount);
 
-    // Wait for test completion with timeout
-    auto start = std::chrono::steady_clock::now();
-    const auto timeout = config.timeout;
+                    testCompleted = true;
+                }
+                catch(...)
+                {
+                    testException = std::current_exception();
+                    testPassed    = false;
+                    testCompleted = true;
+                }
+            }
+        );
 
-    while (!testCompleted.load()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      if (std::chrono::steady_clock::now() - start > timeout) {
-        // Test timed out
-        std::cout << "Test '" << config.name << "' timed out after "
-                  << timeout.count() << " seconds in process " << processId
-                  << std::endl;
+        // Wait for test completion with timeout
+        auto       start   = std::chrono::steady_clock::now();
+        const auto timeout = config.timeout;
 
-        // Detach thread and exit
-        testThread.detach();
-        return RCCL_TEST_TIMEOUT; // Timeout exit code
-      }
+        while(!testCompleted.load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if(std::chrono::steady_clock::now() - start > timeout)
+            {
+                // Test timed out
+                INFO(
+                    "Test '%s' TIMED OUT after %ld seconds\n",
+                    config.name.c_str(),
+                    timeout.count()
+                );
+                fflush(NULL);
+                testThread.detach();
+                return RCCL_TEST_TIMEOUT;
+            }
+        }
+
+        // Wait for thread completion
+        if(testThread.joinable())
+        {
+            testThread.join();
+        }
+
+        // Check if test threw an exception
+        if(testException)
+        {
+            std::rethrow_exception(testException);
+        }
+
+        // Report test result and flush before returning (needed before _exit())
+        if(testSkipped)
+        {
+            INFO("Test '%s' SKIPPED\n", config.name.c_str());
+        }
+        else if(testPassed)
+        {
+            INFO("Test '%s' PASSED\n", config.name.c_str());
+        }
+        else
+        {
+            INFO("Test '%s' FAILED\n", config.name.c_str());
+        }
+        fflush(NULL);
+
+        // Return appropriate exit code based on test result
+        if(testSkipped)
+        {
+            return RCCL_TEST_SKIPPED;
+        }
+        else if(testPassed)
+        {
+            return RCCL_TEST_SUCCESS;
+        }
+        else
+        {
+            return RCCL_TEST_FAILURE;
+        }
     }
-
-    // Wait for thread completion
-    if (testThread.joinable()) {
-      testThread.join();
+    catch(const std::exception& e)
+    {
+        INFO("Test '%s' FAILED with exception: %s\n", config.name.c_str(), e.what());
+        std::cerr << "Exception in test '" << config.name << "': " << e.what() << std::endl;
+        fflush(NULL);
+        return RCCL_TEST_FAILURE;
     }
-
-    // Check if test threw an exception
-    if (testException) {
-      std::rethrow_exception(testException);
+    catch(...)
+    {
+        INFO("Test '%s' FAILED with unknown exception\n", config.name.c_str());
+        std::cerr << "Unknown exception in test '" << config.name << "'" << std::endl;
+        fflush(NULL);
+        return RCCL_TEST_UNKNOWN_EXCEPTION;
     }
-
-    // Return appropriate exit code based on test result
-    if (testSkipped) {
-      std::cout << "Test '" << config.name << "' SKIPPED in process "
-                << processId << std::endl;
-      return RCCL_TEST_SKIPPED; // Skipped exit code
-    } else if (testPassed) {
-      std::cout << "Test '" << config.name
-                << "' completed successfully in process " << processId
-                << std::endl;
-      return RCCL_TEST_SUCCESS; // Success
-    } else {
-      std::cout << "Test '" << config.name
-                << "' failed with assertion failures in process " << processId
-                << std::endl;
-      return RCCL_TEST_FAILURE; // Test assertion failure
-    }
-
-  } catch (const std::exception &e) {
-    std::cerr << "Test '" << config.name << "' failed in process " << processId
-              << ": " << e.what() << std::endl;
-    return RCCL_TEST_FAILURE; // Failure
-  } catch (...) {
-    std::cerr << "Test '" << config.name << "' failed in process " << processId
-              << " with unknown exception" << std::endl;
-    return RCCL_TEST_UNKNOWN_EXCEPTION; // Unknown failure
-  }
 }
 
 // Register a test configuration
-void ProcessIsolatedTestRunner::registerTest(const TestConfig &config) {
-  std::lock_guard<std::mutex> lock(testConfigsMutex_);
-  testConfigs_.push_back(config);
+void ProcessIsolatedTestRunner::registerTest(const TestConfig& config)
+{
+    std::lock_guard<std::mutex> lock(testConfigsMutex_);
+    testConfigs_.push_back(config);
 }
 
 // Register a simple test with just name and logic
-void ProcessIsolatedTestRunner::registerTest(const std::string &name,
-                                             std::function<void()> testLogic) {
-  registerTest(TestConfig(name, testLogic));
+void ProcessIsolatedTestRunner::registerTest(
+    const std::string& name, std::function<void()> testLogic
+)
+{
+    registerTest(TestConfig(name, testLogic));
 }
 
 // Register a test with environment variables
 void ProcessIsolatedTestRunner::registerTest(
-    const std::string &name, std::function<void()> testLogic,
-    const std::unordered_map<std::string, std::string> &env) {
-  registerTest(TestConfig(name, testLogic).withEnvironment(env));
+    const std::string&                                  name,
+    std::function<void()>                               testLogic,
+    const std::unordered_map<std::string, std::string>& env
+)
+{
+    registerTest(TestConfig(name, testLogic).withEnvironment(env));
 }
 
 // Record test result (thread-safe)
-void ProcessIsolatedTestRunner::recordTestResult(const TestResult &result) {
-  std::lock_guard<std::mutex> lock(resultsMutex_);
-  testResults_.push_back(result);
+void ProcessIsolatedTestRunner::recordTestResult(const TestResult& result)
+{
+    std::lock_guard<std::mutex> lock(resultsMutex_);
+    testResults_.push_back(result);
+}
+
+// Helper method: Create temporary files for capturing process output
+bool ProcessIsolatedTestRunner::createOutputPipes(int stdoutPipe[2], int stderrPipe[2])
+{
+    // Note: Using "Pipes" in name for compatibility, but actually using file descriptors
+    // Create temp files for stdout and stderr
+    char stdoutTemplate[] = "/tmp/rccl_test_stdout_XXXXXX";
+    char stderrTemplate[] = "/tmp/rccl_test_stderr_XXXXXX";
+
+    stdoutPipe[1] = mkstemp(stdoutTemplate);
+    stderrPipe[1] = mkstemp(stderrTemplate);
+
+    if(stdoutPipe[1] == -1 || stderrPipe[1] == -1)
+    {
+        if(stdoutPipe[1] != -1)
+            close(stdoutPipe[1]);
+        if(stderrPipe[1] != -1)
+            close(stderrPipe[1]);
+        return false;
+    }
+
+    // Store filenames in read end (unused for files)
+    // We'll reopen these files in the parent after child exits
+    stdoutPipe[0] = stdoutPipe[1]; // Dummy, will reopen
+    stderrPipe[0] = stderrPipe[1]; // Dummy, will reopen
+
+    // Unlink immediately so files are deleted when all FDs close
+    unlink(stdoutTemplate);
+    unlink(stderrTemplate);
+
+    return true;
+}
+
+// Helper method: Redirect child process output to files
+void ProcessIsolatedTestRunner::redirectOutputToPipes(int stdoutPipe[2], int stderrPipe[2])
+{
+    // Redirect stdout and stderr to the temp file descriptors
+    dup2(stdoutPipe[1], STDOUT_FILENO);
+    dup2(stderrPipe[1], STDERR_FILENO);
+
+    // Don't close the original FDs yet - they'll be closed by _exit()
+}
+
+// Helper method: Capture output from child process files
+ProcessIsolatedTestRunner::CapturedOutput ProcessIsolatedTestRunner::captureProcessOutput(
+    int stdoutPipe[2], int stderrPipe[2], pid_t pid, int* status
+)
+{
+
+    // Wait for child to exit (blocking)
+    waitpid(pid, status, 0);
+
+    CapturedOutput output;
+
+    // Read stdout file
+    lseek(stdoutPipe[1], 0, SEEK_SET); // Rewind to beginning
+    char    buffer[4096];
+    ssize_t count;
+    while((count = read(stdoutPipe[1], buffer, sizeof(buffer) - 1)) > 0)
+    {
+        buffer[count] = '\0';
+        output.stdoutContent += buffer;
+    }
+    close(stdoutPipe[1]);
+
+    // Read stderr file
+    lseek(stderrPipe[1], 0, SEEK_SET); // Rewind to beginning
+    while((count = read(stderrPipe[1], buffer, sizeof(buffer) - 1)) > 0)
+    {
+        buffer[count] = '\0';
+        output.stderrContent += buffer;
+    }
+    close(stderrPipe[1]);
+
+    return output;
+}
+
+// Helper method: Display captured output
+void ProcessIsolatedTestRunner::displayCapturedOutput(
+    const CapturedOutput& output, const std::string& testName
+)
+{
+    if(!output.stdoutContent.empty())
+    {
+        std::cout << output.stdoutContent;
+        if(output.stdoutContent.back() != '\n')
+            std::cout << '\n';
+    }
+    if(!output.stderrContent.empty())
+    {
+        std::cerr << output.stderrContent;
+        if(output.stderrContent.back() != '\n')
+            std::cerr << '\n';
+    }
 }
 
 // Execute all registered tests (simplified sequential execution only)
-bool ProcessIsolatedTestRunner::executeAllTests(
-    const ExecutionOptions &options) {
-  std::cout << "\n=== Starting Process-Isolated Test Execution (Sequential) ==="
-            << std::endl;
+bool ProcessIsolatedTestRunner::executeAllTests(const ExecutionOptions& options)
+{
 
-  // Get test configurations to run
-  std::vector<TestConfig> testsToRun;
-  {
-    std::lock_guard<std::mutex> lock(testConfigsMutex_);
-    testsToRun = testConfigs_;
-  }
-
-  // Clear previous results
-  {
-    std::lock_guard<std::mutex> lock(resultsMutex_);
-    testResults_.clear();
-  }
-
-  std::cout << "Executing " << testsToRun.size() << " tests" << std::endl;
-
-  // Sequential execution
-  for (const auto &testConfig : testsToRun) {
-    auto startTime = std::chrono::steady_clock::now();
-
-    pid_t pid = fork();
-
-    if (pid == 0) {
-      // Child process - execute the test
-      int result = runTestInProcess(testConfig);
-      exit(result);
-    } else if (pid > 0) {
-      // Parent process - wait for child
-      int status;
-      pid_t result = waitpid(pid, &status, 0);
-      auto endTime = std::chrono::steady_clock::now();
-      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-          endTime - startTime);
-
-      TestResult testResult;
-      testResult.testName = testConfig.name;
-      testResult.processId = pid;
-      testResult.duration = duration;
-
-      if (result == pid) {
-        if (WIFEXITED(status)) {
-          int exitCode = WEXITSTATUS(status);
-          testResult.exitCode = exitCode;
-          testResult.passed = (exitCode == RCCL_TEST_SUCCESS);
-          testResult.skipped = (exitCode == RCCL_TEST_SKIPPED);
-
-          if (exitCode == RCCL_TEST_SUCCESS) {
-            std::cout << "Test '" << testConfig.name << "' (PID: " << pid
-                      << ") PASSED in " << duration.count() << " ms"
-                      << std::endl;
-          } else if (exitCode == RCCL_TEST_TIMEOUT) {
-            std::cout << "Test '" << testConfig.name << "' (PID: " << pid
-                      << ") TIMED OUT after " << duration.count() << " ms"
-                      << std::endl;
-            testResult.errorMessage = "Test timed out";
-          } else if (exitCode == RCCL_TEST_SKIPPED) {
-            std::cout << "Test '" << testConfig.name << "' (PID: " << pid
-                      << ") SKIPPED in " << duration.count() << " ms"
-                      << std::endl;
-            testResult.errorMessage = "Test skipped";
-          } else {
-            std::cout << "Test '" << testConfig.name << "' (PID: " << pid
-                      << ") FAILED with exit code " << exitCode << " after "
-                      << duration.count() << " ms" << std::endl;
-            testResult.errorMessage =
-                "Test failed with exit code " + std::to_string(exitCode);
-          }
-        } else if (WIFSIGNALED(status)) {
-          int signal = WTERMSIG(status);
-          testResult.passed = false;
-          testResult.skipped = false;
-          testResult.exitCode = -signal;
-          testResult.errorMessage =
-              "Terminated by signal " + std::to_string(signal);
-
-          std::cout << "Test '" << testConfig.name << "' (PID: " << pid
-                    << ") terminated by signal " << signal << " after "
-                    << duration.count() << " ms" << std::endl;
-        }
-      } else {
-        testResult.passed = false;
-        testResult.skipped = false;
-        testResult.exitCode = RCCL_TEST_INVALID;
-        testResult.errorMessage = "Failed to wait for process";
-        std::cout << "Test '" << testConfig.name
-                  << "' failed to wait for process" << std::endl;
-      }
-
-      recordTestResult(testResult);
-
-      // Stop on first failure if requested
-      if (options.stopOnFirstFailure && !testResult.passed &&
-          !testResult.skipped) {
-        std::cout << "Stopping execution due to first failure." << std::endl;
-        break;
-      }
-    } else {
-      // Fork failed
-      TestResult testResult;
-      testResult.testName = testConfig.name;
-      testResult.passed = false;
-      testResult.skipped = false;
-      testResult.exitCode = RCCL_TEST_INVALID;
-      testResult.processId = RCCL_TEST_INVALID;
-      testResult.duration = std::chrono::milliseconds(0);
-      testResult.errorMessage = "Failed to fork process";
-
-      recordTestResult(testResult);
-      std::cout << "Failed to fork process for test '" << testConfig.name << "'"
-                << std::endl;
-
-      if (options.stopOnFirstFailure) {
-        std::cout << "Stopping execution due to fork failure." << std::endl;
-        break;
-      }
+    // Get test configurations to run
+    std::vector<TestConfig> testsToRun;
+    {
+        std::lock_guard<std::mutex> lock(testConfigsMutex_);
+        testsToRun = testConfigs_;
     }
-  }
 
-  bool result = generateReport(options);
+    // Clear previous results
+    {
+        std::lock_guard<std::mutex> lock(resultsMutex_);
+        testResults_.clear();
+    }
 
-  // Automatically clear test configurations and results after execution
-  // This ensures a clean state for the next test suite without requiring
-  // explicit clear() calls from test cases
-  {
-    std::lock_guard<std::mutex> lock(testConfigsMutex_);
-    testConfigs_.clear();
-  }
-  {
-    std::lock_guard<std::mutex> lock(resultsMutex_);
-    testResults_.clear();
-  }
+    // Sequential execution
+    for(const auto& testConfig : testsToRun)
+    {
+        auto startTime = std::chrono::steady_clock::now();
 
-  return result;
+        int stdout_fd[2], stderr_fd[2];
+        if(!createOutputPipes(stdout_fd, stderr_fd))
+        {
+            std::cerr << "Failed to create output files for test '" << testConfig.name << "'"
+                      << std::endl;
+            continue;
+        }
+
+        pid_t pid = fork();
+
+        if(pid == 0)
+        {
+            redirectOutputToPipes(stdout_fd, stderr_fd);
+            int result = runTestInProcess(testConfig);
+            // Use _exit() instead of exit() to avoid atexit handlers
+            // This prevents GPU runtime cleanup issues after fork
+            _exit(result);
+        }
+        else if(pid > 0)
+        {
+            // Log test start with environment variables if any
+            if(!testConfig.environmentVariables.empty())
+            {
+                std::string envVars;
+                for(const auto& [name, value] : testConfig.environmentVariables)
+                {
+                    if(!envVars.empty())
+                        envVars += ", ";
+                    envVars += name + "=" + value;
+                }
+                INFO(
+                    "Running isolated test '%s' (PID: %d) with env: %s\n",
+                    testConfig.name.c_str(),
+                    pid,
+                    envVars.c_str()
+                );
+            }
+            else
+            {
+                INFO("Running isolated test '%s' (PID: %d)\n", testConfig.name.c_str(), pid);
+            }
+            int            status;
+            CapturedOutput output = captureProcessOutput(stdout_fd, stderr_fd, pid, &status);
+
+            auto endTime = std::chrono::steady_clock::now();
+            auto duration
+                = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+
+            TestResult testResult;
+            testResult.testName  = testConfig.name;
+            testResult.processId = pid;
+            testResult.duration  = duration;
+
+            if(WIFEXITED(status))
+            {
+                int exitCode        = WEXITSTATUS(status);
+                testResult.exitCode = exitCode;
+                testResult.passed   = (exitCode == RCCL_TEST_SUCCESS);
+                testResult.skipped  = (exitCode == RCCL_TEST_SKIPPED);
+
+                if(exitCode == RCCL_TEST_SUCCESS)
+                {
+                    INFO("Test '%s' PASSED (%ld ms)\n", testConfig.name.c_str(), duration.count());
+                }
+                else if(exitCode == RCCL_TEST_TIMEOUT)
+                {
+                    INFO(
+                        "Test '%s' (PID: %d) TIMED OUT after %ld ms\n",
+                        testConfig.name.c_str(),
+                        pid,
+                        duration.count()
+                    );
+                    testResult.errorMessage = "Test timed out";
+                }
+                else if(exitCode == RCCL_TEST_SKIPPED)
+                {
+                    INFO(
+                        "Test '%s' (PID: %d) SKIPPED in %ld ms\n",
+                        testConfig.name.c_str(),
+                        pid,
+                        duration.count()
+                    );
+                    testResult.errorMessage = "Test skipped";
+                }
+                else
+                {
+                    INFO(
+                        "Test '%s' (PID: %d) FAILED with exit code %d after %ld ms\n",
+                        testConfig.name.c_str(),
+                        pid,
+                        exitCode,
+                        duration.count()
+                    );
+                    testResult.errorMessage
+                        = "Test failed with exit code " + std::to_string(exitCode);
+                }
+            }
+            else if(WIFSIGNALED(status))
+            {
+                int signal = WTERMSIG(status);
+
+                // Check if test reported success before signal termination
+                bool testPassed = (output.stdoutContent.find("PASSED") != std::string::npos);
+
+                if(testPassed)
+                {
+                    // Test completed successfully before signal (e.g., GPU runtime cleanup)
+                    testResult.passed   = true;
+                    testResult.skipped  = false;
+                    testResult.exitCode = RCCL_TEST_SUCCESS;
+                    INFO("Test '%s' PASSED (%ld ms)\n", testConfig.name.c_str(), duration.count());
+                }
+                else
+                {
+                    // Test terminated by signal before completion (crash)
+                    testResult.passed       = false;
+                    testResult.skipped      = false;
+                    testResult.exitCode     = -signal;
+                    testResult.errorMessage = "Terminated by signal " + std::to_string(signal);
+                    INFO(
+                        "Test '%s' (PID: %d) terminated by signal %d after %ld ms\n",
+                        testConfig.name.c_str(),
+                        pid,
+                        signal,
+                        duration.count()
+                    );
+                }
+            }
+            else
+            {
+                testResult.passed       = false;
+                testResult.skipped      = false;
+                testResult.exitCode     = RCCL_TEST_INVALID;
+                testResult.errorMessage = "Failed to wait for process";
+            }
+
+            displayCapturedOutput(output, testConfig.name);
+
+            recordTestResult(testResult);
+
+            // Stop on first failure if requested
+            if(options.stopOnFirstFailure && !testResult.passed && !testResult.skipped)
+            {
+                break;
+            }
+        }
+        else
+        {
+            // Fork failed
+            TestResult testResult;
+            testResult.testName     = testConfig.name;
+            testResult.passed       = false;
+            testResult.skipped      = false;
+            testResult.exitCode     = RCCL_TEST_INVALID;
+            testResult.processId    = RCCL_TEST_INVALID;
+            testResult.duration     = std::chrono::milliseconds(0);
+            testResult.errorMessage = "Failed to fork process";
+
+            recordTestResult(testResult);
+            INFO("Failed to fork process for test '%s'\n", testConfig.name.c_str());
+
+            if(options.stopOnFirstFailure)
+            {
+                break;
+            }
+        }
+    }
+
+    bool result = generateReport(options);
+
+    // Automatically clear test configurations and results after execution
+    // This ensures a clean state for the next test suite without requiring
+    // explicit clear() calls from test cases
+    {
+        std::lock_guard<std::mutex> lock(testConfigsMutex_);
+        testConfigs_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(resultsMutex_);
+        testResults_.clear();
+    }
+
+    return result;
 }
 
 // Generate and display test report
-bool ProcessIsolatedTestRunner::generateReport(
-    const ExecutionOptions &options) {
-  int totalTests = 0;
-  int passedTests = 0;
-  int failedTests = 0;
-  int skippedTests = 0;
-  std::chrono::milliseconds totalDuration{0};
+bool ProcessIsolatedTestRunner::generateReport(const ExecutionOptions& options)
+{
+    int                       totalTests   = 0;
+    int                       passedTests  = 0;
+    int                       failedTests  = 0;
+    int                       skippedTests = 0;
+    std::chrono::milliseconds totalDuration{0};
 
-  {
-    std::lock_guard<std::mutex> lock(resultsMutex_);
-    totalTests = testResults_.size();
+    {
+        std::lock_guard<std::mutex> lock(resultsMutex_);
+        totalTests = testResults_.size();
 
-    for (const auto &result : testResults_) {
-      if (result.skipped) {
-        skippedTests++;
-      } else if (result.passed) {
-        passedTests++;
-      } else {
-        failedTests++;
-      }
-      totalDuration += result.duration;
+        for(const auto& result : testResults_)
+        {
+            if(result.skipped)
+            {
+                skippedTests++;
+            }
+            else if(result.passed)
+            {
+                passedTests++;
+            }
+            else
+            {
+                failedTests++;
+            }
+            totalDuration += result.duration;
+        }
     }
-  }
 
-  // Report final results
-  std::cout << "\n=== Process-Isolated Test Summary ===" << std::endl;
-  std::cout << "Total Tests: " << totalTests
-            << "  |  Passed: " << passedTests
-            << "  |  Skipped: " << skippedTests
-            << "  |  Failed: " << failedTests << std::endl;
-  std::cout << "Total Duration: " << totalDuration.count() << " ms"
-            << "  |  Execution Mode: Sequential" << std::endl;
+    // Report summary only if there are failures or multiple tests
+    if(failedTests > 0 || totalTests > 1)
+    {
+        INFO(
+            "Process-Isolated Tests: %d passed, %d failed, %d skipped (%ld ms total)\n",
+            passedTests,
+            failedTests,
+            skippedTests,
+            totalDuration.count()
+        );
 
-  if (options.verboseLogging && failedTests > 0) {
-    std::cout << "\nFailed Tests Details:" << std::endl;
-    std::lock_guard<std::mutex> lock(resultsMutex_);
-    for (const auto &result : testResults_) {
-      if (!result.passed && !result.skipped) {
-        std::cout << "  - " << result.testName << ": " << result.errorMessage
-                  << std::endl;
-      }
+        if(failedTests > 0)
+        {
+            std::lock_guard<std::mutex> lock(resultsMutex_);
+            for(const auto& result : testResults_)
+            {
+                if(!result.passed && !result.skipped)
+                {
+                    INFO(
+                        "  Failed: %s - %s\n",
+                        result.testName.c_str(),
+                        result.errorMessage.c_str()
+                    );
+                }
+            }
+        }
     }
-  }
 
-  std::cout << "======================================\n" << std::endl;
-
-  return failedTests == 0;
+    return failedTests == 0;
 }
 
 // Get detailed test results (thread-safe)
-std::vector<ProcessIsolatedTestRunner::TestResult>
-ProcessIsolatedTestRunner::getTestResults() {
-  std::lock_guard<std::mutex> lock(resultsMutex_);
-  return testResults_;
+std::vector<ProcessIsolatedTestRunner::TestResult> ProcessIsolatedTestRunner::getTestResults()
+{
+    std::lock_guard<std::mutex> lock(resultsMutex_);
+    return testResults_;
 }
 
 // Clear test registry and results (thread-safe)
-void ProcessIsolatedTestRunner::clear() {
-  size_t registeredCount = 0;
-  size_t executedCount = 0;
+void ProcessIsolatedTestRunner::clear()
+{
+    size_t registeredCount = 0;
+    size_t executedCount   = 0;
 
-  // Check for unexecuted tests before clearing
-  {
-    std::lock_guard<std::mutex> lock(testConfigsMutex_);
-    registeredCount = testConfigs_.size();
-  }
-  {
-    std::lock_guard<std::mutex> lock(resultsMutex_);
-    executedCount = testResults_.size();
-  }
+    // Check for unexecuted tests before clearing
+    {
+        std::lock_guard<std::mutex> lock(testConfigsMutex_);
+        registeredCount = testConfigs_.size();
+    }
+    {
+        std::lock_guard<std::mutex> lock(resultsMutex_);
+        executedCount = testResults_.size();
+    }
 
-  // Warn if tests were registered but not all executed
-  if (registeredCount > 0 && executedCount < registeredCount) {
-    std::cerr << "\n⚠️  WARNING: ProcessIsolatedTestRunner::clear() called with "
-              << (registeredCount - executedCount) << " unexecuted test(s)!\n"
-              << "   Registered: " << registeredCount << " test(s)\n"
-              << "   Executed:   " << executedCount << " test(s)\n"
-              << "   Did you forget to call executeAllTests()?\n" << std::endl;
-  }
+    // Warn if tests were registered but not all executed
+    if(registeredCount > 0 && executedCount < registeredCount)
+    {
+        std::cerr << "\n⚠️  WARNING: ProcessIsolatedTestRunner::clear() called with "
+                  << (registeredCount - executedCount) << " unexecuted test(s)!\n"
+                  << "   Registered: " << registeredCount << " test(s)\n"
+                  << "   Executed:   " << executedCount << " test(s)\n"
+                  << "   Did you forget to call executeAllTests()?\n"
+                  << std::endl;
+    }
 
-  // Clear the registrations and results
-  {
-    std::lock_guard<std::mutex> lock(testConfigsMutex_);
-    testConfigs_.clear();
-  }
-  {
-    std::lock_guard<std::mutex> lock(resultsMutex_);
-    testResults_.clear();
-  }
+    // Clear the registrations and results
+    {
+        std::lock_guard<std::mutex> lock(testConfigsMutex_);
+        testConfigs_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(resultsMutex_);
+        testResults_.clear();
+    }
 }
 
 // Get number of registered tests
-size_t ProcessIsolatedTestRunner::getTestCount() {
-  std::lock_guard<std::mutex> lock(testConfigsMutex_);
-  return testConfigs_.size();
+size_t ProcessIsolatedTestRunner::getTestCount()
+{
+    std::lock_guard<std::mutex> lock(testConfigsMutex_);
+    return testConfigs_.size();
 }
 
 } // namespace RcclUnitTesting

@@ -121,6 +121,15 @@ public:
     };
 
 private:
+    /**
+     * @brief Structure to hold captured process output
+     */
+    struct CapturedOutput
+    {
+        std::string stdoutContent; ///< Captured stdout content
+        std::string stderrContent; ///< Captured stderr content
+    };
+
     // Thread-safe static members for test management
     static std::mutex              testConfigsMutex_;
     static std::vector<TestConfig> testConfigs_;
@@ -139,6 +148,39 @@ private:
      * @return Exit code (0 for success, non-zero for failure)
      */
     static int runTestInProcess(const TestConfig& config);
+
+    /**
+     * @brief Create pipes for capturing process output
+     * @param stdoutPipe Array to hold stdout pipe file descriptors [read, write]
+     * @param stderrPipe Array to hold stderr pipe file descriptors [read, write]
+     * @return True if pipes were created successfully, false otherwise
+     */
+    static bool createOutputPipes(int stdoutPipe[2], int stderrPipe[2]);
+
+    /**
+     * @brief Redirect child process output to pipes
+     * @param stdoutPipe Stdout pipe file descriptors [read, write]
+     * @param stderrPipe Stderr pipe file descriptors [read, write]
+     */
+    static void redirectOutputToPipes(int stdoutPipe[2], int stderrPipe[2]);
+
+    /**
+     * @brief Capture output from child process via pipes
+     * @param stdoutPipe Stdout pipe file descriptors [read, write]
+     * @param stderrPipe Stderr pipe file descriptors [read, write]
+     * @param pid Child process ID to monitor
+     * @param status Pointer to status variable for waitpid
+     * @return Captured output from stdout and stderr
+     */
+    static CapturedOutput
+        captureProcessOutput(int stdoutPipe[2], int stderrPipe[2], pid_t pid, int* status);
+
+    /**
+     * @brief Display captured output with formatted delimiters
+     * @param output Captured output to display
+     * @param testName Name of the test for context
+     */
+    static void displayCapturedOutput(const CapturedOutput& output, const std::string& testName);
 
 public:
     /**
@@ -215,21 +257,23 @@ public:
 /**
  * @brief Register and execute a single isolated test with minimal boilerplate
  *
+ * Uses variadic macros to automatically handle commas in lambda bodies
+ *
  * @param test_name Name of the test (string)
- * @param test_body Lambda containing test logic
+ * @param ... Lambda containing test logic (variadic to handle internal commas)
  *
  * Example:
  *   RUN_ISOLATED_TEST("MyTest", []() {
  *     EXPECT_TRUE(someFunction());
  *   });
  */
-#define RUN_ISOLATED_TEST(test_name, test_body)                                           \
-    do                                                                                    \
-    {                                                                                     \
-        ::RcclUnitTesting::ProcessIsolatedTestRunner::registerTest(test_name, test_body); \
-        bool passed_ = ::RcclUnitTesting::ProcessIsolatedTestRunner::executeAllTests();   \
-        EXPECT_TRUE(passed_) << "Isolated test '" << test_name << "' failed";             \
-    }                                                                                     \
+#define RUN_ISOLATED_TEST(test_name, ...)                                                   \
+    do                                                                                      \
+    {                                                                                       \
+        ::RcclUnitTesting::ProcessIsolatedTestRunner::registerTest(test_name, __VA_ARGS__); \
+        bool passed_ = ::RcclUnitTesting::ProcessIsolatedTestRunner::executeAllTests();     \
+        EXPECT_TRUE(passed_) << "Isolated test '" << test_name << "' failed";               \
+    }                                                                                       \
     while(0)
 
 /**
