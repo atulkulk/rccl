@@ -5,6 +5,7 @@
  ************************************************************************/
 #include "ProcessIsolatedTestRunner.hpp"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -12,6 +13,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <thread>
 
@@ -103,12 +105,14 @@ void ProcessIsolatedTestRunner::applyEnvironmentVariables(const TestConfig& conf
     // If not inheriting parent environment, clear all environment variables
     if(!config.inheritParentEnv)
     {
-        extern char** environ;
-        // Save the variables we want to set
-        std::unordered_map<std::string, std::string> varsToSet = config.environmentVariables;
+        // Clear all existing environment variables
+        if(clearenv() != 0)
+        {
+            std::cerr << "Warning: Failed to clear environment variables" << std::endl;
+        }
 
-        // Set our variables
-        for(const auto& [name, value] : varsToSet)
+        // Set only the specified variables
+        for(const auto& [name, value] : config.environmentVariables)
         {
             setenv(name.c_str(), value.c_str(), 1);
         }
@@ -210,19 +214,7 @@ int ProcessIsolatedTestRunner::runTestInProcess(const TestConfig& config)
             std::rethrow_exception(testException);
         }
 
-        // Report test result and flush before returning (needed before _exit())
-        if(testSkipped)
-        {
-            INFO("Test '%s' SKIPPED\n", config.name.c_str());
-        }
-        else if(testPassed)
-        {
-            INFO("Test '%s' PASSED\n", config.name.c_str());
-        }
-        else
-        {
-            INFO("Test '%s' FAILED\n", config.name.c_str());
-        }
+        // Flush output before returning (needed before _exit())
         fflush(NULL);
 
         // Return appropriate exit code based on test result
@@ -287,78 +279,76 @@ void ProcessIsolatedTestRunner::recordTestResult(const TestResult& result)
     testResults_.push_back(result);
 }
 
-// Helper method: Create temporary files for capturing process output
+// Helper method: Create pipes for capturing process output
 bool ProcessIsolatedTestRunner::createOutputPipes(int stdoutPipe[2], int stderrPipe[2])
 {
-    // Note: Using "Pipes" in name for compatibility, but actually using file descriptors
-    // Create temp files for stdout and stderr
-    char stdoutTemplate[] = "/tmp/rccl_test_stdout_XXXXXX";
-    char stderrTemplate[] = "/tmp/rccl_test_stderr_XXXXXX";
-
-    stdoutPipe[1] = mkstemp(stdoutTemplate);
-    stderrPipe[1] = mkstemp(stderrTemplate);
-
-    if(stdoutPipe[1] == -1 || stderrPipe[1] == -1)
+    // Create pipes for stdout and stderr
+    // stdoutPipe[0] = read end, stdoutPipe[1] = write end
+    if(pipe(stdoutPipe) == -1)
     {
-        if(stdoutPipe[1] != -1)
-            close(stdoutPipe[1]);
-        if(stderrPipe[1] != -1)
-            close(stderrPipe[1]);
+        std::cerr << "Failed to create stdout pipe: " << strerror(errno) << std::endl;
         return false;
     }
 
-    // Store filenames in read end (unused for files)
-    // We'll reopen these files in the parent after child exits
-    stdoutPipe[0] = stdoutPipe[1]; // Dummy, will reopen
-    stderrPipe[0] = stderrPipe[1]; // Dummy, will reopen
-
-    // Unlink immediately so files are deleted when all FDs close
-    unlink(stdoutTemplate);
-    unlink(stderrTemplate);
+    if(pipe(stderrPipe) == -1)
+    {
+        std::cerr << "Failed to create stderr pipe: " << strerror(errno) << std::endl;
+        close(stdoutPipe[0]);
+        close(stdoutPipe[1]);
+        return false;
+    }
 
     return true;
 }
 
-// Helper method: Redirect child process output to files
+// Helper method: Redirect child process output to pipes
 void ProcessIsolatedTestRunner::redirectOutputToPipes(int stdoutPipe[2], int stderrPipe[2])
 {
-    // Redirect stdout and stderr to the temp file descriptors
+    // Close read ends of pipes in child process (not needed)
+    close(stdoutPipe[0]);
+    close(stderrPipe[0]);
+
+    // Redirect stdout and stderr to write ends of pipes
     dup2(stdoutPipe[1], STDOUT_FILENO);
     dup2(stderrPipe[1], STDERR_FILENO);
 
-    // Don't close the original FDs yet - they'll be closed by _exit()
+    // Close the original write end file descriptors after duplication
+    // The duplicated descriptors (STDOUT_FILENO, STDERR_FILENO) will be closed by _exit()
+    close(stdoutPipe[1]);
+    close(stderrPipe[1]);
 }
 
-// Helper method: Capture output from child process files
+// Helper method: Capture output from child process pipes
 ProcessIsolatedTestRunner::CapturedOutput ProcessIsolatedTestRunner::captureProcessOutput(
     int stdoutPipe[2], int stderrPipe[2], pid_t pid, int* status
 )
 {
-
-    // Wait for child to exit (blocking)
-    waitpid(pid, status, 0);
+    // Close write ends of pipes in parent process (not needed)
+    close(stdoutPipe[1]);
+    close(stderrPipe[1]);
 
     CapturedOutput output;
+    char           buffer[4096];
+    ssize_t        count;
 
-    // Read stdout file
-    lseek(stdoutPipe[1], 0, SEEK_SET); // Rewind to beginning
-    char    buffer[4096];
-    ssize_t count;
-    while((count = read(stdoutPipe[1], buffer, sizeof(buffer) - 1)) > 0)
+    // Read from stdout pipe
+    while((count = read(stdoutPipe[0], buffer, sizeof(buffer) - 1)) > 0)
     {
         buffer[count] = '\0';
         output.stdoutContent += buffer;
     }
-    close(stdoutPipe[1]);
+    close(stdoutPipe[0]);
 
-    // Read stderr file
-    lseek(stderrPipe[1], 0, SEEK_SET); // Rewind to beginning
-    while((count = read(stderrPipe[1], buffer, sizeof(buffer) - 1)) > 0)
+    // Read from stderr pipe
+    while((count = read(stderrPipe[0], buffer, sizeof(buffer) - 1)) > 0)
     {
         buffer[count] = '\0';
         output.stderrContent += buffer;
     }
-    close(stderrPipe[1]);
+    close(stderrPipe[0]);
+
+    // Wait for child to exit (blocking)
+    waitpid(pid, status, 0);
 
     return output;
 }
