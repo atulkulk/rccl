@@ -2,9 +2,10 @@
 import os
 import sys
 import subprocess
+import shutil
 
 # Order of colls, redops, tys, protos, algos must match src/include/device.h
-all_colls = ["Broadcast", "Reduce", "AllGather", "ReduceScatter", "AllReduce", "SendRecv", "", "", "AllToAllPivot"]
+all_colls = ["Broadcast", "Reduce", "AllGather", "ReduceScatter", "AllReduce", "SendRecv", "", "", "AlltoAllPivot"]
 all_redops = ["Sum","Prod","MinMax","PreMulSum","SumPostDiv"]
 all_tys =    ["i8","u8","i32","u32","i64","u64","f16","f32","f64","bf16","f8e4m3","f8e5m2"]
 all_protos = ["LL","LL128","SIMPLE"]
@@ -27,8 +28,11 @@ gensrc = sys.argv[1]
 
 if os.path.exists(gensrc):
   for name in os.listdir(gensrc):
-    os.remove(os.path.join(gensrc, name))
-    #os.truncate(os.path.join(gensrc, name), 0)
+    path = os.path.join(gensrc, name)
+    if os.path.isfile(path):
+      os.remove(path)
+    elif os.path.isdir(path):
+      shutil.rmtree(path)
 else:
   os.makedirs(gensrc)
 
@@ -67,7 +71,7 @@ else:
 # make ONLY_FUNCS="AllReduce RING SIMPLE * *|ReduceScatter RING LL * f32"
 #                         --- or ---
 # make ONLY_FUNCS="AllReduce RING SIMPLE|ReduceScatter RING LL * f32"
-# make ONLY_FUNCS="AllReduce RING/TREE LL/SIMPLE Sum/MinMax i8/u8/f16/f32/f64/bf16/f8e4m3/f8e5m2|AllGather RING LL/SIMPLE Sum i8|AllToAllPivot RING SIMPLE Sum i8|Broadcast RING LL/SIMPLE Sum i8|Reduce RING LL/SIMPLE Sum/MinMax i8/u8/f16/f32/f64/bf16/f8e4m3/f8e5m2|ReduceScatter RING LL/SIMPLE Sum/MinMax i8/u8/f16/f32/f64/bf16/f8e4m3/f8e5m2|SendRecv RING SIMPLE Sum i8"
+# make ONLY_FUNCS="AllReduce RING/TREE LL/SIMPLE Sum/MinMax i8/u8/f16/f32/f64/bf16/f8e4m3/f8e5m2|AllGather RING LL/SIMPLE Sum i8|AlltoAllPivot RING SIMPLE Sum i8|Broadcast RING LL/SIMPLE Sum i8|Reduce RING LL/SIMPLE Sum/MinMax i8/u8/f16/f32/f64/bf16/f8e4m3/f8e5m2|ReduceScatter RING LL/SIMPLE Sum/MinMax i8/u8/f16/f32/f64/bf16/f8e4m3/f8e5m2|SendRecv RING SIMPLE Sum i8"
 
 # Paste all non-None arguments together with `sep`.
 def paste(sep, *args):
@@ -82,14 +86,14 @@ func_pattern = sys.argv[6:7]
 if func_pattern and func_pattern[0]:
   func_pattern = func_pattern[0]
 else:
-  func_pattern = "AllGather|AllReduce|AllToAllPivot|Broadcast|Reduce|ReduceScatter|SendRecv"
+  func_pattern = "AllGather|AllReduce|AlltoAllPivot|Broadcast|Reduce|ReduceScatter|SendRecv"
 
 ################################################################################
 
 algos_of_coll = {
   "AllGather":             ["RING", "PAT"],
   "AllReduce":             ["RING", "TREE"],
-  "AllToAllPivot":         ["RING"],
+  "AlltoAllPivot":         ["RING"],
   "Broadcast":             ["RING"],
   "Reduce":                ["RING"],
   "ReduceScatter":         ["RING", "PAT"],
@@ -99,7 +103,7 @@ algos_of_coll = {
 protos_of_coll = {
   "AllGather":              all_protos,
   "AllReduce":              all_protos,
-  "AllToAllPivot":          ["SIMPLE"],
+  "AlltoAllPivot":          ["SIMPLE"],
   "Broadcast":              all_protos,
   "Reduce":                 all_protos,
   "ReduceScatter":          all_protos,
@@ -109,7 +113,7 @@ protos_of_coll = {
 redops_of_coll = {
   "AllGather":            ["Sum"],
   "AllReduce":            all_redops,
-  "AllToAllPivot":        ["Sum"],
+  "AlltoAllPivot":        ["Sum"],
   "Broadcast":            ["Sum"],
   "Reduce":               all_redops,
   "ReduceScatter":        all_redops,
@@ -119,7 +123,7 @@ redops_of_coll = {
 tys_of_coll = {
   "AllGather":             ["i8"],
   "AllReduce":             all_tys,
-  "AllToAllPivot":         ["i8"],
+  "AlltoAllPivot":         ["i8"],
   "Broadcast":             ["i8"],
   "Reduce":                all_tys,
   "ReduceScatter":         all_tys,
@@ -129,7 +133,7 @@ tys_of_coll = {
 acc_of_coll = {
   "AllGather":             ["0"],
   "AllReduce":             use_acc,
-  "AllToAllPivot":         ["0"],
+  "AlltoAllPivot":         ["0"],
   "Broadcast":             ["0"],
   "Reduce":                ["0"],
   "ReduceScatter":         ["0"],
@@ -139,7 +143,7 @@ acc_of_coll = {
 pipelines_of_coll = {
   "AllGather":             ["0"],
   "AllReduce":             all_pipeline,
-  "AllToAllPivot":         ["0"],
+  "AlltoAllPivot":         ["0"],
   "Broadcast":             ["0"],
   "Reduce":                all_pipeline,
   "ReduceScatter":         all_pipeline,
@@ -149,7 +153,7 @@ pipelines_of_coll = {
 coll_camel_to_lower = {
   "AllGather":             "all_gather",
   "AllReduce":             "all_reduce",
-  "AllToAllPivot":         "alltoall_pivot",
+  "AlltoAllPivot":         "alltoall_pivot",
   "Broadcast":             "broadcast",
   "Reduce":                "reduce",
   "ReduceScatter": "reduce_scatter",
@@ -545,7 +549,7 @@ with open(os.path.join(gensrc, "host_table.cpp"), "w") as f:
       fn_str = f"{coll_idx} {algo_idx} {proto_idx} {redop_idx} {ty_idx} {acc_idx} {pipeline_idx}"
       if fn[0] == "Broadcast":
         key = ((coll_idx & 0x3F) | ((proto_idx & 0x3F) << 8))
-      if fn[0] in ["SendRecv", "AllToAllPivot"]:
+      if fn[0] in ["SendRecv", "AlltoAllPivot"]:
         key = ((coll_idx & 0x3F))
       out(f'  {{{key}, {fn_id}}}, {comment}\n')
   out("};\n")

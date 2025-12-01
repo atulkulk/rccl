@@ -436,9 +436,11 @@ configure_file(src/nccl.h.in ${PROJECT_BINARY_DIR}/include/nccl.h)      # Used b
 set(SRC_FILES
   src/allocator.cc
   src/bootstrap.cc
+  src/ce_coll.cc
   src/channel.cc
   src/collectives.cc
   src/debug.cc
+  src/dev_runtime.cc
   src/enqueue.cc
   src/group.cc
   src/init.cc
@@ -447,7 +449,7 @@ set(SRC_FILES
   src/msccl.cc
   src/proxy.cc
   src/rccl_wrap.cc
-  src/symmetric.cc
+  src/sym_kernels.cc
   src/transport.cc
   src/device/all_gather.h
   src/device/all_reduce.h
@@ -497,6 +499,7 @@ set(SRC_FILES
   src/include/BfdBacktrace.hpp
   src/include/bitops.h
   src/include/bootstrap.h
+  src/include/ce_coll.h
   src/include/channel.h
   src/include/checks.h
   src/include/collectives.h
@@ -506,6 +509,7 @@ set(SRC_FILES
   src/include/cpuset.h
 # src/include/cudawrap.h
   src/include/debug.h
+  src/include/dev_runtime.h
   src/include/device.h
   src/include/enqueue.h
   src/include/gdrwrap.h
@@ -520,6 +524,7 @@ set(SRC_FILES
   src/include/ipcsocket.h
   src/include/mnnvl.h
   src/include/nccl_common.h
+  src/include/nccl_device.h
   src/include/net_device.h
   src/include/net.h
   src/include/nvmlwrap.h
@@ -540,12 +545,13 @@ set(SRC_FILES
   src/include/rocmwrap.h
   src/include/roctx.h
   src/include/recorder.h
+  src/include/scheduler.h
   src/include/shm.h
   src/include/shmutils.h
   src/include/signals.h
   src/include/socket.h
   src/include/strongstream.h
-  src/include/symmetric.h
+  src/include/sym_kernels.h
   src/include/timer.h
   src/include/transport.h
   src/include/trees.h
@@ -560,6 +566,23 @@ set(SRC_FILES
   src/include/msccl/msccl_setup.h
   src/include/msccl/msccl_status.h
   src/include/msccl/msccl_struct.h
+  src/include/nccl_device/comm.h
+  src/include/nccl_device/coop.h
+  src/include/nccl_device/core.h
+  src/include/nccl_device/ll_a2a.h
+  src/include/nccl_device/mem_barrier.h
+  src/include/nccl_device/ptr.h
+  src/include/nccl_device/utility.h
+  src/include/nccl_device/impl/comm__funcs.h
+  src/include/nccl_device/impl/comm__types.h
+  src/include/nccl_device/impl/core__funcs.h
+  src/include/nccl_device/impl/core__types.h
+  src/include/nccl_device/impl/ll_a2a__funcs.h
+  src/include/nccl_device/impl/ll_a2a__types.h
+  src/include/nccl_device/impl/mem_barrier__funcs.h
+  src/include/nccl_device/impl/mem_barrier__types.h
+  src/include/nccl_device/impl/ptr__funcs.h
+  src/include/nccl_device/impl/ptr__types.h
   src/include/npkit/npkit.h
   src/include/npkit/npkit_event.h
   src/include/npkit/npkit_struct.h
@@ -607,6 +630,7 @@ set(SRC_FILES
   src/include/plugin/net/net_v8.h
   src/include/plugin/net/net_v9.h
   src/include/plugin/net/net_v10.h
+  src/include/plugin/net/net_v11.h
   src/include/plugin/profiler/net_ib_v1.h
   src/include/plugin/profiler/net_ib.h
   src/include/plugin/profiler/net_socket_v1.h
@@ -615,9 +639,11 @@ set(SRC_FILES
   src/include/plugin/profiler/profiler_v2.h
   src/include/plugin/profiler/profiler_v3.h
   src/include/plugin/profiler/profiler_v4.h
+  src/include/plugin/profiler/profiler_v5.h
   src/include/plugin/tuner/tuner_v2.h
   src/include/plugin/tuner/tuner_v3.h
   src/include/plugin/tuner/tuner_v4.h
+  src/include/plugin/tuner/tuner_v5.h
   src/misc/alt_rsmi.cc
   src/misc/archinfo.cc
   src/misc/argcheck.cc
@@ -648,6 +674,9 @@ set(SRC_FILES
   src/misc/msccl/msccl_setup.cc
   src/misc/msccl/msccl_status.cc
   src/misc/proxy_trace/proxy_trace.cc
+  src/nccl_device/core.cc
+  src/nccl_device/ll_a2a.cc
+  src/nccl_device/mem_barrier.cc
   src/plugin/net.cc
   src/plugin/plugin_open.cc
   src/plugin/profiler.cc
@@ -657,13 +686,16 @@ set(SRC_FILES
   src/plugin/net/net_v8.cc
   src/plugin/net/net_v9.cc
   src/plugin/net/net_v10.cc
+  src/plugin/net/net_v11.cc
   src/plugin/profiler/profiler_v1.cc
   src/plugin/profiler/profiler_v2.cc
   src/plugin/profiler/profiler_v3.cc
   src/plugin/profiler/profiler_v4.cc
+  src/plugin/profiler/profiler_v5.cc
   src/plugin/tuner/tuner_v2.cc
   src/plugin/tuner/tuner_v3.cc
   src/plugin/tuner/tuner_v4.cc
+  src/plugin/tuner/tuner_v5.cc
   src/ras/client.cc
   src/ras/client_support.cc
   src/ras/collectives.cc
@@ -674,6 +706,7 @@ set(SRC_FILES
   src/register/coll_reg.cc
   src/register/register.cc
   src/register/sendrecv_reg.cc
+  src/scheduler/symmetric_sched.cc
   src/transport/coll_net.cc
   src/transport/generic.cc
   src/transport/net.cc
@@ -929,6 +962,7 @@ target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/device)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/device/network/unpack)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/mlx5)
+target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/nccl_device)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/src/include/plugin)
 target_include_directories(rccl PRIVATE ${HIPIFY_DIR}/gensrc)
 target_include_directories(rccl PRIVATE ${HSA_INCLUDE_PATH})

@@ -9,6 +9,7 @@
 #define NCCL_ROCMWRAP_H_
 
 #include <hsa/hsa.h>
+#include "checks.h"
 
 typedef hsa_status_t (*PFN_hsa_init)();
 typedef hsa_status_t (*PFN_hsa_system_get_info)(hsa_system_info_t attribute, void* value);
@@ -51,11 +52,9 @@ typedef hsa_status_t (*PFN_hsa_amd_portable_export_dmabuf)(const void* ptr, size
 
 // Report failure but clear error and continue
 #define CUCHECKIGNORE(cmd) do {						\
-    hsa_status_t err = pfn_##cmd;						\
-    if( err != HSA_STATUS_SUCCESS ) {						\
-      const char *errStr;						\
-      pfn_hsa_status_string(err, &errStr);			\
-      INFO(NCCL_ALL,"%s:%d HIP failure '%s'", __FILE__, __LINE__, errStr);	\
+    hipError_t err = cmd;						\
+    if( err != hipSuccess ) {						\
+      INFO(NCCL_ALL,"%s:%d HIP failure '%s'", __FILE__, __LINE__, hipGetErrorString(err));	\
     }									\
 } while(false)
 
@@ -85,6 +84,17 @@ extern CUmemAllocationHandleType ncclCuMemHandleType;
 
 ncclResult_t rocmLibraryInit(void);
 
+extern int ncclCudaDriverVersionCache;
 extern bool ncclCudaLaunchBlocking; // initialized by ncclCudaLibraryInit()
+
+inline ncclResult_t ncclCudaDriverVersion(int* driver) {
+  int version = __atomic_load_n(&ncclCudaDriverVersionCache, __ATOMIC_RELAXED);
+  if (version == -1) {
+    CUDACHECK(cudaDriverGetVersion(&version));
+    __atomic_store_n(&ncclCudaDriverVersionCache, version, __ATOMIC_RELAXED);
+  }
+  *driver = version;
+  return ncclSuccess;
+}
 
 #endif

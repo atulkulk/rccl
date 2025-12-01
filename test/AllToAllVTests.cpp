@@ -74,7 +74,7 @@ namespace RcclUnitTesting
     }
   }
 
-  TEST(AllToAllv, OutOfPlace)
+  TEST(AlltoAllv, OutOfPlace)
   {
     TestBed testBed;
 
@@ -94,7 +94,7 @@ namespace RcclUnitTesting
       const std::vector<int>& gpuPriorityOrder = testBed.ev.GetGpuPriorityOrder();
       testBed.InitComms(TestBed::GetDeviceIdsList(numProcesses, totalRanks, gpuPriorityOrder));
 
-      // Prepare AllToAllV options
+      // Prepare AlltoAllV options
       std::vector<size_t> numInputElements;
       std::vector<size_t> numOutputElements;
       PrepareCounts(totalRanks, 256, options, numInputElements, numOutputElements, 40);
@@ -104,14 +104,14 @@ namespace RcclUnitTesting
         if (testBed.ev.showNames)
         {
           std::string name = testBed.GetTestCaseName(totalRanks, isMultiProcess,
-                                                     ncclCollAllToAllv, dataTypes[dataIdx],
+                                                     ncclCollAlltoAllv, dataTypes[dataIdx],
                                                      ncclSum, -1, inPlace, useManagedMem, useHipGraph);
           INFO("%s\n", name.c_str());
         }
 
         for (int rank = 0; rank < totalRanks; ++rank)
         {
-          testBed.SetCollectiveArgs(ncclCollAllToAllv,
+          testBed.SetCollectiveArgs(ncclCollAlltoAllv,
                                     dataTypes[dataIdx],
                                     numInputElements[rank],
                                     numOutputElements[rank],
@@ -132,7 +132,7 @@ namespace RcclUnitTesting
   }
 
 
-  TEST(AllToAllv, OutOfPlaceGraph)
+  TEST(AlltoAllv, OutOfPlaceGraph)
   {
     TestBed testBed;
 
@@ -152,7 +152,7 @@ namespace RcclUnitTesting
       const std::vector<int>& gpuPriorityOrder = testBed.ev.GetGpuPriorityOrder();
       testBed.InitComms(TestBed::GetDeviceIdsList(numProcesses, totalRanks, gpuPriorityOrder));
 
-      // Prepare AllToAllV options
+      // Prepare AlltoAllV options
       std::vector<size_t> numInputElements;
       std::vector<size_t> numOutputElements;
       PrepareCounts(totalRanks, 256, options, numInputElements, numOutputElements, 60);
@@ -162,14 +162,14 @@ namespace RcclUnitTesting
         if (testBed.ev.showNames)
         {
           std::string name = testBed.GetTestCaseName(totalRanks, isMultiProcess,
-                                                     ncclCollAllToAllv, dataTypes[dataIdx],
+                                                     ncclCollAlltoAllv, dataTypes[dataIdx],
                                                      ncclSum, -1, inPlace, useManagedMem, useHipGraph);
           INFO("%s\n", name.c_str());
         }
 
         for (int rank = 0; rank < totalRanks; ++rank)
         {
-          testBed.SetCollectiveArgs(ncclCollAllToAllv,
+          testBed.SetCollectiveArgs(ncclCollAlltoAllv,
                                     dataTypes[dataIdx],
                                     numInputElements[rank],
                                     numOutputElements[rank],
