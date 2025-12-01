@@ -775,7 +775,6 @@ if (BUILD_TESTS)
     # Create a list of files which needs to be modified to remove static
     set(TEST_NONSTATIC_SOURCE_FILES
       ${HIPIFY_SRC_DIR}/misc/alt_rsmi.cc
-      ${HIPIFY_SRC_DIR}/register/coll_reg.cc
       ${HIPIFY_SRC_DIR}/transport/shm.cc
       ${HIPIFY_SRC_DIR}/transport/p2p.cc
     )

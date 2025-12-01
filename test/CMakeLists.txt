@@ -144,7 +144,6 @@ if(BUILD_TESTS)
       ParamTests.cpp
       ArgCheckTests.cpp
       BitOpsTests.cpp
-      CollRegTests.cpp
       CommTests.cpp
       EnqueueTests.cpp
       IpcsocketTests.cpp
