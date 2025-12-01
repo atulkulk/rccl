@@ -166,8 +166,7 @@ namespace RcclUnitTesting
                         std::vector<bool>           const& inPlaceList,
                         std::vector<bool>           const& managedMemList,
                         std::vector<bool>           const& useHipGraphList,
-                        bool                        const& enableSweep = true,
-                        OptionalColArgs*            const  optionalArgs = nullptr);
+                        bool                        const& enableSweep = true);
 
     // Wait for user-input if in interactive mode
     void InteractiveWait(std::string message);

@@ -636,16 +636,12 @@ namespace RcclUnitTesting
                                std::vector<bool>           const& inPlaceList,
                                std::vector<bool>           const& managedMemList,
                                std::vector<bool>           const& useHipGraphList,
-                               bool                        const& enableSweep,
-                               OptionalColArgs*            const  optionalArgsPtr)
+                               bool                        const& enableSweep)
   {
     // Sort numElements in descending order to cut down on # of allocations
     std::vector<int> sortedN = numElements;
     std::sort(sortedN.rbegin(), sortedN.rend());
-
-    // Use provided OptionalColArgs or create default one
-    OptionalColArgs defaultArgs;
-    OptionalColArgs& optionalArgs = (optionalArgsPtr != nullptr) ? *optionalArgsPtr : defaultArgs;
+    OptionalColArgs optionalArgs;
     // Filter out any unsupported datatypes, in case only subset has been compiled for
     std::vector<ncclDataType_t> const& supportedDataTypes = this->GetAllSupportedDataTypes();
     std::vector<ncclDataType_t> dataTypes;

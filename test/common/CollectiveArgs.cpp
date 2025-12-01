@@ -39,11 +39,6 @@ namespace RcclUnitTesting
     this->streamIdx         = streamIdx;
     this->options           = optionalColArgs;
 
-    // Initialize bias fields
-    this->numBiasElements = 0;
-    this->numBiasBytesAllocated = 0;
-    this->biasRegHandle = nullptr;
-
     if (this->options.scalarMode != -1)
     {
       size_t const numBytes = DataTypeToBytes(dataType);
@@ -115,12 +110,6 @@ namespace RcclUnitTesting
       this->numBiasBytesAllocated = this->numBiasElements * DataTypeToBytes(this->dataType);
       CHECK_CALL(this->biasGpu.AllocateGpuMem(this->numBiasBytesAllocated, useManagedMem, userRegistered));
       CHECK_CALL(this->biasCpu.AllocateCpuMem(this->numBiasBytesAllocated));
-      this->biasRegHandle = nullptr;
-    }
-    else
-    {
-      this->numBiasElements = 0;
-      this->numBiasBytesAllocated = 0;
       this->biasRegHandle = nullptr;
     }
 
