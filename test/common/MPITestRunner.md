@@ -13,6 +13,8 @@ A simple C++ testing framework for multi-process RCCL tests using MPI (Message P
 - [API Reference](#api-reference)
 - [Examples](#examples)
 - [Best Practices](#best-practices)
+- [RAII Resource Guards](#raii-resource-guards)
+- [Device Buffer Helpers](#device-buffer-helpers)
 - [Troubleshooting](#troubleshooting)
 - [Standalone Tests](#standalone-tests)
 
@@ -30,9 +32,14 @@ A simple C++ testing framework for multi-process RCCL tests using MPI (Message P
 - ✅ HIP stream lifecycle management
 - ✅ Integrated with Google Test framework
 - ✅ Test-specific communicators for isolation
+- ✅ RAII guards for automatic resource cleanup
+- ✅ Pluggable buffer helpers with lambda patterns
 - ✅ Framework-agnostic core (can be used without GTest)
 
-**Location:** `test/common/MPITestBase.hpp`
+**Locations:**
+- `test/common/MPITestBase.hpp` - Main test infrastructure
+- `test/common/ResourceGuards.hpp` - RAII guards
+- `test/common/DeviceBufferHelpers.hpp` - Buffer utilities
 
 ---
 
@@ -761,36 +768,45 @@ TEST_F(UnifiedMPITest, BasicAllReduce) {
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
   const int N = 1024;
-
-  // Each rank contributes its rank+1
-  std::vector<float> send_data(N, MPIEnvironment::world_rank + 1.0f);
-  std::vector<float> recv_data(N);
-
   float *d_send = nullptr, *d_recv = nullptr;
+
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
   auto send_guard = makeDeviceBufferAutoGuard(d_send);
 
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
   auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_send, send_data.data(), N * sizeof(float),
-                                       hipMemcpyHostToDevice));
+  // Initialize with rank-based pattern using DeviceBufferHelpers
+  hipError_t hip_result = initializeBufferWithPattern<float>(
+      d_send, N,
+      [rank = MPIEnvironment::world_rank](size_t i) {
+          return static_cast<float>(rank + 1);
+      });
+  ASSERT_EQ(hipSuccess, hip_result);
 
   // AllReduce: Sum across all ranks
   RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(d_send, d_recv, N, ncclFloat, ncclSum,
                                             getActiveCommunicator(), getActiveStream()));
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(recv_data.data(), d_recv, N * sizeof(float),
-                                       hipMemcpyDeviceToHost));
   HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
-  // Verify: sum of (1 + 2 + 3 + ... + world_size)
-  float expected = (MPIEnvironment::world_size *
-                    (MPIEnvironment::world_size + 1)) / 2.0f;
+  // Verify using DeviceBufferHelpers with pattern function
+  // Expected: sum of (1 + 2 + 3 + ... + world_size)
+  const float expected_sum = (MPIEnvironment::world_size *
+                              (MPIEnvironment::world_size + 1)) / 2.0f;
 
-  for (int i = 0; i < N; i++) {
-    EXPECT_FLOAT_EQ(recv_data[i], expected);
-  }
+  size_t error_idx;
+  float expected_val, actual_val;
+  bool data_correct = verifyBufferData<float>(
+      d_recv, N,
+      [expected_sum](size_t i) { return expected_sum; },  // All elements same
+      0,  // Verify all elements
+      1e-5,
+      &error_idx, &expected_val, &actual_val);
+
+  EXPECT_TRUE(data_correct) << "Data mismatch at index " << error_idx
+                            << ": expected " << expected_val
+                            << ", got " << actual_val;
 
   // Automatic cleanup via RAII guards
 }
@@ -804,32 +820,41 @@ TEST_F(UnifiedMPITest, Broadcast) {
   ASSERT_EQ(ncclSuccess, createTestCommunicator());
 
   const int N = 1000;
-  std::vector<float> data(N);
-
-  // Only rank 0 initializes data
-  if (MPIEnvironment::world_rank == 0) {
-    std::iota(data.begin(), data.end(), 1.0f);  // 1, 2, 3, ..., N
-  }
-
   float *d_data = nullptr;
+
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_data, N * sizeof(float)));
   auto data_guard = makeDeviceBufferAutoGuard(d_data);
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_data, data.data(), N * sizeof(float),
-                                       hipMemcpyHostToDevice));
+  // Initialize using DeviceBufferHelpers - rank 0 gets sequential, others get zeros
+  if (MPIEnvironment::world_rank == 0) {
+    hipError_t hip_result = initializeBufferWithPattern<float>(
+        d_data, N,
+        [](size_t i) { return static_cast<float>(i + 1); });  // 1, 2, 3, ...
+    ASSERT_EQ(hipSuccess, hip_result);
+  } else {
+    HIP_TEST_CHECK_GTEST_FAIL(hipMemset(d_data, 0, N * sizeof(float)));
+  }
 
   // Broadcast from rank 0 to all ranks
   RCCL_TEST_CHECK_GTEST_FAIL(ncclBroadcast(d_data, d_data, N, ncclFloat, 0,
                                             getActiveCommunicator(), getActiveStream()));
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(data.data(), d_data, N * sizeof(float),
-                                       hipMemcpyDeviceToHost));
   HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
-  // All ranks should have the same data now
-  for (int i = 0; i < N; i++) {
-    EXPECT_FLOAT_EQ(data[i], i + 1.0f);
-  }
+  // Verify all ranks have the broadcast data using DeviceBufferHelpers
+  size_t error_idx;
+  float expected_val, actual_val;
+  bool data_correct = verifyBufferData<float>(
+      d_data, N,
+      [](size_t i) { return static_cast<float>(i + 1); },  // Expected: 1, 2, 3, ...
+      0,  // Verify all elements
+      1e-5,
+      &error_idx, &expected_val, &actual_val);
+
+  EXPECT_TRUE(data_correct) << "Rank " << MPIEnvironment::world_rank
+                            << ": Data mismatch at index " << error_idx
+                            << ": expected " << expected_val
+                            << ", got " << actual_val;
 
   // Automatic cleanup via RAII guards
 }
@@ -847,13 +872,6 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
 
   float* d_send = nullptr;
   float* d_recv = nullptr;
-  std::vector<float> h_send(N);
-  std::vector<float> h_recv(N);
-
-  // Each rank sends unique data
-  for (int i = 0; i < N; i++) {
-    h_send[i] = MPIEnvironment::world_rank * 1000 + i;
-  }
 
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
   auto send_guard = makeDeviceBufferAutoGuard(d_send);
@@ -861,8 +879,13 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
   auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_send, h_send.data(), N * sizeof(float),
-                                       hipMemcpyHostToDevice));
+  // Initialize send buffer with rank-specific pattern using DeviceBufferHelpers
+  hipError_t hip_result = initializeBufferWithPattern<float>(
+      d_send, N,
+      [rank = MPIEnvironment::world_rank](size_t i) {
+          return static_cast<float>(rank * 1000 + i);
+      });
+  ASSERT_EQ(hipSuccess, hip_result);
 
   // Exchange data between ranks
   if (MPIEnvironment::world_rank == 0) {
@@ -878,14 +901,23 @@ TEST_F(UnifiedMPITest, SimpleSendRecv) {
   }
 
   HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(h_recv.data(), d_recv, N * sizeof(float),
-                                       hipMemcpyDeviceToHost));
 
-  // Verify received peer's data
-  for (int i = 0; i < N; i++) {
-    float expected = peer_rank * 1000 + i;
-    EXPECT_FLOAT_EQ(h_recv[i], expected);
-  }
+  // Verify received peer's data using DeviceBufferHelpers
+  size_t error_idx;
+  float expected_val, actual_val;
+  bool data_correct = verifyBufferData<float>(
+      d_recv, N,
+      [peer_rank](size_t i) {
+          return static_cast<float>(peer_rank * 1000 + i);
+      },
+      0,  // Verify all elements
+      1e-5,
+      &error_idx, &expected_val, &actual_val);
+
+  EXPECT_TRUE(data_correct) << "Rank " << MPIEnvironment::world_rank
+                            << ": Received data mismatch at index " << error_idx
+                            << ": expected " << expected_val
+                            << ", got " << actual_val;
 
   // Automatic cleanup via RAII guards
 }
@@ -901,13 +933,6 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
   const int N = 512;
   float* d_send = nullptr;
   float* d_recv = nullptr;
-  std::vector<float> h_send(N);
-  std::vector<float> h_recv(N);
-
-  // Each rank sends rank*10 + index
-  for (int i = 0; i < N; i++) {
-    h_send[i] = MPIEnvironment::world_rank * 10 + i;
-  }
 
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_send, N * sizeof(float)));
   auto send_guard = makeDeviceBufferAutoGuard(d_send);
@@ -915,22 +940,37 @@ TEST_F(UnifiedMPITest, AllReduceMaxOperation) {
   HIP_TEST_CHECK_GTEST_FAIL(hipMalloc(&d_recv, N * sizeof(float)));
   auto recv_guard = makeDeviceBufferAutoGuard(d_recv);
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(d_send, h_send.data(), N * sizeof(float),
-                                       hipMemcpyHostToDevice));
+  // Initialize with rank-specific pattern using DeviceBufferHelpers
+  hipError_t hip_result = initializeBufferWithPattern<float>(
+      d_send, N,
+      [rank = MPIEnvironment::world_rank](size_t i) {
+          return static_cast<float>(rank * 10 + i);
+      });
+  ASSERT_EQ(hipSuccess, hip_result);
 
   // AllReduce with MAX operation
   RCCL_TEST_CHECK_GTEST_FAIL(ncclAllReduce(d_send, d_recv, N, ncclFloat, ncclMax,
                                             getActiveCommunicator(), getActiveStream()));
 
-  HIP_TEST_CHECK_GTEST_FAIL(hipMemcpy(h_recv.data(), d_recv, N * sizeof(float),
-                                       hipMemcpyDeviceToHost));
   HIP_TEST_CHECK_GTEST_FAIL(hipStreamSynchronize(getActiveStream()));
 
-  // Maximum should be from highest rank
-  for (int i = 0; i < N; i++) {
-    float expected = (MPIEnvironment::world_size - 1) * 10 + i;
-    EXPECT_FLOAT_EQ(h_recv[i], expected);
-  }
+  // Verify: maximum should be from highest rank using DeviceBufferHelpers
+  const int max_rank = MPIEnvironment::world_size - 1;
+
+  size_t error_idx;
+  float expected_val, actual_val;
+  bool data_correct = verifyBufferData<float>(
+      d_recv, N,
+      [max_rank](size_t i) {
+          return static_cast<float>(max_rank * 10 + i);
+      },
+      0,  // Verify all elements
+      1e-5,
+      &error_idx, &expected_val, &actual_val);
+
+  EXPECT_TRUE(data_correct) << "AllReduce MAX mismatch at index " << error_idx
+                            << ": expected " << expected_val
+                            << ", got " << actual_val;
 
   // Automatic cleanup via RAII guards
 }
@@ -1020,27 +1060,33 @@ protected:
 
   // No need for manual cleanup in TearDown()
   // Base class automatically cleans up guarded resources
-
-  void initializeBuffer(void* buffer, uint8_t value) {
-    HIPCHECK(hipMemset(buffer, value, buffer_size));
-  }
 };
 
 TEST_F(MyTransportTest, DataTransfer) {
-  initializeBuffer(send_buffer, 0xAB);
-  initializeBuffer(recv_buffer, 0x00);
+  // Initialize buffers using DeviceBufferHelpers
+  hipError_t hip_result = initializeBufferWithPattern<uint8_t>(
+      send_buffer, buffer_size,
+      [](size_t i) { return static_cast<uint8_t>(0xAB); });
+  ASSERT_EQ(hipSuccess, hip_result);
+
+  HIP_TEST_CHECK_GTEST_FAIL(hipMemset(recv_buffer, 0x00, buffer_size));
 
   // Perform transfer
   // ... test logic ...
 
-  // Verify
-  std::vector<uint8_t> result(buffer_size);
-  HIPCHECK(hipMemcpy(result.data(), recv_buffer, buffer_size,
-                     hipMemcpyDeviceToHost));
+  // Verify using DeviceBufferHelpers
+  size_t error_idx;
+  uint8_t expected_val, actual_val;
+  bool data_correct = verifyBufferData<uint8_t>(
+      recv_buffer, buffer_size,
+      [](size_t i) { return static_cast<uint8_t>(0xAB); },
+      0,  // Verify all elements
+      1e-5,
+      &error_idx, &expected_val, &actual_val);
 
-  for (size_t i = 0; i < buffer_size; i++) {
-    EXPECT_EQ(result[i], 0xAB);
-  }
+  EXPECT_TRUE(data_correct) << "Data transfer mismatch at index " << error_idx
+                            << ": expected " << static_cast<int>(expected_val)
+                            << ", got " << static_cast<int>(actual_val);
 
   // Resources automatically cleaned up at test end
 }
@@ -1669,8 +1715,6 @@ The test infrastructure provides template-based device buffer utilities with a c
 **Key Features:**
 - ✅ **Pluggable patterns** - Use lambdas to define any initialization/verification pattern
 - ✅ **Type-safe** - Template-based with automatic NCCL type mapping
-- ✅ **Minimal code** - Uses macros to reduce duplication (68% smaller)
-- ✅ **Self-documenting** - Pattern logic visible at call site
 - ✅ **Automatic float/int comparison** - Correct comparison logic based on type
 
 ### Type Mapping
@@ -1690,7 +1734,7 @@ uint64_t → ncclUint64
 
 // Usage (type deduced automatically)
 ncclDataType_t type = getNcclDataType<float>();     // ncclFloat
-const char* name = getTypeName<uint64_t>();          // "uint64_t"
+const char* name = getTypeName<uint64_t>();         // "uint64_t"
 ```
 
 ### Buffer Initialization
@@ -1808,109 +1852,6 @@ if (!verifyBufferData<T>(buffer, size, pattern, 0, 1e-5,
            error_idx, expected, actual);
 }
 ```
-
-### Implementation Details
-
-**Reduced Code Duplication:**
-The implementation uses a macro to define type traits, reducing code by 68%:
-```cpp
-// Before: 8 types × 8 lines each = 64 lines
-// After: 1 macro definition + 8 lines + 1 undef = ~20 lines
-
-#define DEFINE_NCCL_TYPE_TRAIT(cpp_type, nccl_type)  \
-    template<>                                       \
-    struct NcclTypeTraits<cpp_type> {                \
-        static constexpr ncclDataType_t value = nccl_type; \
-        static constexpr const char* name = #cpp_type;     \
-    }
-
-DEFINE_NCCL_TYPE_TRAIT(float, ncclFloat);
-DEFINE_NCCL_TYPE_TRAIT(uint64_t, ncclUint64);
-// ... etc
-
-#undef DEFINE_NCCL_TYPE_TRAIT  // Clean namespace
-```
-
-**Single Source of Truth:**
-Only one initialization and one verification function, both using pattern injection:
-- `initializeBufferWithPattern<T>(buffer, size, pattern_func)`
-- `verifyBufferData<T>(buffer, size, pattern_func, ...)`
-
-All patterns are expressed via lambdas at the call site.
-
-### Migration Guide
-
-**Old API (if you have legacy code):**
-```cpp
-// Old: Separate functions with different signatures
-initializeBufferWithPattern<float>(buffer, size, rank, multiplier);
-initializeBufferWithCustomPattern<float>(buffer, size, lambda);
-
-verifyBufferData<float>(buffer, size, rank, multiplier, samples, tol, ...);
-verifyBufferWithCustomCheck<float>(buffer, size, check_lambda, ...);
-```
-
-**New API (current):**
-```cpp
-// New: Unified functions with lambda patterns
-initializeBufferWithPattern<float>(buffer, size,
-    [rank, mult](size_t i) { return rank * mult + i; });
-
-verifyBufferData<float>(buffer, size,
-    [rank, mult](size_t i) { return rank * mult + i; },
-    samples, tol, ...);
-```
-
-### Best Practices
-
-**1. Use Explicit Lambdas for Clarity:**
-```cpp
-// ✅ GOOD: Pattern logic is self-documenting
-initializeBufferWithPattern<float>(send_buffer, count,
-    [rank = config.world_rank](size_t i) {
-        return static_cast<float>(rank * 1000 + i);
-    });
-
-// Pattern is immediately visible - no need to look up function definition
-```
-
-**2. Capture Variables for Pattern:**
-```cpp
-// Capture by value for safety
-int multiplier = 1000;
-initializeBufferWithPattern<float>(buffer, size,
-    [rank, multiplier](size_t i) {
-        return static_cast<float>(rank * multiplier + i);
-    });
-```
-
-**3. Verify All for Comprehensive Tests:**
-```cpp
-// For critical tests, verify all elements
-bool ok = verifyBufferData<float>(buffer, size, pattern, 0);  // 0 = all
-
-// For quick smoke tests, sample first N
-bool ok = verifyBufferData<float>(buffer, size, pattern, 10);  // first 10
-```
-
-**4. Use Error Details for Debugging:**
-```cpp
-size_t error_idx;
-float expected, actual;
-if (!verifyBufferData<float>(buffer, count, pattern, 0, 1e-5,
-                              &error_idx, &expected, &actual)) {
-    TEST_INFO("Data mismatch at index %zu: expected %.6f, got %.6f",
-              error_idx, expected, actual);
-}
-```
-
-### See Also
-
-- **DeviceBufferHelpers.hpp** - Full implementation with examples
-- **P2pMPITests.cpp** - Real-world usage examples
-- **ShmMPITests.cpp** - Pattern variations and edge cases
-
----
 
 ## Troubleshooting
 
