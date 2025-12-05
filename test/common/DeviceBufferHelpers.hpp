@@ -97,49 +97,26 @@ constexpr const char* getTypeName()
 // ============================================================================
 
 /**
- * @brief Initialize device buffer with rank-based test pattern
+ * @brief Initialize device buffer with pattern function
  *
- * Creates a predictable pattern: rank * multiplier + index
- * This pattern is deterministic and easy to verify.
+ * Generic function that allows any pattern generation via lambda or function pointer.
+ *
+ * Example usage:
+ * @code
+ * // Rank-based pattern: rank * multiplier + index
+ * initializeBufferWithPattern<float>(buffer, size,
+ *     [rank, multiplier](size_t i) { return rank * multiplier + i; });
+ *
+ * // Constant value pattern
+ * initializeBufferWithPattern<int>(buffer, size,
+ *     [](size_t i) { return 42; });
+ *
+ * // Custom pattern
+ * initializeBufferWithPattern<double>(buffer, size,
+ *     [](size_t i) { return std::sin(i * 0.1); });
+ * @endcode
  *
  * @tparam T Element type (float, int, etc.)
- * @param device_buffer Device memory pointer (from hipMalloc)
- * @param num_elements Number of elements
- * @param rank MPI rank (used in pattern generation)
- * @param multiplier Pattern multiplier (default: 1000)
- * @return hipError_t from hipMemcpy, or hipSuccess
- */
-template<typename T>
-hipError_t initializeBufferWithPattern(void*  device_buffer,
-                                       size_t num_elements,
-                                       int    rank,
-                                       int    multiplier = 1000)
-{
-    if(!device_buffer || num_elements == 0)
-    {
-        return hipErrorInvalidValue;
-    }
-
-    // Create host buffer with pattern
-    std::vector<T> host_data(num_elements);
-    for(size_t i = 0; i < num_elements; i++)
-    {
-        host_data[i] = static_cast<T>(rank * multiplier + i);
-    }
-
-    // Copy to device
-    return hipMemcpy(device_buffer,
-                     host_data.data(),
-                     num_elements * sizeof(T),
-                     hipMemcpyHostToDevice);
-}
-
-/**
- * @brief Initialize device buffer with custom pattern function
- *
- * Allows custom pattern generation via lambda or function pointer.
- *
- * @tparam T Element type
  * @tparam PatternFunc Callable type (lambda, function pointer, functor)
  * @param device_buffer Device memory pointer (from hipMalloc)
  * @param num_elements Number of elements
@@ -147,9 +124,9 @@ hipError_t initializeBufferWithPattern(void*  device_buffer,
  * @return hipError_t from hipMemcpy, or hipSuccess
  */
 template<typename T, typename PatternFunc>
-hipError_t initializeBufferWithCustomPattern(void*       device_buffer,
-                                             size_t      num_elements,
-                                             PatternFunc pattern_func)
+hipError_t initializeBufferWithPattern(void*       device_buffer,
+                                       size_t      num_elements,
+                                       PatternFunc pattern_func)
 {
     if(!device_buffer || num_elements == 0)
     {

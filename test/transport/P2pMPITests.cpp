@@ -442,10 +442,10 @@ public:
         auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
 
         // Initialize send buffer with test pattern
-        hip_result = initializeBufferWithPattern<float>(send_buffer,
-                                                        1024,
-                                                        config.world_rank,
-                                                        kSmallPatternMultiplier);
+        hip_result = initializeBufferWithPattern<float>(
+            send_buffer, 1024, [rank = config.world_rank](size_t i) {
+                return static_cast<float>(rank * kSmallPatternMultiplier + i);
+            });
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank
             << ": Failed to initialize send buffer for memcpy test, error: "
@@ -530,8 +530,10 @@ public:
 
         // Step 3: Initialize send buffer with test pattern
         const size_t num_floats = kLargeBufferSize / sizeof(float);
-        hipError_t   hip_result
-            = initializeBufferWithPattern<float>(send_buffer, num_floats, config.world_rank);
+        hipError_t   hip_result = initializeBufferWithPattern<float>(
+            send_buffer, num_floats, [rank = config.world_rank](size_t i) {
+                return static_cast<float>(rank * 1000 + i);
+            });
         ASSERT_EQ(hipSuccess, hip_result)
             << "Rank " << config.world_rank << ": Failed to initialize send buffer";
 

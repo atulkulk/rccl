@@ -538,7 +538,7 @@ public:
         auto recvBufferGuard = makeDeviceBufferAutoGuard(recv_buffer);
 
         // Initialize send buffer with unique pattern
-        hip_result = initializeBufferWithCustomPattern<float>(
+        hip_result = initializeBufferWithPattern<float>(
             send_buffer,
             num_elements,
             [rank = config.world_rank](size_t i)

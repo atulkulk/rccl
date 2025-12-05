@@ -270,7 +270,7 @@ protected:
     // Helper: Initialize device buffer with pattern using DeviceBufferHelpers
     hipError_t InitializeBuffer(void* buffer, size_t size, int pattern) {
         // Use template-based helper with custom pattern: (pattern + i) % kBytePatternModulo
-        return initializeBufferWithCustomPattern<uint8_t>(
+        return initializeBufferWithPattern<uint8_t>(
             buffer, size,
             [pattern](size_t i) { return static_cast<uint8_t>((pattern + i) % kBytePatternModulo); }
         );
