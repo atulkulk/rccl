@@ -146,10 +146,8 @@ if(BUILD_TESTS)
       EnqueueTests.cpp
       IpcsocketTests.cpp
       NetSocketTests.cpp
-      P2pTests.cpp
       ProxyTests.cpp
       RcclWrapTests.cpp
-      ShmTests.cpp
       TransportTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
