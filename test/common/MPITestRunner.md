@@ -1658,6 +1658,260 @@ auto guard = makeCustomGuard(file, [](FILE* f) {
 
 ---
 
+## Device Buffer Helpers
+
+The test infrastructure provides template-based device buffer utilities with a clean, pluggable API for initialization and verification. These helpers eliminate code duplication and provide type-safe operations for all NCCL data types.
+
+**Location:** `test/common/DeviceBufferHelpers.hpp`
+
+### Overview
+
+**Key Features:**
+- ✅ **Pluggable patterns** - Use lambdas to define any initialization/verification pattern
+- ✅ **Type-safe** - Template-based with automatic NCCL type mapping
+- ✅ **Minimal code** - Uses macros to reduce duplication (68% smaller)
+- ✅ **Self-documenting** - Pattern logic visible at call site
+- ✅ **Automatic float/int comparison** - Correct comparison logic based on type
+
+### Type Mapping
+
+NCCL type traits automatically map C++ types to `ncclDataType_t`:
+
+```cpp
+// Supported types (implemented using stringification macro)
+float    → ncclFloat
+double   → ncclDouble
+int8_t   → ncclInt8
+uint8_t  → ncclUint8
+int32_t  → ncclInt32
+uint32_t → ncclUint32
+int64_t  → ncclInt64
+uint64_t → ncclUint64
+
+// Usage (type deduced automatically)
+ncclDataType_t type = getNcclDataType<float>();     // ncclFloat
+const char* name = getTypeName<uint64_t>();          // "uint64_t"
+```
+
+### Buffer Initialization
+
+Generic initialization with pattern functions:
+
+```cpp
+// Signature
+template<typename T, typename PatternFunc>
+hipError_t initializeBufferWithPattern(
+    void* device_buffer,
+    size_t num_elements,
+    PatternFunc pattern_func);
+
+// Example 1: Rank-based pattern
+initializeBufferWithPattern<float>(
+    buffer, size,
+    [rank, multiplier](size_t i) {
+        return static_cast<float>(rank * multiplier + i);
+    });
+
+// Example 2: Constant value
+initializeBufferWithPattern<int>(
+    buffer, size,
+    [](size_t i) { return 42; });
+
+// Example 3: Custom pattern with modulo
+initializeBufferWithPattern<uint8_t>(
+    buffer, size,
+    [pattern](size_t i) {
+        return static_cast<uint8_t>((pattern + i) % 256);
+    });
+```
+
+### Buffer Verification
+
+Generic verification with pattern functions:
+
+```cpp
+// Signature
+template<typename T, typename PatternFunc>
+bool verifyBufferData(
+    const void* device_buffer,
+    size_t num_elements,
+    PatternFunc pattern_func,
+    size_t num_samples = 0,        // 0 = verify all
+    double tolerance = 1e-5,
+    size_t* first_error_index = nullptr,
+    T* expected_value = nullptr,
+    T* actual_value = nullptr);
+
+// Example 1: Rank-based verification
+size_t error_idx;
+float expected_val, actual_val;
+bool ok = verifyBufferData<float>(
+    recv_buffer, count,
+    [peer_rank](size_t i) {
+        return static_cast<float>(peer_rank * 1000 + i);
+    },
+    10,        // verify first 10 elements
+    1e-5,      // tolerance for floats
+    &error_idx, &expected_val, &actual_val);
+
+// Example 2: Verify all elements
+bool ok = verifyBufferData<int>(
+    buffer, size,
+    [](size_t i) { return static_cast<int>(i * 2); },
+    0);  // 0 = verify ALL elements
+
+// Example 3: Custom pattern
+bool ok = verifyBufferData<uint8_t>(
+    buffer, size,
+    [pattern](size_t i) {
+        return static_cast<uint8_t>((pattern + i) % 256);
+    });
+```
+
+### Key Features
+
+**1. Pluggable Pattern Logic:**
+The pattern is defined at the call site as a lambda, making the code self-documenting:
+```cpp
+// ✅ Pattern logic is immediately visible
+verifyBufferData<float>(buffer, size,
+    [rank](size_t i) { return rank * 1000 + i; });  // Clear what we expect
+
+// vs old approach (pattern logic hidden in function params)
+// verifyBufferData<float>(buffer, size, rank, 1000, ...);  // Less clear
+```
+
+**2. Automatic Float vs Int Comparison:**
+The helpers automatically use the correct comparison for the data type:
+```cpp
+// For float/double: uses tolerance-based comparison
+verifyBufferData<float>(buffer, size, pattern_func, 10, 1e-5);
+
+// For int types: uses exact comparison (tolerance ignored)
+verifyBufferData<int32_t>(buffer, size, pattern_func);
+```
+
+**3. Flexible Verification:**
+```cpp
+// Verify first 10 elements (fast sampling)
+verifyBufferData<float>(buffer, size, pattern, 10);
+
+// Verify ALL elements (comprehensive)
+verifyBufferData<float>(buffer, size, pattern, 0);  // 0 = all
+
+// Get error details
+size_t error_idx;
+T expected, actual;
+if (!verifyBufferData<T>(buffer, size, pattern, 0, 1e-5,
+                         &error_idx, &expected, &actual)) {
+    printf("Mismatch at index %zu: expected %f, got %f\n",
+           error_idx, expected, actual);
+}
+```
+
+### Implementation Details
+
+**Reduced Code Duplication:**
+The implementation uses a macro to define type traits, reducing code by 68%:
+```cpp
+// Before: 8 types × 8 lines each = 64 lines
+// After: 1 macro definition + 8 lines + 1 undef = ~20 lines
+
+#define DEFINE_NCCL_TYPE_TRAIT(cpp_type, nccl_type)  \
+    template<>                                       \
+    struct NcclTypeTraits<cpp_type> {                \
+        static constexpr ncclDataType_t value = nccl_type; \
+        static constexpr const char* name = #cpp_type;     \
+    }
+
+DEFINE_NCCL_TYPE_TRAIT(float, ncclFloat);
+DEFINE_NCCL_TYPE_TRAIT(uint64_t, ncclUint64);
+// ... etc
+
+#undef DEFINE_NCCL_TYPE_TRAIT  // Clean namespace
+```
+
+**Single Source of Truth:**
+Only one initialization and one verification function, both using pattern injection:
+- `initializeBufferWithPattern<T>(buffer, size, pattern_func)`
+- `verifyBufferData<T>(buffer, size, pattern_func, ...)`
+
+All patterns are expressed via lambdas at the call site.
+
+### Migration Guide
+
+**Old API (if you have legacy code):**
+```cpp
+// Old: Separate functions with different signatures
+initializeBufferWithPattern<float>(buffer, size, rank, multiplier);
+initializeBufferWithCustomPattern<float>(buffer, size, lambda);
+
+verifyBufferData<float>(buffer, size, rank, multiplier, samples, tol, ...);
+verifyBufferWithCustomCheck<float>(buffer, size, check_lambda, ...);
+```
+
+**New API (current):**
+```cpp
+// New: Unified functions with lambda patterns
+initializeBufferWithPattern<float>(buffer, size,
+    [rank, mult](size_t i) { return rank * mult + i; });
+
+verifyBufferData<float>(buffer, size,
+    [rank, mult](size_t i) { return rank * mult + i; },
+    samples, tol, ...);
+```
+
+### Best Practices
+
+**1. Use Explicit Lambdas for Clarity:**
+```cpp
+// ✅ GOOD: Pattern logic is self-documenting
+initializeBufferWithPattern<float>(send_buffer, count,
+    [rank = config.world_rank](size_t i) {
+        return static_cast<float>(rank * 1000 + i);
+    });
+
+// Pattern is immediately visible - no need to look up function definition
+```
+
+**2. Capture Variables for Pattern:**
+```cpp
+// Capture by value for safety
+int multiplier = 1000;
+initializeBufferWithPattern<float>(buffer, size,
+    [rank, multiplier](size_t i) {
+        return static_cast<float>(rank * multiplier + i);
+    });
+```
+
+**3. Verify All for Comprehensive Tests:**
+```cpp
+// For critical tests, verify all elements
+bool ok = verifyBufferData<float>(buffer, size, pattern, 0);  // 0 = all
+
+// For quick smoke tests, sample first N
+bool ok = verifyBufferData<float>(buffer, size, pattern, 10);  // first 10
+```
+
+**4. Use Error Details for Debugging:**
+```cpp
+size_t error_idx;
+float expected, actual;
+if (!verifyBufferData<float>(buffer, count, pattern, 0, 1e-5,
+                              &error_idx, &expected, &actual)) {
+    TEST_INFO("Data mismatch at index %zu: expected %.6f, got %.6f",
+              error_idx, expected, actual);
+}
+```
+
+### See Also
+
+- **DeviceBufferHelpers.hpp** - Full implementation with examples
+- **P2pMPITests.cpp** - Real-world usage examples
+- **ShmMPITests.cpp** - Pattern variations and edge cases
+
+---
+
 ## Troubleshooting
 
 ### MPI Initialization Failed
