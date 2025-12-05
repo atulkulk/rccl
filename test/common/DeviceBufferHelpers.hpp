@@ -40,69 +40,35 @@ namespace RCCLTestHelpers
 template<typename T>
 struct NcclTypeTraits;
 
-/** @brief Specialization for float */
-template<>
-struct NcclTypeTraits<float>
-{
-    static constexpr ncclDataType_t value = ncclFloat;
-    static constexpr const char*    name  = "float";
-};
+/**
+ * @brief Macro to define NcclTypeTraits specializations
+ *
+ * ncclDataType_t mapping and the string name using the stringification
+ * operator (#) for each supported type.
+ *
+ * @param cpp_type The C++ type (e.g., uint64_t, float)
+ * @param nccl_type The corresponding NCCL type (e.g., ncclUint64, ncclFloat)
+ */
+#define DEFINE_NCCL_TYPE_TRAIT(cpp_type, nccl_type)                  \
+    template<>                                                       \
+    struct NcclTypeTraits<cpp_type>                                  \
+    {                                                                \
+        static constexpr ncclDataType_t value = nccl_type;           \
+        static constexpr const char*    name  = #cpp_type;           \
+    }
 
-/** @brief Specialization for double */
-template<>
-struct NcclTypeTraits<double>
-{
-    static constexpr ncclDataType_t value = ncclDouble;
-    static constexpr const char*    name  = "double";
-};
+// Define all supported type mappings
+DEFINE_NCCL_TYPE_TRAIT(float,    ncclFloat);
+DEFINE_NCCL_TYPE_TRAIT(double,   ncclDouble);
+DEFINE_NCCL_TYPE_TRAIT(int8_t,   ncclInt8);
+DEFINE_NCCL_TYPE_TRAIT(uint8_t,  ncclUint8);
+DEFINE_NCCL_TYPE_TRAIT(int32_t,  ncclInt32);
+DEFINE_NCCL_TYPE_TRAIT(uint32_t, ncclUint32);
+DEFINE_NCCL_TYPE_TRAIT(int64_t,  ncclInt64);
+DEFINE_NCCL_TYPE_TRAIT(uint64_t, ncclUint64);
 
-/** @brief Specialization for int32_t */
-template<>
-struct NcclTypeTraits<int32_t>
-{
-    static constexpr ncclDataType_t value = ncclInt32;
-    static constexpr const char*    name  = "int32_t";
-};
-
-/** @brief Specialization for uint32_t */
-template<>
-struct NcclTypeTraits<uint32_t>
-{
-    static constexpr ncclDataType_t value = ncclUint32;
-    static constexpr const char*    name  = "uint32_t";
-};
-
-/** @brief Specialization for int64_t */
-template<>
-struct NcclTypeTraits<int64_t>
-{
-    static constexpr ncclDataType_t value = ncclInt64;
-    static constexpr const char*    name  = "int64_t";
-};
-
-/** @brief Specialization for uint64_t */
-template<>
-struct NcclTypeTraits<uint64_t>
-{
-    static constexpr ncclDataType_t value = ncclUint64;
-    static constexpr const char*    name  = "uint64_t";
-};
-
-/** @brief Specialization for int8_t */
-template<>
-struct NcclTypeTraits<int8_t>
-{
-    static constexpr ncclDataType_t value = ncclInt8;
-    static constexpr const char*    name  = "int8_t";
-};
-
-/** @brief Specialization for uint8_t */
-template<>
-struct NcclTypeTraits<uint8_t>
-{
-    static constexpr ncclDataType_t value = ncclUint8;
-    static constexpr const char*    name  = "uint8_t";
-};
+// Undefine macro to avoid polluting namespace
+#undef DEFINE_NCCL_TYPE_TRAIT
 
 /**
  * @brief Helper function to get NCCL datatype for a C++ type
