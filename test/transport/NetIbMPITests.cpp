@@ -278,11 +278,11 @@ protected:
 
     // Helper: Verify device buffer pattern using DeviceBufferHelpers
     bool VerifyBuffer(void* buffer, size_t size, int pattern) {
-        // Use template-based helper with custom verification
-        return verifyBufferWithCustomCheck<uint8_t>(
+        // Use template-based helper with pattern verification
+        return verifyBufferData<uint8_t>(
             buffer, size,
-            [pattern](size_t i, uint8_t val) {
-                return val == static_cast<uint8_t>((pattern + i) % kBytePatternModulo);
+            [pattern](size_t i) {
+                return static_cast<uint8_t>((pattern + i) % kBytePatternModulo);
             }
         );
     }

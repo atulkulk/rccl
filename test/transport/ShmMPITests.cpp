@@ -584,16 +584,19 @@ public:
         {
             // Verify with custom pattern check (matching initialization pattern)
             size_t error_idx;
-            bool   data_correct = verifyBufferWithCustomCheck<float>(
+            float  expected_val, actual_val;
+            bool   data_correct = verifyBufferData<float>(
                 recv_buffer,
                 num_elements,
-                [peer_rank = config.peer_rank](size_t i, float val)
-                {
-                    float expected = static_cast<float>(peer_rank * kLargePatternMultiplier
-                                                        + (i % kPatternModulo));
-                    return std::abs(val - expected) <= 1e-5;
+                [peer_rank = config.peer_rank](size_t i) {
+                    return static_cast<float>(peer_rank * kLargePatternMultiplier
+                                              + (i % kPatternModulo));
                 },
-                &error_idx);
+                0,      // verify all elements
+                1e-5,
+                &error_idx,
+                &expected_val,
+                &actual_val);
 
             EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
                                       << ": Data validation failed at index " << error_idx;
@@ -925,15 +928,17 @@ TEST_F(ShmMPITest, ShmWorkflow2)
 
         // Validate received data using verifyBufferData template
         // The data should match the SENDER's pattern (peer_rank is the sender's rank)
-        bool data_correct = verifyBufferData<float>(shm_config.recv_buffer,
-                                                    count,
-                                                    config.peer_rank,  // Sender's rank
-                                                    kDefaultPatternMultiplier,
-                                                    kMaxValidationElements,
-                                                    1e-5,
-                                                    &error_idx,
-                                                    &expected_val,
-                                                    &actual_val);
+        bool data_correct = verifyBufferData<float>(
+            shm_config.recv_buffer,
+            count,
+            [peer_rank = config.peer_rank](size_t i) {
+                return static_cast<float>(peer_rank * kDefaultPatternMultiplier + i);
+            },
+            kMaxValidationElements,
+            1e-5,
+            &error_idx,
+            &expected_val,
+            &actual_val);
 
         EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
                                   << ": Data validation failed at index " << error_idx

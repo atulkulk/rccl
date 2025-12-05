@@ -169,29 +169,46 @@ hipError_t zeroInitializeBuffer(void* device_buffer, size_t num_elements)
 // ============================================================================
 
 /**
- * @brief Verify device buffer contains expected rank-based pattern
+ * @brief Verify device buffer data with pattern function
  *
- * Downloads data from device and verifies first num_samples elements.
+ * Generic function that allows any verification pattern via lambda or function pointer.
+ * Downloads data from device and verifies elements against expected values.
  * Uses appropriate comparison for floating-point vs integer types.
  *
+ * Example usage:
+ * @code
+ * // Rank-based pattern verification: rank * multiplier + index
+ * verifyBufferData<float>(buffer, size,
+ *     [rank, multiplier](size_t i) { return rank * multiplier + i; },
+ *     num_samples, tolerance);
+ *
+ * // Constant value verification
+ * verifyBufferData<int>(buffer, size,
+ *     [](size_t i) { return 42; });
+ *
+ * // Custom pattern verification
+ * verifyBufferData<double>(buffer, size,
+ *     [](size_t i) { return std::sin(i * 0.1); },
+ *     size, 1e-6);  // verify all elements with tighter tolerance
+ * @endcode
+ *
  * @tparam T Element type
+ * @tparam PatternFunc Callable type (lambda, function pointer, functor)
  * @param device_buffer Device memory pointer (from hipMalloc)
- * @param num_elements Total number of elements
- * @param expected_rank Rank that generated the pattern
- * @param multiplier Pattern multiplier (must match initialization)
- * @param num_samples Number of elements to verify (default: 10, capped at num_elements)
- * @param tolerance Tolerance for floating-point comparison (default: 1e-5)
+ * @param num_elements Total number of elements in buffer
+ * @param pattern_func Function that generates expected value for each index: T pattern_func(size_t index)
+ * @param num_samples Number of elements to verify (default: all, capped at num_elements)
+ * @param tolerance Tolerance for floating-point comparison (default: 1e-5, ignored for integer types)
  * @param[out] first_error_index If verification fails, set to index of first mismatch
  * @param[out] expected_value If verification fails, set to expected value
  * @param[out] actual_value If verification fails, set to actual value
  * @return true if all samples match, false otherwise
  */
-template<typename T>
+template<typename T, typename PatternFunc>
 bool verifyBufferData(const void* device_buffer,
                       size_t      num_elements,
-                      int         expected_rank,
-                      int         multiplier        = 1000,
-                      size_t      num_samples       = 10,
+                      PatternFunc pattern_func,
+                      size_t      num_samples       = 0,  // 0 means verify all
                       double      tolerance         = 1e-5,
                       size_t*     first_error_index = nullptr,
                       T*          expected_value    = nullptr,
@@ -202,8 +219,16 @@ bool verifyBufferData(const void* device_buffer,
         return false;
     }
 
-    // Cap num_samples at num_elements
-    num_samples = std::min(num_samples, num_elements);
+    // Default to verifying all elements if num_samples is 0
+    if(num_samples == 0)
+    {
+        num_samples = num_elements;
+    }
+    else
+    {
+        // Cap num_samples at num_elements
+        num_samples = std::min(num_samples, num_elements);
+    }
 
     // Download data from device
     std::vector<T> host_data(num_elements);
@@ -219,7 +244,7 @@ bool verifyBufferData(const void* device_buffer,
     // Verify samples
     for(size_t i = 0; i < num_samples; i++)
     {
-        T expected = static_cast<T>(expected_rank * multiplier + i);
+        T expected = pattern_func(i);
         T actual   = host_data[i];
 
         bool matches = false;
@@ -245,51 +270,6 @@ bool verifyBufferData(const void* device_buffer,
                 *expected_value = expected;
             if(actual_value)
                 *actual_value = actual;
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/**
- * @brief Verify device buffer with custom verification function
- *
- * @tparam T Element type
- * @tparam VerifyFunc Callable type: bool verify_func(size_t index, T actual_value)
- * @param device_buffer Device memory pointer (from hipMalloc)
- * @param num_elements Number of elements
- * @param verify_func Function that verifies each element
- * @param[out] first_error_index If verification fails, set to index of first mismatch
- * @return true if all elements pass verification
- */
-template<typename T, typename VerifyFunc>
-bool verifyBufferWithCustomCheck(const void* device_buffer,
-                                 size_t      num_elements,
-                                 VerifyFunc  verify_func,
-                                 size_t*     first_error_index = nullptr)
-{
-    if(!device_buffer || num_elements == 0)
-    {
-        return false;
-    }
-
-    std::vector<T> host_data(num_elements);
-    hipError_t     err = hipMemcpy(host_data.data(),
-                               device_buffer,
-                               num_elements * sizeof(T),
-                               hipMemcpyDeviceToHost);
-    if(err != hipSuccess)
-    {
-        return false;
-    }
-
-    for(size_t i = 0; i < num_elements; i++)
-    {
-        if(!verify_func(i, host_data[i]))
-        {
-            if(first_error_index)
-                *first_error_index = i;
             return false;
         }
     }

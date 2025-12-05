@@ -332,15 +332,17 @@ public:
 
             // Validate received data using verifyBufferData template
             // The data should match the SENDER's pattern (peer_rank is the sender's rank)
-            bool data_correct = verifyBufferData<float>(p2p_config.recv_buffer,
-                                                        count,
-                                                        config.peer_rank,  // Sender's rank
-                                                        kDefaultPatternMultiplier,
-                                                        kMaxValidationElements,
-                                                        1e-5,
-                                                        &error_idx,
-                                                        &expected_val,
-                                                        &actual_val);
+            bool data_correct = verifyBufferData<float>(
+                p2p_config.recv_buffer,
+                count,
+                [peer_rank = config.peer_rank](size_t i) {
+                    return static_cast<float>(peer_rank * kDefaultPatternMultiplier + i);
+                },
+                kMaxValidationElements,
+                1e-5,
+                &error_idx,
+                &expected_val,
+                &actual_val);
 
             EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
                                       << ": Data validation failed at index " << error_idx
@@ -597,15 +599,15 @@ public:
         // Step 7: Verify received data correctness
         size_t error_idx;
         float  expected_val, actual_val;
-        bool   data_correct = verifyBufferData<float>(recv_buffer,
-                                                    num_floats,
-                                                    recv_peer,
-                                                    1000,
-                                                    10,
-                                                    1e-5,
-                                                    &error_idx,
-                                                    &expected_val,
-                                                    &actual_val);
+        bool   data_correct = verifyBufferData<float>(
+            recv_buffer,
+            num_floats,
+            [recv_peer](size_t i) { return static_cast<float>(recv_peer * 1000 + i); },
+            10,
+            1e-5,
+            &error_idx,
+            &expected_val,
+            &actual_val);
 
         EXPECT_TRUE(data_correct) << "Rank " << config.world_rank
                                   << ": Data verification failed at index " << error_idx
@@ -688,15 +690,17 @@ public:
         const int peer_rank_verify = 1 - config.world_rank;
         size_t    error_idx;
         float     expected_val, actual_val;
-        bool      data_correct = verifyBufferData<float>(recv_buffer,
-                                                    count,
-                                                    peer_rank_verify,
-                                                    1000,
-                                                    10,
-                                                    1e-5,
-                                                    &error_idx,
-                                                    &expected_val,
-                                                    &actual_val);
+        bool      data_correct = verifyBufferData<float>(
+            recv_buffer,
+            count,
+            [peer_rank_verify](size_t i) {
+                return static_cast<float>(peer_rank_verify * 1000 + i);
+            },
+            10,
+            1e-5,
+            &error_idx,
+            &expected_val,
+            &actual_val);
         EXPECT_TRUE(data_correct) << "Rank " << config.world_rank << ": Data mismatch at index "
                                   << error_idx << ": expected " << expected_val << ", got "
                                   << actual_val;
@@ -824,15 +828,15 @@ public:
         // Verify received data
         size_t error_idx;
         float  expected_val, actual_val;
-        bool   data_correct = verifyBufferData<float>(recv_buffer,
-                                                    count,
-                                                    peer_rank,
-                                                    1000,
-                                                    10,
-                                                    1e-5,
-                                                    &error_idx,
-                                                    &expected_val,
-                                                    &actual_val);
+        bool   data_correct = verifyBufferData<float>(
+            recv_buffer,
+            count,
+            [peer_rank](size_t i) { return static_cast<float>(peer_rank * 1000 + i); },
+            10,
+            1e-5,
+            &error_idx,
+            &expected_val,
+            &actual_val);
 
         EXPECT_TRUE(data_correct)
             << "Rank " << config.world_rank
