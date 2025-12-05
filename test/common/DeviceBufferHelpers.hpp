@@ -281,6 +281,10 @@ bool verifyBufferData(const void* device_buffer,
 // Combined Operations
 // ============================================================================
 
+// Forward declaration for downloadBuffer (used in allocateAndInitialize)
+template<typename T>
+std::pair<hipError_t, std::vector<T>> downloadBuffer(const void* device_buffer, size_t num_elements);
+
 /**
  * @brief Allocate, initialize, and return RAII-guarded device buffers
  *
@@ -312,20 +316,18 @@ std::pair<hipError_t, std::vector<T>> allocateAndInitialize(void** device_buffer
         return {err, {}};
     }
 
-    // Create host data with pattern
-    std::vector<T> host_data(num_elements);
-    for(size_t i = 0; i < num_elements; i++)
+    // Initialize using generic pattern function
+    err = initializeBufferWithPattern<T>(
+        *device_buffer, num_elements,
+        [rank, multiplier](size_t i) { return static_cast<T>(rank * multiplier + i); });
+
+    if(err != hipSuccess)
     {
-        host_data[i] = static_cast<T>(rank * multiplier + i);
+        return {err, {}};
     }
 
-    // Copy to device
-    err = hipMemcpy(*device_buffer,
-                    host_data.data(),
-                    num_elements * sizeof(T),
-                    hipMemcpyHostToDevice);
-
-    return {err, std::move(host_data)};
+    // Download and return host copy for verification
+    return downloadBuffer<T>(*device_buffer, num_elements);
 }
 
 /**
