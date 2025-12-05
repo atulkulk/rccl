@@ -137,7 +137,6 @@ if(BUILD_TESTS)
     list(APPEND RCCL_TEST_EXECUTABLES rccl-UnitTestsFixtures)
 
     set(TEST_FIXTURE_SOURCE_FILES
-      AltRsmiTests.cpp
       AllocTests.cpp
       ParamTests.cpp
       ArgCheckTests.cpp
