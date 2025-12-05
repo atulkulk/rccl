@@ -230,7 +230,6 @@ if(BUILD_TESTS)
 
       # Create the MPI test executable
       add_executable(rccl-UnitTestsMPI ${MPI_TEST_SOURCE_FILES})
-      add_dependencies(rccl-UnitTestsMPI replace_static_in_hipify)
 
       # Add to test executables list for proper linking
       list(APPEND RCCL_TEST_EXECUTABLES rccl-UnitTestsMPI)
