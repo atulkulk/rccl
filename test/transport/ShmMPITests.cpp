@@ -17,34 +17,7 @@
 using namespace MPITestConstants;
 using namespace RCCLTestGuards;
 using namespace RCCLTestHelpers;
-
-namespace
-{
-// Buffer size constants for SHM tests
-inline constexpr size_t kDefaultBufferSize     = 1024 * sizeof(float);
-inline constexpr size_t kLargeBufferSize       = 135168;
-inline constexpr size_t kMediumBufferSize      = 16384;
-inline constexpr size_t kSmallBufferSize       = 256;
-inline constexpr size_t kMaxValidationElements = 100;
-
-// Large buffer test constants
-inline constexpr size_t kCEMemcpyBufferSize  = 256 * 1024 * 1024; // 256 MB
-inline constexpr size_t kVeryLargeBufferSize = 512 * 1024 * 1024; // 512 MB
-
-// Test iteration constants
-inline constexpr int kMultipleTransferCount = 5;
-inline constexpr int kMaxErrorsToReport     = 10;
-
-// Validation sampling parameters
-inline constexpr size_t kValidationStride = 1000;
-
-// Test pattern generation constants
-inline constexpr int    kDefaultPatternMultiplier = 1000; // For standard patterns
-inline constexpr int    kLargePatternMultiplier   = 1000000; // For large buffer patterns
-inline constexpr int    kPatternModulo            = 10000; // For wraparound patterns
-inline constexpr size_t kMinValidationSamples     = 100;
-
-} // namespace
+using namespace TransportTestConstants;
 
 // SHM-specific test configuration
 struct ShmTestConfig

@@ -111,6 +111,39 @@ extern struct ncclTransport p2pTransport;
 extern struct ncclTransport netTransport;
 extern struct ncclTransport shmTransport;
 
+// ============================================================================
+// Transport Test Constants
+// ============================================================================
+
+namespace TransportTestConstants
+{
+
+// Buffer size constants (common across P2P, SHM, NET tests)
+inline constexpr size_t kDefaultBufferSize     = 1024 * sizeof(float);  // 4096 bytes
+inline constexpr size_t kSmallBufferSize       = 256;
+inline constexpr size_t kMediumBufferSize      = 16384;                 // 16 KB
+inline constexpr size_t kLargeBufferSize       = 135168;                // ~132 KB
+inline constexpr size_t kVeryLargeBufferSize   = 256 * 1024 * 1024;    // 256 MB
+inline constexpr size_t kCEMemcpyBufferSize    = 256 * 1024 * 1024;    // 256 MB (for CE tests)
+
+// Pattern generation constants
+inline constexpr int kDefaultPatternMultiplier = 1000;     // Standard rank-based patterns
+inline constexpr int kSmallPatternMultiplier   = 100;      // Smaller patterns (memcpy tests)
+inline constexpr int kLargePatternMultiplier   = 1000000;  // Large buffer patterns
+inline constexpr int kPatternModulo            = 10000;    // Wraparound patterns
+inline constexpr int kBytePatternModulo        = 256;      // uint8_t wraparound
+
+// Validation constants
+inline constexpr size_t kMaxValidationElements = 100;      // Number of elements to validate
+inline constexpr size_t kMinValidationSamples  = 100;      // Minimum samples for validation
+inline constexpr size_t kValidationStride      = 1000;     // Stride for sampling validation
+inline constexpr int    kMaxErrorsToReport     = 10;       // Max errors to display
+
+// Test iteration constants
+inline constexpr int kMultipleTransferCount = 5;           // Number of sequential transfers
+
+} // namespace TransportTestConstants
+
 // Common test configuration
 struct TransportTestConfig
 {

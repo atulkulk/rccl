@@ -18,20 +18,7 @@
 using namespace MPITestConstants;
 using namespace RCCLTestGuards;
 using namespace RCCLTestHelpers;
-
-namespace
-{
-// Buffer size constants
-inline constexpr size_t kDefaultBufferSize     = 1024 * sizeof(float);
-inline constexpr size_t kLargeBufferSize       = 135168;
-inline constexpr size_t kMediumBufferSize      = 16384;
-inline constexpr size_t kMaxValidationElements = 100;
-
-// Test pattern generation constants
-inline constexpr int kDefaultPatternMultiplier = 1000; // For standard rank-based patterns
-inline constexpr int kSmallPatternMultiplier   = 100; // For smaller patterns (memcpy tests)
-
-} // namespace
+using namespace TransportTestConstants;
 
 // P2P-specific test configuration
 struct P2PTestConfig
