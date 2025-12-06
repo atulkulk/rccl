@@ -42,42 +42,6 @@ struct P2PTestConfig
     size_t buffer_size{0};
 };
 
-// P2P-specific RAII guard for connector cleanup
-// NOTE: This must be declared BEFORE buffer allocations to ensure proper
-// destructor ordering. Connectors must be freed BEFORE buffers when CE memcpy is enabled.
-struct ConnectorCleanup
-{
-    ncclConnector* send_conn{nullptr};
-    ncclConnector* recv_conn{nullptr};
-    ncclTransport* transport{nullptr};
-
-    // Default constructor
-    ConnectorCleanup() = default;
-
-    ~ConnectorCleanup()
-    {
-        // Free connectors first (before buffers are freed by other guards)
-        // This is critical when CE memcpy is enabled (NCCL_P2P_USE_CUDA_MEMCPY=1)
-        // because CE memcpy creates proxy resources tied to the connector lifecycle
-        if(send_conn && send_conn->transportResources && transport)
-        {
-            transport->send.free(send_conn);
-            send_conn->transportResources = nullptr;
-        }
-        if(recv_conn && recv_conn->transportResources && transport)
-        {
-            transport->recv.free(recv_conn);
-            recv_conn->transportResources = nullptr;
-        }
-    }
-
-    // Prevent copying and moving
-    ConnectorCleanup(const ConnectorCleanup&) = delete;
-    ConnectorCleanup& operator=(const ConnectorCleanup&) = delete;
-    ConnectorCleanup(ConnectorCleanup&&) = delete;
-    ConnectorCleanup& operator=(ConnectorCleanup&&) = delete;
-};
-
 class P2pMPITest : public TransportTestBase
 {
 protected:
@@ -91,6 +55,7 @@ protected:
     {
         // Call base class SetUp first
         TransportTestBase::SetUp();
+
     }
 
     // Helper: Allocate P2P-specific resources
@@ -370,7 +335,7 @@ public:
         // Don't return error on sync failure - continue with validation
 
         // Validate that connector resources are still valid at this point
-        // The actual cleanup will be handled by ConnectorCleanup RAII guard
+        // The actual cleanup will be handled by base class TearDown()
         auto* connector = p2p_config.is_sender ? &send_connector : &recv_connector;
 
         EXPECT_NE(nullptr, connector)
@@ -384,12 +349,12 @@ public:
 
             if(config.world_rank == 0 && connector->transportResources)
             {
-                TEST_INFO("Connector resources validated - still active (will be freed by RAII guard)");
+                TEST_INFO("Connector resources validated - still active (will be freed by base class)");
             }
         }
 
-        // NOTE: Connectors will be automatically freed by ConnectorCleanup destructor
-        // This happens BEFORE buffers are freed in TearDown, which is critical for CE memcpy
+        // NOTE: Connectors will be automatically freed by base class TearDown()
+        // Device sync + connector cleanup happens BEFORE buffers are freed, which is critical for CE memcpy
     }
 
     // Test proxyConnect and proxyProgress specifically when useMemcpy is enabled
@@ -877,11 +842,6 @@ TEST_F(P2pMPITest, P2pWorkflow)
         TEST_INFO("This test exercises the low-level P2P transport API");
     }
 
-    // Note: Track connectors so we can free them BEFORE buffers (critical for CE memcpy)
-    // Using the P2P-specific ConnectorCleanup RAII guard defined at file scope
-    ConnectorCleanup cleanup;
-    cleanup.transport = &p2pTransport;
-
     // Test 1: P2P Capability Detection
     if(config.world_rank == 0)
     {
@@ -895,10 +855,6 @@ TEST_F(P2pMPITest, P2pWorkflow)
         TEST_INFO("Step 2: Setting up P2P transport connectors");
     }
     testP2pSetup();
-
-    // Register connectors with cleanup guard after setup
-    cleanup.send_conn = p2p_config.is_sender ? &send_connector : nullptr;
-    cleanup.recv_conn = p2p_config.is_sender ? nullptr : &recv_connector;
 
     // Test 3: P2P Connection
     if(config.world_rank == 0)
@@ -921,23 +877,11 @@ TEST_F(P2pMPITest, P2pWorkflow)
     }
     testP2pCleanup();
 
-    // CRITICAL: Synchronize device before freeing connectors
-    // The P2P proxy has its own internal stream for CE memcpy operations
-    // that must be idle before we can destroy it
-    ASSERT_EQ(hipSuccess, hipDeviceSynchronize())
-        << "Rank " << config.world_rank << ": Device synchronization failed before cleanup";
-
     if(config.world_rank == 0)
     {
         TEST_INFO("P2P transport workflow test completed successfully");
-        TEST_INFO("NOTE: Connectors will be automatically freed before buffers (CE memcpy safe)");
+        TEST_INFO("NOTE: Base class TearDown() handles connector cleanup automatically");
     }
-
-    // NOTE: Cleanup order is critical for CE memcpy:
-    // 1. Device synchronization ensures all proxy operations complete
-    // 2. ConnectorCleanup destructor runs - frees transport connectors and proxy streams
-    // 3. Then TearDown() frees the buffers
-    // This ensures CE memcpy proxy resources are released before buffers
 }
 
 TEST_F(P2pMPITest, P2pWithMemcpyTest)

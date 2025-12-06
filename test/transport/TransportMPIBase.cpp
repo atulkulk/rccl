@@ -42,6 +42,32 @@ ncclResult_t TransportTestBase::createTestCommunicator()
     return result;
 }
 
+// Set transport type and initialize connectors accordingly
+void TransportTestBase::setTransportType(TransportType type)
+{
+    initialized_transport = type;
+
+    switch(type)
+    {
+        case TransportType::P2P:
+            send_connector.transportComm = &p2pTransport.send;
+            recv_connector.transportComm = &p2pTransport.recv;
+            break;
+        case TransportType::Network:
+            send_connector.transportComm = &netTransport.send;
+            recv_connector.transportComm = &netTransport.recv;
+            break;
+        case TransportType::SHM:
+            send_connector.transportComm = &shmTransport.send;
+            recv_connector.transportComm = &shmTransport.recv;
+            break;
+        case TransportType::None:
+            send_connector.transportComm = nullptr;
+            recv_connector.transportComm = nullptr;
+            break;
+    }
+}
+
 // SetUp: Initialize common transport test components
 void TransportTestBase::SetUp()
 {
@@ -87,14 +113,20 @@ void TransportTestBase::SetUp()
                            .typeInter = PATH_NET};
     }
 
-    // Set up P2P transport connectors
-    send_connector.transportComm = &p2pTransport.send;
-    recv_connector.transportComm = &p2pTransport.recv;
+    // Initialize with P2P transport by default
+    // Tests can call setTransportType() to switch to SHM or Network
+    setTransportType(TransportType::P2P);
 }
 
 // TearDown: Cleanup common transport test components
 void TransportTestBase::TearDown()
 {
+    // CRITICAL: Synchronize device before freeing connectors
+    // The transport proxy may have its own internal stream for CE memcpy operations
+    // that must be idle before we can destroy it
+    // Note: We ignore errors here as we're in cleanup path
+    (void)hipDeviceSynchronize();
+
     // Cleanup topology graph
     if(topology_graph)
     {
@@ -109,6 +141,10 @@ void TransportTestBase::TearDown()
         {
             p2pTransport.send.free(&send_connector);
         }
+        else if(initialized_transport == TransportType::SHM)
+        {
+            shmTransport.send.free(&send_connector);
+        }
         else if(initialized_transport == TransportType::Network)
         {
             netTransport.send.free(&send_connector);
@@ -120,6 +156,10 @@ void TransportTestBase::TearDown()
         if(initialized_transport == TransportType::P2P)
         {
             p2pTransport.recv.free(&recv_connector);
+        }
+        else if(initialized_transport == TransportType::SHM)
+        {
+            shmTransport.recv.free(&recv_connector);
         }
         else if(initialized_transport == TransportType::Network)
         {

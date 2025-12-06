@@ -109,6 +109,7 @@ inline TransportRecvResourceGuard makeTransportRecvGuard(ncclConnector* connecto
 
 extern struct ncclTransport p2pTransport;
 extern struct ncclTransport netTransport;
+extern struct ncclTransport shmTransport;
 
 // Common test configuration
 struct TransportTestConfig
@@ -136,6 +137,7 @@ protected:
     {
         None,
         P2P,
+        SHM,
         Network
     };
     TransportType initialized_transport = TransportType::None;
@@ -157,6 +159,9 @@ protected:
 
     // Override createTestCommunicator to also update config
     ncclResult_t createTestCommunicator() override;
+
+    // Set transport type and initialize connectors
+    void setTransportType(TransportType type);
 
     // Buffer allocation (unguarded - for manual management)
     void allocateAndInitBuffers(void** send_buffer,
