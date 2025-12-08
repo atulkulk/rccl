@@ -14,7 +14,7 @@ The RCCL test suite provides following frameworks along with the existing rccl-U
 
 ## Testing Frameworks
 
-Following are two new complementary testing frameworks for different testing needs:
+Following is a new testing framework for running single node & single process test in isolation:
 
 ### 1. Process Isolated Test Runner
 Run tests in isolated processes with clean environment settings.
