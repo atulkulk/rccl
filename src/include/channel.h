@@ -27,7 +27,7 @@ inline uint8_t ncclP2pChannelBaseForRound(struct ncclComm* comm, int p2pRound, i
   } else {
     base = p2pRound;
   }
-  return reverseBits(base, log2Up(comm->p2pnChannels));
+  return base & 0xff;
 }
 
 #endif
