@@ -1,3 +1,6 @@
+// Modification Copyright (c) Advanced Micro Devices, Inc., or its affiliates.
+// SPDX-License-Identifier: MIT
+
 #include "sym_kernels.h"
 #include "nccl_device.h"
 #include "symmetric/kernel.h"
