@@ -439,7 +439,7 @@ static ncclResult_t commFree(ncclComm_t comm) {
   free(comm->connectRecv);
 
   if (rcclParamEnableProxyTrace()) {
-    WARN("ProxyTrace:");
+    WARN("commFree() ProxyTrace:");
     if (comm->proxyState && comm->proxyState->proxyTrace){
       WARN("%s", comm->proxyState->proxyTrace->dump().c_str());
     }
