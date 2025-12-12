@@ -333,6 +333,7 @@ endif()
 ## Currently MSCCL++ is supported only on gfx942 and gfx950, and only on Ubuntu and CentOS
 set(MSCCLPP_SUPPORTED_ARCHS "gfx942" "gfx942:xnack-" "gfx942:xnack+" "gfx950" "gfx950:xnack-" "gfx950:xnack+")
 
+
 # Check if any of the supported architectures are in GPU_TARGETS
 set(ARCH_MATCH_FOUND OFF)
 set(MSCCLPP_GPU_TARGETS "")
@@ -354,6 +355,20 @@ if (ENABLE_MSCCLPP AND ROCM_VERSION VERSION_LESS "60200")
   set(ENABLE_MSCCLPP OFF)
   message(WARNING "MSCCL++ integration only supported on ROCm 6.2.0 or greater; disabling MSCCL++ build")
 endif()
+
+## Disable WARP_SPEED if the build environment is invalid
+set(WARP_SPEED_SUPPORTED_ARCHS "gfx942" "gfx942:xnack-" "gfx942:xnack+" "gfx950" "gfx950:xnack-" "gfx950:xnack+")
+set(ARCH_MATCH_FOUND OFF)
+foreach(ARCH IN LISTS GPU_TARGETS)
+  if(ARCH IN_LIST WARP_SPEED_SUPPORTED_ARCHS)
+    set(ARCH_MATCH_FOUND ON)
+  endif()
+endforeach()
+if (NOT ARCH_MATCH_FOUND)
+  set(ENABLE_WARP_SPEED OFF)
+  message(WARNING "Can only build WARP_SPEED for supported GPU_TARGETS: ${WARP_SPEED_SUPPORTED_ARCHS}; current GPU_TARGETS: ${GPU_TARGETS}; so disabling WARP_SPEED build")
+endif()
+
 
 # cmake_host_system_information(RESULT HOST_OS_ID QUERY DISTRIB_ID) ## Requires cmake 3.22
 execute_process(
@@ -440,6 +455,7 @@ set(SRC_FILES
   src/ce_coll.cc
   src/channel.cc
   src/collectives.cc
+  src/commDump.cc
   src/debug.cc
   src/dev_runtime.cc
   src/enqueue.cc
@@ -907,6 +923,9 @@ if(HAVE_ROCM_SMI64CONFIG)
 endif()
 if(HAVE_ROCM_SMI_THREAD_ONLY_MUTEX)
   target_compile_definitions(rccl PRIVATE USE_ROCM_SMI_THREAD_ONLY_MUTEX)
+endif()
+if(ENABLE_WARP_SPEED)
+  target_compile_definitions(rccl PRIVATE ENABLE_WARP_SPEED)
 endif()
 
 # NPKit flags
