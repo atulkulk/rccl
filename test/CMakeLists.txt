@@ -248,6 +248,7 @@ if(BUILD_TESTS)
       ../src/misc/alt_rsmi.cc
       common/main_fixtures.cpp
       common/EnvVars.cpp
+      common/ProcessIsolatedTestRunner.cpp
     )
 
     add_executable(rccl-UnitTestsAltRsmi ${TEST_ALTRSMI_SOURCE_FILES})
