@@ -171,9 +171,9 @@ The `paths` section supports environment variable expansion, allowing you to avo
 ```json
 {
   "paths": {
-    "workdir": "${WORKDIR:-/home/AMD/atkulkar/code/rti/scripts/rccl}",
+    "workdir": "${WORKDIR:-${HOME}/code/rti/scripts/rccl}",
     "rocm_path": "${ROCM_PATH:-/opt/rocm}",
-    "mpi_path": "${MPI_PATH:-/scratch/users/atkulkar/softwares/ompi}"
+    "mpi_path": "${MPI_PATH:-${HOME}/softwares/ompi}"
   }
 }
 ```

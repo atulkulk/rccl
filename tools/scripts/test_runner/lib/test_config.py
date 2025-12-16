@@ -11,7 +11,15 @@ import json
 import os
 import re
 from copy import deepcopy
+from pathlib import Path
 from types import MappingProxyType
+
+# Set default WORKDIR to rccl root directory if not already defined
+# This file is at: rccl/tools/scripts/test_runner/lib/test_config.py
+# rccl root is 5 directories up
+if "WORKDIR" not in os.environ:
+    _rccl_root = Path(__file__).resolve().parents[4]
+    os.environ["WORKDIR"] = str(_rccl_root)
 
 
 class TestConfigProcessor:
