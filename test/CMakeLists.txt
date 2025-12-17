@@ -153,6 +153,7 @@ if(BUILD_TESTS)
     NonBlockingTests.cpp
     ReduceScatterTests.cpp
     ReduceTests.cpp
+    RegisterTests.cpp
     ScatterTests.cpp
     SendRecvTests.cpp
     StandaloneTests.cpp
@@ -204,7 +205,6 @@ if(BUILD_TESTS)
       NetSocketTests.cpp
       ProxyTests.cpp
       RcclWrapTests.cpp
-      RegisterTests.cpp
       TransportTests.cpp
       common/main_fixtures.cpp
       common/EnvVars.cpp
