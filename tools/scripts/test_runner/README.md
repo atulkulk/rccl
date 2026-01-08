@@ -79,7 +79,7 @@ These can be overridden via environment variables or specified in the JSON confi
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `WORKDIR` | RCCL source and build directory | `$HOME/code/rti/scripts/rccl` |
+| `WORKDIR` | RCCL source and build directory | Current rccl repository root |
 | `ROCM_PATH` | ROCm installation path | `/opt/rocm` |
 | `MPI_PATH` | MPI installation path | System default or config-specific |
 
