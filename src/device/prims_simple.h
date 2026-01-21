@@ -69,6 +69,7 @@ class Primitives<
   uint64_t barrier_next_pat = 0;
   int repeat;
   bool skip_fence = 0;
+  int ipcReg = 0; // Track if IPC registration is used for memory ordering
 
 #if defined(ENABLE_NPKIT)
 public:
@@ -219,20 +220,26 @@ private:
       barrier_generic(asm volatile("s_waitcnt lgkmcnt(0) vmcnt(0)"), nworkers, barrier_next, barriers);
       __atomic_signal_fence(__ATOMIC_SEQ_CST);
     }
-    else if((flags & RolePostSend) && dataStored){
-#ifdef __GFX9__
-    __threadfence();
-#else
-    __threadfence_system();
-#endif
-    }
 
     if ((flags & Send*RolePostSend) && next_hdp_reg)
       STORE((unsigned int *)next_hdp_reg, 0x1);
 
     if (flags & (Recv*RolePostRecv | Send*RolePostSend)) {
       step += StepPerSlice;
-      STORE(connStepPtr, step);
+      __atomic_signal_fence(__ATOMIC_ACQ_REL);
+      asm volatile("s_waitcnt lgkmcnt(0) vmcnt(0)" ::: "memory");
+      if (Direct && ipcReg) {
+        __atomic_store_n(connStepPtr, step, __ATOMIC_RELEASE);
+      } else {
+        if (!skip_fence && (flags & RolePostSend) && dataStored) {
+#if defined(__GFX9__)
+          __threadfence();
+#else
+          __threadfence_system();
+#endif
+        }
+        STORE(connStepPtr, step);
+      }
     }
   }
 
@@ -601,9 +608,14 @@ public:
       }
       if (flags & (Recv*RolePostRecv | Send*RolePostSend)) {
         if (Send && (!Recv || (flags & RolePostSend)) && (dstSize!=0 || (flags&ConnFifoEnabled))) {
-          fence_acq_rel_sys();
+          __atomic_signal_fence(__ATOMIC_ACQ_REL);
+          asm volatile("s_waitcnt lgkmcnt(0) vmcnt(0)" ::: "memory");
         }
-        st_relaxed_sys_global(connStepPtr, step);
+        if (Direct && fn.work->regUsed) {
+          __atomic_store_n(connStepPtr, step, __ATOMIC_RELEASE);
+        } else {
+          STORE(connStepPtr, step);
+        }
       }
     }
   }
@@ -686,7 +698,11 @@ private:
     step = roundUp(step, SlicePerChunk*StepPerSlice);
     if (flags & RolePostRecv) {
       connStepPtr = conn->head;
-      STORE(connStepPtr, step); // Return credits in case we rounded up.
+      if (Direct && ipcRegFlag) {
+        __atomic_store_n(connStepPtr, step, __ATOMIC_RELEASE);
+      } else {
+        STORE(connStepPtr, step);
+      }
     }
     if (flags & RoleWaitRecv) {
       if ((flags & PatMode) == 0) ncclShmem.groups[group].recvConns[index] = conn; // WaitRecv role saves since that's who needs it in setDataPtrs()
@@ -844,6 +860,8 @@ public:
         recvIpcReg = sendIpcReg = collWork ? collWork->regUsed : 0;
         recvNetReg = sendNetReg = collWork ? collWork->netRegUsed : 0;
       }
+      // Store ipcReg for use in postPeer memory ordering
+      ipcReg = sendIpcReg || recvIpcReg;
 
       // coverity[overrun-call] => Coverity think prims.index can be greater than 1
       if (flags & (RoleWaitRecv|RolePostRecv)) loadRecvConn(channel->peers[peer], connIndexRecv, collWork ? collWork->direct : 0, recvIpcReg, recvNetReg);
